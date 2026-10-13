@@ -19,8 +19,8 @@ except ImportError:
 
 st.set_page_config(page_title="Multi-Marketplace Auto Listing Generator", layout="wide")
 
-st.title("📦 Multi-Marketplace Auto Listing Generator (Universal Pro V10)")
-st.caption("Ajio, Amazon Seller Central, Amazon Vendor Central & Flipkart - Dynamic Header Reading & Strict Rules")
+st.title("📦 Multi-Marketplace Auto Listing Generator (Universal Pro V11)")
+st.caption("Ajio, Amazon Seller Central, Amazon Vendor Central & Flipkart - Strict Category & Dropdown Compliance")
 
 IMGBB_PERMANENT_KEY = "137be55d19cf3d6a7ec051e369137041"
 
@@ -203,8 +203,13 @@ def detect_category(folder_name):
     return "apparel"
 
 COMMON_COLORS = [
-    "LightGrey", "Grey", "DarkGrey", "Black", "Navy", "Blue", "LightBlue", "DarkBlue", 
-    "IceBlue", "White", "Green", "Olive", "Beige", "Brown", "Coffee", "Charcoal", "Khaki", "Red", "Maroon"
+    "Beige", "LightGrey", "Grey", "DarkGrey", "Black", "Navy", "Blue", "LightBlue", "DarkBlue", 
+    "IceBlue", "White", "Off White", "Green", "Olive", "Brown", "Coffee", "Charcoal", "Khaki", "Red", "Maroon", "Yellow", "Orange", "Pink"
+]
+
+STANDARD_COLOR_MAPS = [
+    'Beige', 'Black', 'Blue', 'Bronze', 'Brown', 'Clear', 'Gold', 'Green', 'Grey', 
+    'Metallic', 'Multicolor', 'Off White', 'Orange', 'Pink', 'Purple', 'Red', 'Silver', 'Turquoise', 'White', 'Yellow'
 ]
 
 def detect_color(text):
@@ -213,6 +218,19 @@ def detect_color(text):
         if col.lower() in text_clean.lower():
             return col
     return "Black" if "hoodie" in text.lower() else "Blue"
+
+def map_to_standard_color_map(detected_col):
+    det_lower = detected_col.lower()
+    for sc in STANDARD_COLOR_MAPS:
+        if sc.lower() == det_lower:
+            return sc
+    if "grey" in det_lower: return "Grey"
+    if "blue" in det_lower or "navy" in det_lower: return "Blue"
+    if "black" in det_lower or "charcoal" in det_lower: return "Black"
+    if "white" in det_lower: return "White"
+    if "khaki" in det_lower or "olive" in det_lower: return "Green"
+    if "brown" in det_lower or "coffee" in det_lower: return "Brown"
+    return "Blue"
 
 def make_workable_dropbox_url(base_url, sku, img_num):
     if not base_url: return f"https://www.dropbox.com/s/{sku}/{img_num}.jpg?raw=1"
@@ -264,6 +282,80 @@ def build_vendor_title(brand, category, full_sku, user_kw=""):
             if wl: counts[wl] = c + 1
     final_title = " ".join(filtered)
     return final_title[:75]
+
+def get_style_from_dropdown(cat):
+    if cat == 'cargo': return 'Cargo'
+    if cat in ['sweatshirt', 'hoodie']: return 'Sweatpants'
+    if cat == 'trousers': return 'Chino'
+    return 'Modern'
+
+def get_item_type_name_from_dropdown(cat):
+    if cat == 'cargo': return 'Casual Pants'
+    if cat == 'trousers': return 'Casual Pants'
+    if cat == 'jeans': return 'Jeans'
+    if cat in ['hoodie', 'sweatshirt']: return 'Sweatpants'
+    return 'Casual Pants'
+
+def generate_generic_keywords_200(cat, det_col, user_kw):
+    if user_kw:
+        kws = [k.strip() for k in user_kw.replace(';', ',').split(',') if k.strip()]
+        unique_kws = []
+        for k in kws:
+            if k.lower() not in [x.lower() for x in unique_kws]:
+                unique_kws.append(k)
+        res = "; ".join(unique_kws)
+        return res[:200]
+    
+    if cat in ['hoodie', 'sweatshirt']:
+        kw_list = [f"men {cat}", f"{det_col} hoodie", "pullover sweatshirt", "winter wear for men", "casual fleece hoodie", "streetwear sweatshirt", "comfortable hoodie"]
+    elif cat == 'cargo':
+        kw_list = [f"men cargo pants", f"{det_col} cargo", "utility pants", "multi pocket trousers", "streetwear cargo", "relaxed fit pants", "men cotton cargo"]
+    else:
+        kw_list = [f"men jeans", f"{det_col} denim", "stretchable jeans", "casual denim pants", "mid rise jeans", "regular fit denim", "washed jeans for men"]
+    
+    res = "; ".join(kw_list)
+    return res[:200]
+
+def build_category_bullets_and_desc(cat, det_col, brand):
+    b_prefix = f"{brand} " if brand else ""
+    if cat in ['hoodie', 'sweatshirt']:
+        bullets = [
+            f"PREMIUM WARMTH & COMFORT: Crafted from ultra-soft, breathable cotton fleece fabric that provides exceptional warmth and all-day comfort.",
+            f"MODERN STREETWEAR DESIGN: Features a stylish {det_col.lower()} hue with a cozy hood, adjustable drawstrings, and reinforced stitching for durability.",
+            "PRACTICAL UTILITY: Equipped with a spacious front kangaroo pocket to keep essentials secure and hands warm in chilly weather.",
+            "VERSATILE CASUAL PAIRING: Pairs effortlessly with denims, joggers, cargo trousers, and sneakers for a sporty or relaxed everyday look.",
+            "EASY WASH CARE: Machine wash cold with similar colors. Do not bleach. Warm iron if needed."
+        ]
+        desc = (
+            f"Upgrade your winter casuals with the {b_prefix}Men's {det_col} {cat.capitalize()}. "
+            "Tailored from high-quality cotton blend fleece, this piece blends urban streetwear aesthetic with premium relaxed comfort. "
+            "Designed for daily wear, college, travel, and evening outings."
+        )
+    elif cat == 'cargo':
+        bullets = [
+            f"DURABLE COTTON TWILL FABRIC: Engineered from premium breathable cotton fabric that offers maximum mobility and rugged durability.",
+            f"MULTI-POCKET FUNCTIONALITY: Designed with deep tactical flap cargo pockets, side slash pockets, and back pockets for spacious storage.",
+            f"COMFORTABLE RELAXED FIT: Features an ergonomic mid-rise waistband and relaxed leg silhouette in trendy {det_col.lower()} styling.",
+            "ADVENTURE & STREETWEAR READY: Perfect for outdoor trekking, travel, casual hangouts, and pairing with oversized tees or hoodies.",
+            "CARE INSTRUCTIONS: Machine wash cold inside out. Tumble dry low. Warm iron if required."
+        ]
+        desc = (
+            f"Experience peak comfort and utility with the {b_prefix}Men's {det_col} Cargo Pants. "
+            "Constructed with heavy-duty reinforced seams and high-strength cotton fabric for an active, stylish lifestyle."
+        )
+    else:
+        bullets = [
+            f"COMFORT STRETCH DENIM: Crafted from high-grade stretchable denim fabric designed for flexible mobility and all-day ease.",
+            f"CLASSIC WASHED STYLING: Features an authentic {det_col.lower()} washed finish with subtle fading and durable contrast stitching.",
+            "5-POCKET UTILITY: Equipped with two front scoop pockets, a coin pocket, and two patch back pockets with a sturdy metal zip fly.",
+            "TIMELESS RELAXED SILHOUETTE: Mid-rise fit that sits comfortably at the waist, ideal for daily college, office casuals, and weekends.",
+            "GARMENT CARE: Machine wash cold inside out with like colors. Do not bleach. Warm iron if needed."
+        ]
+        desc = (
+            f"Redefine your everyday denim rotation with the {b_prefix}Men's {det_col} Jeans. "
+            "Engineered with premium stretchable cotton blend denim, these jeans offer supreme durability and an on-trend look."
+        )
+    return bullets, desc
 
 def ungroup_worksheet(ws):
     for col_dim in ws.column_dimensions.values():
@@ -354,14 +446,6 @@ if uploaded_file and st.button("🚀 Generate Listing File"):
                     today_str = datetime.now().strftime("%Y-%m-%d")
                     today_shipping = datetime.now().strftime("%Y%m%d")
 
-                    gen_kw_list = []
-                    if custom_keywords:
-                        for k in custom_keywords.replace(';', ',').split(','):
-                            k_clean = k.strip()
-                            if k_clean and k_clean.lower() not in [x.lower() for x in gen_kw_list]:
-                                gen_kw_list.append(k_clean)
-                    generic_keywords_str = "; ".join(gen_kw_list)
-
                     for raw_fld in detected_folders:
                         clean_style = clean_sku_name(raw_fld)
                         det_col = detect_color(raw_fld)
@@ -375,6 +459,12 @@ if uploaded_file and st.button("🚀 Generate Listing File"):
 
                         if size_chart_cdn_url and size_chart_cdn_url not in sku_img_urls:
                             sku_img_urls.append(size_chart_cdn_url)
+
+                        bullets_list, desc_text = build_category_bullets_and_desc(cat, det_col, brand_name)
+                        gen_keywords_200 = generate_generic_keywords_200(cat, det_col, custom_keywords)
+                        style_val = get_style_from_dropdown(cat)
+                        item_type_val = get_item_type_name_from_dropdown(cat)
+                        color_map_val = map_to_standard_color_map(det_col)
 
                         for sz in size_list:
                             clean_sz = clean_sku_name(sz)
@@ -414,6 +504,9 @@ if uploaded_file and st.button("🚀 Generate Listing File"):
                             c_part = get_vc_col(['part number'], ['part_number#1.value'])
                             if c_part: ws.cell(curr_r, c_part).value = full_sku
 
+                            c_mod_name = get_vc_col(['model name'], ['model_name#1.value'])
+                            if c_mod_name: ws.cell(curr_r, c_mod_name).value = f"{cat.capitalize()} {clean_style}"
+
                             c_mfg = get_vc_col(['manufacturer'], ['manufacturer#1.value'])
                             if c_mfg: ws.cell(curr_r, c_mfg).value = mfg_address
                             c_mfg_cnt = get_vc_col(['manufacturer contact information'], ['rtip_manufacturer_contact_information#1.value'])
@@ -427,8 +520,15 @@ if uploaded_file and st.button("🚀 Generate Listing File"):
                                 if c_oth and img_num < len(sku_img_urls):
                                     ws.cell(curr_r, c_oth).value = sku_img_urls[img_num]
 
+                            for b_i, b_val in enumerate(bullets_list[:5]):
+                                c_bp = get_vc_col([f'bullet point'], [f'bullet_point#{b_i+1}.value'])
+                                if c_bp: ws.cell(curr_r, c_bp).value = b_val
+
                             c_gkw = get_vc_col(['generic keywords'], ['generic_keyword#1.value'])
-                            if c_gkw and generic_keywords_str: ws.cell(curr_r, c_gkw).value = generic_keywords_str
+                            if c_gkw and gen_keywords_200: ws.cell(curr_r, c_gkw).value = gen_keywords_200
+
+                            c_style = get_vc_col(['style'], ['style#1.value'])
+                            if c_style: ws.cell(curr_r, c_style).value = style_val
 
                             lifestyles = ["Casual", "Work Utility", "Comfort", "Athletic", "Formal"]
                             for ls_idx in range(1, 6):
@@ -446,8 +546,9 @@ if uploaded_file and st.button("🚀 Generate Listing File"):
                             if c_ssys: ws.cell(curr_r, c_ssys).value = "IN"
 
                             is_num_sz = clean_sz.isdigit()
+                            size_class_val = "Numeric" if is_num_sz else "Alpha"
                             c_scls = get_vc_col(['bottoms size class'], ['bottoms_size#1.size_class'])
-                            if c_scls: ws.cell(curr_r, c_scls).value = "Numeric" if is_num_sz else "Alpha"
+                            if c_scls: ws.cell(curr_r, c_scls).value = size_class_val
 
                             c_sval = get_vc_col(['bottoms size value'], ['bottoms_size#1.size'])
                             if c_sval: ws.cell(curr_r, c_sval).value = clean_sz
@@ -466,10 +567,16 @@ if uploaded_file and st.button("🚀 Generate Listing File"):
                             if c_noi: ws.cell(curr_r, c_noi).value = 1
 
                             c_itn = get_vc_col(['item type name'], ['item_type_name#1.value'])
-                            if c_itn: ws.cell(curr_r, c_itn).value = "Casual Pants" if cat == 'cargo' else "Jeans"
+                            if c_itn: ws.cell(curr_r, c_itn).value = item_type_val
+
+                            c_spec_sz = get_vc_col(['special size'], ['special_size_type#1.value'])
+                            if c_spec_sz: ws.cell(curr_r, c_spec_sz).value = "Standard"
+
+                            c_desc = get_vc_col(['product description'], ['rtip_product_description#1.value'])
+                            if c_desc: ws.cell(curr_r, c_desc).value = desc_text
 
                             c_cmap = get_vc_col(['color map'], ['color#1.standardized_values#1'])
-                            if c_cmap: ws.cell(curr_r, c_cmap).value = det_col if det_col in ["Black", "Blue", "Grey", "White", "Navy"] else "Blue"
+                            if c_cmap: ws.cell(curr_r, c_cmap).value = color_map_val
                             c_color = get_vc_col(['color'], ['color#1.value'])
                             if c_color: ws.cell(curr_r, c_color).value = det_col
 
@@ -510,6 +617,11 @@ if uploaded_file and st.button("🚀 Generate Listing File"):
                             if c_lst: ws.cell(curr_r, c_lst).value = "Year Round Replenishable"
                             c_sea = get_vc_col(['seasons'], ['seasons#1.value'])
                             if c_sea: ws.cell(curr_r, c_sea).value = "All"
+
+                            c_sld = get_vc_col(['sleeve length description', 'sleeve length'])
+                            if c_sld: ws.cell(curr_r, c_sld).value = "Long Sleeve" if cat in ['hoodie', 'sweatshirt', 'shirt'] else "Short Sleeve"
+                            c_st = get_vc_col(['sleeve type'])
+                            if c_st: ws.cell(curr_r, c_st).value = "Regular Sleeve"
 
                             c_pkr = get_vc_col(['packer contact information'], ['packer_contact_information#1.value'])
                             if c_pkr: ws.cell(curr_r, c_pkr).value = mkt_address
@@ -566,8 +678,17 @@ if uploaded_file and st.button("🚀 Generate Listing File"):
                             c_pwtu = get_vc_col(['package weight unit'], ['item_package_weight#1.unit'])
                             if c_pwtu: ws.cell(curr_r, c_pwtu).value = "Grams"
 
+                            c_oat = get_vc_col(['order aggregate type'], ['rtip_order_aggregate_type#1.value'])
+                            if c_oat: ws.cell(curr_r, c_oat).value = "Each"
+
+                            c_ipi = get_vc_col(['items per inner pack'], ['rtip_items_per_inner_pack#1.value'])
+                            if c_ipi: ws.cell(curr_r, c_ipi).value = 1
+
                             c_coo = get_vc_col(['country of origin'], ['country_of_origin#1.value'])
                             if c_coo: ws.cell(curr_r, c_coo).value = "India"
+
+                            c_dg = get_vc_col(['dangerous goods regulations', 'dangerous goods', 'hazmat'])
+                            if c_dg: ws.cell(curr_r, c_dg).value = "Not Applicable"
 
                             curr_r += 1
                             total_variants_added += 1
