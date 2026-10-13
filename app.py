@@ -322,7 +322,6 @@ if uploaded_file and st.button("🚀 Generate Listing File"):
                     rb = xlrd.open_workbook(file_contents=file_bytes, formatting_info=True)
                     wb = xl_copy(rb)
 
-                    # Target sheet 'jean'
                     target_sheet_idx = 2
                     for idx, sname in enumerate(rb.sheet_names()):
                         if any(k in sname.lower() for k in ['jean', 'listing', 'data']):
@@ -372,7 +371,6 @@ if uploaded_file and st.button("🚀 Generate Listing File"):
                             ws.write(curr_r, 28, mfg_address)      # Manufacturer Details
                             ws.write(curr_r, 29, mkt_address)      # Packer Details
                             
-                            # Attributes
                             if brand_name: ws.write(curr_r, 33, brand_name)
                             ws.write(curr_r, 34, "Regular")        # Fit
                             ws.write(curr_r, 35, "Men")            # Ideal For
@@ -386,7 +384,6 @@ if uploaded_file and st.button("🚀 Generate Listing File"):
                             ws.write(curr_r, 44, clean_style)      # Style Code
                             ws.write(curr_r, 45, det_col)          # Color
 
-                            # Images (Cols 47 to 52)
                             for img_i, u in enumerate(sku_img_urls[:6]):
                                 ws.write(curr_r, 47 + img_i, u)
 
@@ -434,7 +431,6 @@ if uploaded_file and st.button("🚀 Generate Listing File"):
                     ws = wb['Template'] if 'Template' in wb.sheetnames else wb.worksheets[0]
                     sheets_modified.add(ws.title)
 
-                    # Headers in row 4, technical keys in row 5
                     header_map = {}
                     for c in range(1, ws.max_column + 1):
                         h4 = str(ws.cell(4, c).value or '').strip()
@@ -458,7 +454,7 @@ if uploaded_file and st.button("🚀 Generate Listing File"):
                             img_cnt = folder_images_count.get(raw_fld, 5)
                             sku_img_urls = [make_workable_dropbox_url(dropbox_base_url, clean_style, i) for i in range(1, img_cnt + 1)]
 
-                        # 1. Parent Row
+                        # Parent Row
                         ws.cell(curr_r, 1).value = clean_style                     # SKU
                         ws.cell(curr_r, 2).value = "PANTS"                         # Product Type
                         ws.cell(curr_r, 4).value = "Parent"                        # Parentage Level
@@ -471,7 +467,7 @@ if uploaded_file and st.button("🚀 Generate Listing File"):
                         if sku_img_urls: ws.cell(curr_r, 22).value = sku_img_urls[0]
                         curr_r += 1
 
-                        # 2. Child Rows
+                        # Child Rows
                         for sz in size_list:
                             clean_sz = clean_sku_name(sz)
                             full_sku = f"{clean_style}-{clean_sz}"
@@ -484,7 +480,6 @@ if uploaded_file and st.button("🚀 Generate Listing File"):
                             ws.cell(curr_r, 7).value = f"{title_text} - {clean_sz}"
                             if brand_name: ws.cell(curr_r, 9).value = brand_name
                             
-                            # Images
                             if sku_img_urls: ws.cell(curr_r, 22).value = sku_img_urls[0]
                             for img_i, u in enumerate(sku_img_urls[1:6]):
                                 ws.cell(curr_r, 23 + img_i).value = u
@@ -493,7 +488,6 @@ if uploaded_file and st.button("🚀 Generate Listing File"):
                             for b_i, b_val in enumerate(bullets[:5]):
                                 ws.cell(curr_r, 33 + b_i).value = b_val
 
-                            # Size & Details
                             ws.cell(curr_r, 48).value = "Adult"                    # Age Range
                             ws.cell(curr_r, 49).value = "IN"                       # Size System
                             ws.cell(curr_r, 50).value = "Waist"                    # Size Class
@@ -507,7 +501,6 @@ if uploaded_file and st.button("🚀 Generate Listing File"):
                             ws.cell(curr_r, 142).value = "grams"
                             ws.cell(curr_r, 171).value = 100                       # Quantity
                             
-                            # Price & MRP
                             p_cell = ws.cell(curr_r, 175)                          # Your Price
                             mrp_cell = ws.cell(curr_r, 176)                        # MRP
                             if mrp_value:
@@ -562,12 +555,10 @@ if uploaded_file and st.button("🚀 Generate Listing File"):
                             ws.cell(curr_r, 8).value = f"{title_text} - {clean_sz}"
                             if brand_name: ws.cell(curr_r, 10).value = brand_name
                             
-                            # Images (Cols 24 to 29)
                             if sku_img_urls: ws.cell(curr_r, 24).value = sku_img_urls[0]
                             for img_i, u in enumerate(sku_img_urls[1:6]):
                                 ws.cell(curr_r, 25 + img_i).value = u
 
-                            # Bullets (Cols 34 to 38)
                             for b_i, b_val in enumerate(bullets[:5]):
                                 ws.cell(curr_r, 34 + b_i).value = b_val
 
@@ -596,7 +587,7 @@ if uploaded_file and st.button("🚀 Generate Listing File"):
                             curr_r += 1
                             total_variants_added += 1
 
-                # AJIO / DEFAULT ENGINE (Preserved with all strict fixes)
+                # AJIO / DEFAULT ENGINE
                 else:
                     category_folders = {}
                     for raw_folder in detected_folders:
@@ -674,7 +665,7 @@ if uploaded_file and st.button("🚀 Generate Listing File"):
                                     num_sz = int(re.findall(r'\d+', clean_sz)[0])
                                     w_val = str(num_sz + 1)
                                     tf_val = str(num_sz - 1)
-                                end:
+                                except Exception:
                                     w_val, tf_val = "34", "32"
 
                                 if col_style: ws.cell(curr_r, col_style).value = clean_style
@@ -724,7 +715,6 @@ if uploaded_file and st.button("🚀 Generate Listing File"):
                                 if col_waist: ws.cell(curr_r, col_waist).value = w_val
                                 if col_inseam: ws.cell(curr_r, col_inseam).value = "32"
 
-                                # Images (Cols 77+)
                                 for img_i, u in enumerate(sku_img_urls[:10]):
                                     ws.cell(curr_r, 77 + img_i).value = u
 
