@@ -19,8 +19,8 @@ except ImportError:
 
 st.set_page_config(page_title="Multi-Marketplace Auto Listing Generator", layout="wide")
 
-st.title("📦 Multi-Marketplace Auto Listing Generator (Universal Pro V9)")
-st.caption("Ajio, Amazon Seller Central, Amazon Vendor Central & Flipkart - Full Strict Mapping")
+st.title("📦 Multi-Marketplace Auto Listing Generator (Universal Pro V10)")
+st.caption("Ajio, Amazon Seller Central, Amazon Vendor Central & Flipkart - Dynamic Header Reading & Strict Rules")
 
 IMGBB_PERMANENT_KEY = "137be55d19cf3d6a7ec051e369137041"
 
@@ -82,7 +82,7 @@ with col_in1:
                         detected_size_chart_info['bytes'] = z.read(f)
                         break
 
-                # Extract product folders strictly by parent directory of images
+                # Extract product folders strictly by immediate parent directory of images
                 img_exts = ('.jpg', '.jpeg', '.png', '.webp')
                 folder_to_imgs = {}
                 
@@ -147,8 +147,8 @@ with col_s1:
     )
     brand_name = st.text_input(
         "Brand Name:",
-        value="Lymio",
-        placeholder="e.g. Lymio, Buda Jeans Co"
+        value="",
+        placeholder="e.g. Lymio, Buda Jeans Co (Leave blank if not applicable)"
     )
     mrp_value = st.text_input(
         "MRP (Khali chhodne par Yellow Highlight hoga):",
@@ -177,9 +177,9 @@ st.divider()
 # 4. Trending Keywords Section
 st.subheader("3. SEO & Trending Keywords")
 custom_keywords = st.text_area(
-    "Custom Trending Keywords (Optional - sequence wise title aur generic keywords banenge):",
+    "Custom Trending Keywords (Optional):",
     placeholder="e.g. printed hoodie, casual hoodie, fleece pullover, cotton blend winter wear",
-    help="Jis sequence me keywords denge usi sequence me title aur keywords banenge bina repetition ke."
+    help="Keywords sequence-wise use honge, title 75 char limit me rahega aur repeat nahi honge."
 )
 
 st.divider()
@@ -229,25 +229,54 @@ def upload_to_imgbb(image_bytes, api_key):
         pass
     return None
 
-def build_smart_title(brand, category, sku, user_kw, full_sku):
-    b_prefix = f"{brand} " if brand else ""
+def build_vendor_title(brand, category, full_sku, user_kw=""):
+    b = f"{brand} " if brand else ""
+    cat_str = category.capitalize()
+    sku_part = f"({full_sku})"
+
+    kw_candidate = ""
     if user_kw:
-        kw_list = [k.strip() for k in user_kw.replace(';', ',').split(',') if k.strip()]
-        kw_phrase = " | ".join(kw_list[:2]) if len(kw_list) >= 2 else kw_list[0]
-        title_candidate = f"{b_prefix}{category.capitalize()} for men | {kw_phrase} ({full_sku})"
+        kws = [k.strip() for k in user_kw.replace(';', ',').split(',') if k.strip()]
+        if kws:
+            kw_candidate = kws[0]
+
+    if kw_candidate:
+        opt1 = f"{b}{cat_str} for men | {kw_candidate} {sku_part}".strip()
+        if len(opt1) <= 75:
+            title = opt1
+        else:
+            opt2 = f"{b}{kw_candidate} {sku_part}".strip()
+            title = opt2 if len(opt2) <= 75 else f"{b}{cat_str} {sku_part}".strip()
     else:
-        title_candidate = f"{b_prefix}{category.capitalize()} for men | casual regular fit ({full_sku})"
-    
-    words = title_candidate.split()
-    word_counts = {}
-    clean_words = []
+        title = f"{b}{cat_str} for men | casual wear {sku_part}".strip()
+
+    if len(title) > 75:
+        title = title[:75].rstrip()
+
+    words = title.split()
+    counts = {}
+    filtered = []
     for w in words:
-        w_lower = w.lower().strip("|,()")
-        count = word_counts.get(w_lower, 0)
-        if count < 2 or w in ["|", "(", ")", "-"]:
-            clean_words.append(w)
-            if w_lower: word_counts[w_lower] = count + 1
-    return " ".join(clean_words)
+        wl = w.lower().strip("|,()")
+        c = counts.get(wl, 0)
+        if c < 2 or w in ["|", "(", ")", "-"]:
+            filtered.append(w)
+            if wl: counts[wl] = c + 1
+    final_title = " ".join(filtered)
+    return final_title[:75]
+
+def ungroup_worksheet(ws):
+    for col_dim in ws.column_dimensions.values():
+        col_dim.outline_level = 0
+        col_dim.collapsed = False
+        col_dim.hidden = False
+    for r_dim in ws.row_dimensions.values():
+        r_dim.outline_level = 0
+        r_dim.collapsed = False
+        r_dim.hidden = False
+    if hasattr(ws, 'sheet_properties') and hasattr(ws.sheet_properties, 'outlinePr'):
+        ws.sheet_properties.outlinePr.summaryBelow = True
+        ws.sheet_properties.outlinePr.summaryRight = True
 
 # ================= GENERATION PROCESS =================
 if uploaded_file and st.button("🚀 Generate Listing File"):
@@ -296,14 +325,35 @@ if uploaded_file and st.button("🚀 Generate Listing File"):
                             break
                     if not ws: ws = wb.worksheets[0]
 
+                    ungroup_worksheet(ws)
+
+                    col_by_label = {}
+                    col_by_key = {}
+                    for c in range(1, ws.max_column + 1):
+                        lbl = str(ws.cell(3, c).value or '').strip().lower()
+                        key = str(ws.cell(4, c).value or '').strip().lower()
+                        if lbl and lbl not in col_by_label:
+                            col_by_label[lbl] = c
+                        if key and key not in col_by_key:
+                            col_by_key[key] = c
+
+                    def get_vc_col(label_candidates, key_candidates=[]):
+                        for k in key_candidates:
+                            if k.lower() in col_by_key:
+                                return col_by_key[k.lower()]
+                        for l in label_candidates:
+                            if l.lower() in col_by_label:
+                                return col_by_label[l.lower()]
+                        return None
+
                     curr_r = 7
-                    while ws.cell(curr_r, 2).value is not None:
+                    sku_col_idx = get_vc_col(['vendor sku'], ['vendor_sku#1.value']) or 2
+                    while ws.cell(curr_r, sku_col_idx).value is not None:
                         curr_r += 1
 
                     today_str = datetime.now().strftime("%Y-%m-%d")
                     today_shipping = datetime.now().strftime("%Y%m%d")
 
-                    # Parse unique generic keywords
                     gen_kw_list = []
                     if custom_keywords:
                         for k in custom_keywords.replace(';', ',').split(','):
@@ -330,167 +380,194 @@ if uploaded_file and st.button("🚀 Generate Listing File"):
                             clean_sz = clean_sku_name(sz)
                             full_sku = f"{clean_style}-{clean_sz}"
 
-                            item_title = build_smart_title(brand_name, cat, clean_style, custom_keywords, full_sku)
+                            vendor_title = build_vendor_title(brand_name, cat, full_sku, custom_keywords)
 
-                            # Col 1: Vendor Code (Dropship option)
-                            ws.cell(curr_r, 1).value = "J B fashion -- Surat -- Dropship, in_pd-ravi_apparel, JBZ54"
-                            
-                            # Col 2: Vendor SKU
-                            ws.cell(curr_r, 2).value = full_sku
-                            
-                            # Col 3: Product Type
-                            ws.cell(curr_r, 3).value = "PANTS" if cat in ['jeans', 'cargo', 'trousers'] else "SWEATSHIRT"
-                            
-                            # Col 4, 5, 6, 7: Parentage Level, Relationship, Parent SKU, Variation Theme MUST BE BLANK
-                            ws.cell(curr_r, 4).value = None
-                            ws.cell(curr_r, 5).value = None
-                            ws.cell(curr_r, 6).value = None
-                            ws.cell(curr_r, 7).value = None
+                            c_vc = get_vc_col(['vendor code'], ['rtip_vendor_code#1.value'])
+                            if c_vc: ws.cell(curr_r, c_vc).value = "J B fashion -- Surat -- Dropship, in_pd-ravi_apparel, JBZ54"
 
-                            # Col 8: Item Name (Brand first)
-                            ws.cell(curr_r, 8).value = item_title
-                            
-                            # Col 10: Brand Name
-                            ws.cell(curr_r, 10).value = brand_name
-                            
-                            # Col 21: Model Number (same as SKU)
-                            ws.cell(curr_r, 21).value = full_sku
-                            
-                            # Col 22: Model Name
-                            ws.cell(curr_r, 22).value = f"{cat.capitalize()} {clean_style}"
-                            
-                            # Col 23: Manufacturer (Manufactured By address)
-                            ws.cell(curr_r, 23).value = mfg_address
+                            c_sku = get_vc_col(['vendor sku'], ['vendor_sku#1.value'])
+                            if c_sku: ws.cell(curr_r, c_sku).value = full_sku
 
-                            # Images (Cols 24 to 32)
-                            if sku_img_urls: ws.cell(curr_r, 24).value = sku_img_urls[0]
-                            for img_i, u in enumerate(sku_img_urls[1:8]):
-                                ws.cell(curr_r, 25 + img_i).value = u
+                            c_pt = get_vc_col(['product type'], ['product_type#1.value'])
+                            if c_pt: ws.cell(curr_r, c_pt).value = "PANTS" if cat in ['jeans', 'cargo', 'trousers'] else "SWEATSHIRT"
 
-                            # Bullets (Cols 34 to 38)
-                            bullets = [
-                                f"PREMIUM COMFORT: High-grade breathable fabric designed for all-day comfort and long-lasting durability.",
-                                f"TRENDY STYLING: Contemporary modern design in {det_col} shade with reinforced stitching.",
-                                f"FUNCTIONAL DETAILS: Practical utility pockets and durable construction for daily wear.",
-                                f"VERSATILE WEAR: Easily pairs with casual sneakers and daily wardrobe essentials.",
-                                f"EASY CARE: Machine wash cold with similar colors. Do not bleach."
-                            ]
-                            for b_i, b_val in enumerate(bullets):
-                                ws.cell(curr_r, 34 + b_i).value = b_val
+                            for p_lbl, p_key in [
+                                (['parentage level'], ['parentage_level#1.value']),
+                                (['child relationship type'], ['child_parent_sku_relationship#1.child_relationship_type']),
+                                (['parent sku'], ['child_parent_sku_relationship#1.parent_sku']),
+                                (['variation theme name'], ['variation_theme#1.name'])
+                            ]:
+                                c_p = get_vc_col(p_lbl, p_key)
+                                if c_p: ws.cell(curr_r, c_p).value = None
 
-                            # Col 39: Generic Keywords
-                            if generic_keywords_str:
-                                ws.cell(curr_r, 39).value = generic_keywords_str
+                            c_title = get_vc_col(['item name'], ['item_name#1.value'])
+                            if c_title: ws.cell(curr_r, c_title).value = vendor_title
 
-                            # Cols 45-49: Lifestyle (Unique values)
-                            ws.cell(curr_r, 45).value = "Casual"
-                            ws.cell(curr_r, 46).value = "Work Utility"
-                            ws.cell(curr_r, 47).value = "Comfort"
+                            c_hl = get_vc_col(['item highlight'], ['title_differentiation#1.value'])
+                            if c_hl: ws.cell(curr_r, c_hl).value = f"Premium {det_col} finish, durable comfort stretch"
 
-                            # Col 51: Department Name & Col 52: Target Gender & Col 53: Age Range
-                            ws.cell(curr_r, 51).value = "Mens"
-                            ws.cell(curr_r, 52).value = "Male"
-                            ws.cell(curr_r, 53).value = "Adult"
+                            c_br = get_vc_col(['brand name'], ['brand#1.value'])
+                            if c_br: ws.cell(curr_r, c_br).value = brand_name
 
-                            # Sizing (Cols 54-56)
-                            ws.cell(curr_r, 54).value = "IN"
+                            c_mod = get_vc_col(['model number'], ['model_number#1.value'])
+                            if c_mod: ws.cell(curr_r, c_mod).value = full_sku
+                            c_part = get_vc_col(['part number'], ['part_number#1.value'])
+                            if c_part: ws.cell(curr_r, c_part).value = full_sku
+
+                            c_mfg = get_vc_col(['manufacturer'], ['manufacturer#1.value'])
+                            if c_mfg: ws.cell(curr_r, c_mfg).value = mfg_address
+                            c_mfg_cnt = get_vc_col(['manufacturer contact information'], ['rtip_manufacturer_contact_information#1.value'])
+                            if c_mfg_cnt: ws.cell(curr_r, c_mfg_cnt).value = mfg_address
+
+                            c_main_img = get_vc_col(['main image url'], ['main_product_image_locator#1.media_location'])
+                            if c_main_img and sku_img_urls: ws.cell(curr_r, c_main_img).value = sku_img_urls[0]
+
+                            for img_num in range(1, 9):
+                                c_oth = get_vc_col([f'other image url'], [f'other_product_image_locator_{img_num}#1.media_location'])
+                                if c_oth and img_num < len(sku_img_urls):
+                                    ws.cell(curr_r, c_oth).value = sku_img_urls[img_num]
+
+                            c_gkw = get_vc_col(['generic keywords'], ['generic_keyword#1.value'])
+                            if c_gkw and generic_keywords_str: ws.cell(curr_r, c_gkw).value = generic_keywords_str
+
+                            lifestyles = ["Casual", "Work Utility", "Comfort", "Athletic", "Formal"]
+                            for ls_idx in range(1, 6):
+                                c_ls = get_vc_col([f'lifestyle'], [f'lifestyle#{ls_idx}.value'])
+                                if c_ls: ws.cell(curr_r, c_ls).value = lifestyles[ls_idx - 1]
+
+                            c_dept = get_vc_col(['department name'], ['department#1.value'])
+                            if c_dept: ws.cell(curr_r, c_dept).value = "Mens"
+                            c_gen = get_vc_col(['target gender'], ['target_gender#1.value'])
+                            if c_gen: ws.cell(curr_r, c_gen).value = "Male"
+                            c_age = get_vc_col(['age range description'], ['age_range_description#1.value'])
+                            if c_age: ws.cell(curr_r, c_age).value = "Adult"
+
+                            c_ssys = get_vc_col(['bottoms size system'], ['bottoms_size#1.size_system'])
+                            if c_ssys: ws.cell(curr_r, c_ssys).value = "IN"
+
                             is_num_sz = clean_sz.isdigit()
-                            ws.cell(curr_r, 55).value = "Numeric" if is_num_sz else "Alpha"
-                            ws.cell(curr_r, 56).value = clean_sz
+                            c_scls = get_vc_col(['bottoms size class'], ['bottoms_size#1.size_class'])
+                            if c_scls: ws.cell(curr_r, c_scls).value = "Numeric" if is_num_sz else "Alpha"
 
-                            # Material & Fabric (Cols 59-62) - Highlighted
-                            mat_val = "Cotton" if cat in ['cargo', 'hoodie', 'sweatshirt'] else "Denim"
-                            c_mat = ws.cell(curr_r, 59)
-                            c_mat.value = mat_val
-                            c_mat.fill = material_fill
-                            ws.cell(curr_r, 62).value = f"100% {mat_val}"
+                            c_sval = get_vc_col(['bottoms size value'], ['bottoms_size#1.size'])
+                            if c_sval: ws.cell(curr_r, c_sval).value = clean_sz
 
-                            # Col 64: Number of Items
-                            ws.cell(curr_r, 64).value = 1
-                            
-                            # Col 65: Item Type Name
-                            ws.cell(curr_r, 65).value = cat.capitalize()
-                            
-                            # Col 68 & 69: Color Map & Color
-                            ws.cell(curr_r, 68).value = det_col
-                            ws.cell(curr_r, 69).value = det_col
-                            
-                            # Col 71: Part Number (same as SKU)
-                            ws.cell(curr_r, 71).value = full_sku
+                            mat_val = "Cotton" if cat in ['cargo', 'hoodie', 'sweatshirt'] else "Cotton Blend"
+                            c_mat = get_vc_col(['material'], ['material#1.value'])
+                            if c_mat:
+                                cell_m = ws.cell(curr_r, c_mat)
+                                cell_m.value = mat_val
+                                cell_m.fill = material_fill
 
-                            # Col 77: Fit Type & Col 80: Pocket Description
-                            ws.cell(curr_r, 77).value = "Relaxed Fit"
-                            ws.cell(curr_r, 80).value = "Basic-5-Pocket" if cat == 'jeans' else "Utility Pocket"
-                            
-                            # Col 87: Care Instructions
-                            ws.cell(curr_r, 87).value = "Machine Wash"
-                            
-                            # Col 91: Manufacturer Contact Information
-                            ws.cell(curr_r, 91).value = mfg_address
-                            
-                            # Col 92: Pattern
-                            ws.cell(curr_r, 92).value = "Solid"
-                            
-                            # Col 93 & 94: Unit Count & Type
-                            ws.cell(curr_r, 93).value = 1
-                            ws.cell(curr_r, 94).value = "count"
-                            
-                            # Col 95: Product Site Launch Date
-                            ws.cell(curr_r, 95).value = today_str
+                            c_fab = get_vc_col(['fabric type'], ['fabric_type#1.value'])
+                            if c_fab: ws.cell(curr_r, c_fab).value = f"100% {mat_val}"
 
-                            # Cols 114 & 115: External Product Information (HSN Code)
-                            ws.cell(curr_r, 114).value = "HSN Code"
-                            ws.cell(curr_r, 115).value = "62034290" if cat == 'jeans' else "62034200"
+                            c_noi = get_vc_col(['number of items'], ['number_of_items#1.value'])
+                            if c_noi: ws.cell(curr_r, c_noi).value = 1
 
-                            # Col 118: Waist Size
+                            c_itn = get_vc_col(['item type name'], ['item_type_name#1.value'])
+                            if c_itn: ws.cell(curr_r, c_itn).value = "Casual Pants" if cat == 'cargo' else "Jeans"
+
+                            c_cmap = get_vc_col(['color map'], ['color#1.standardized_values#1'])
+                            if c_cmap: ws.cell(curr_r, c_cmap).value = det_col if det_col in ["Black", "Blue", "Grey", "White", "Navy"] else "Blue"
+                            c_color = get_vc_col(['color'], ['color#1.value'])
+                            if c_color: ws.cell(curr_r, c_color).value = det_col
+
+                            c_thm = get_vc_col(['theme'], ['theme#1.value'])
+                            if c_thm: ws.cell(curr_r, c_thm).value = None
+
+                            c_fit = get_vc_col(['fit type'], ['fit_type#1.value'])
+                            if c_fit: ws.cell(curr_r, c_fit).value = "Relaxed"
+                            c_poc = get_vc_col(['pocket description'], ['pocket_description#1.value'])
+                            if c_poc: ws.cell(curr_r, c_poc).value = "Utility Pocket" if cat == 'cargo' else "Basic-5-Pocket"
+
+                            c_care = get_vc_col(['care instructions'], ['care_instructions#1.value'])
+                            if c_care: ws.cell(curr_r, c_care).value = "Machine Wash"
+
+                            c_pat = get_vc_col(['pattern'], ['pattern#1.value'])
+                            if c_pat: ws.cell(curr_r, c_pat).value = "Solid"
+
+                            c_uc = get_vc_col(['unit count'], ['unit_count#1.value'])
+                            if c_uc: ws.cell(curr_r, c_uc).value = 1
+                            c_uct = get_vc_col(['unit count type'], ['unit_count#1.type.value'])
+                            if c_uct: ws.cell(curr_r, c_uct).value = "count"
+
+                            c_pld = get_vc_col(['product site launch date'], ['product_site_launch_date#1.value'])
+                            if c_pld: ws.cell(curr_r, c_pld).value = today_str
+
+                            c_hsn_ent = get_vc_col(['external product information entity'], ['external_product_information#1.entity'])
+                            if c_hsn_ent: ws.cell(curr_r, c_hsn_ent).value = "HSN Code"
+                            c_hsn_val = get_vc_col(['external product information'], ['external_product_information#1.value'])
+                            if c_hsn_val: ws.cell(curr_r, c_hsn_val).value = "62034290" if cat == 'jeans' else "62034200"
+
                             if is_num_sz:
-                                ws.cell(curr_r, 118).value = clean_sz
-                                ws.cell(curr_r, 119).value = "inches"
+                                c_wst = get_vc_col(['waist size'], ['waist#1.size#1.value'])
+                                if c_wst: ws.cell(curr_r, c_wst).value = clean_sz
+                                c_wstu = get_vc_col(['waist size unit'], ['waist#1.size#1.unit'])
+                                if c_wstu: ws.cell(curr_r, c_wstu).value = "inches"
 
-                            # Col 120: Lifecycle Supply Type & Col 121: Seasons
-                            ws.cell(curr_r, 120).value = "Year Round Replenishable"
-                            ws.cell(curr_r, 121).value = "All"
+                            c_lst = get_vc_col(['product lifecycle supply type'], ['lifecycle_supply_type#1.value'])
+                            if c_lst: ws.cell(curr_r, c_lst).value = "Year Round Replenishable"
+                            c_sea = get_vc_col(['seasons'], ['seasons#1.value'])
+                            if c_sea: ws.cell(curr_r, c_sea).value = "All"
 
-                            # Col 128: Packer Contact Information
-                            ws.cell(curr_r, 128).value = mkt_address
+                            c_pkr = get_vc_col(['packer contact information'], ['packer_contact_information#1.value'])
+                            if c_pkr: ws.cell(curr_r, c_pkr).value = mkt_address
 
-                            # Weight (Cols 154-155)
-                            ws.cell(curr_r, 154).value = 350
-                            ws.cell(curr_r, 155).value = "Grams"
+                            c_iwt = get_vc_col(['item weight'], ['item_weight#1.value'])
+                            if c_iwt: ws.cell(curr_r, c_iwt).value = 350
+                            c_iwtu = get_vc_col(['item weight unit'], ['item_weight#1.unit'])
+                            if c_iwtu: ws.cell(curr_r, c_iwtu).value = "Grams"
 
-                            # MRP (Col 156)
-                            mrp_c = ws.cell(curr_r, 156)
-                            if mrp_value:
-                                mrp_c.value = int(mrp_value) if mrp_value.isdigit() else mrp_value
-                            else:
-                                mrp_c.fill = mrp_fill
-                                mrp_c.font = mrp_font
+                            c_mrp = get_vc_col(['maximum retail price (mrp)'], ['list_price#1.value_with_tax'])
+                            if c_mrp:
+                                mrp_cell = ws.cell(curr_r, c_mrp)
+                                if mrp_value:
+                                    mrp_cell.value = int(mrp_value) if mrp_value.isdigit() else mrp_value
+                                else:
+                                    mrp_cell.fill = mrp_fill
+                                    mrp_cell.font = mrp_font
 
-                            # Earliest Shipping Date (Col 158)
-                            ws.cell(curr_r, 158).value = today_shipping
+                            c_esd = get_vc_col(['earliest shipping date'], ['rtip_earliest_shipping_date#1.value'])
+                            if c_esd: ws.cell(curr_r, c_esd).value = today_shipping
 
-                            # Item Dimensions: 10 * 2 * 1.3 inches (Cols 159-164)
-                            ws.cell(curr_r, 159).value = 10
-                            ws.cell(curr_r, 160).value = "inches"
-                            ws.cell(curr_r, 161).value = 2
-                            ws.cell(curr_r, 162).value = "inches"
-                            ws.cell(curr_r, 163).value = 1.3
-                            ws.cell(curr_r, 164).value = "inches"
+                            c_il = get_vc_col(['item length'], ['item_dimensions#1.length.value'])
+                            if c_il: ws.cell(curr_r, c_il).value = 10
+                            c_ilu = get_vc_col(['item length unit'], ['item_dimensions#1.length.unit'])
+                            if c_ilu: ws.cell(curr_r, c_ilu).value = "inches"
 
-                            # Package Dimensions: same 10 * 2 * 1.3 inches (Cols 165-170)
-                            ws.cell(curr_r, 165).value = 10
-                            ws.cell(curr_r, 166).value = "inches"
-                            ws.cell(curr_r, 167).value = 2
-                            ws.cell(curr_r, 168).value = "inches"
-                            ws.cell(curr_r, 169).value = 1.3
-                            ws.cell(curr_r, 170).value = "inches"
+                            c_iw = get_vc_col(['item width'], ['item_dimensions#1.width.value'])
+                            if c_iw: ws.cell(curr_r, c_iw).value = 2
+                            c_iwu = get_vc_col(['item width unit'], ['item_dimensions#1.width.unit'])
+                            if c_iwu: ws.cell(curr_r, c_iwu).value = "inches"
 
-                            # Package Weight (Cols 171-172)
-                            ws.cell(curr_r, 171).value = 380
-                            ws.cell(curr_r, 172).value = "Grams"
+                            c_ih = get_vc_col(['item height'], ['item_dimensions#1.height.value'])
+                            if c_ih: ws.cell(curr_r, c_ih).value = 1.3
+                            c_ihu = get_vc_col(['item height unit'], ['item_dimensions#1.height.unit'])
+                            if c_ihu: ws.cell(curr_r, c_ihu).value = "inches"
 
-                            # Country of Origin (Col 177)
-                            ws.cell(curr_r, 177).value = "India"
+                            c_pl = get_vc_col(['item package length'], ['item_package_dimensions#1.length.value'])
+                            if c_pl: ws.cell(curr_r, c_pl).value = 10
+                            c_plu = get_vc_col(['package length unit'], ['item_package_dimensions#1.length.unit'])
+                            if c_plu: ws.cell(curr_r, c_plu).value = "inches"
+
+                            c_pw = get_vc_col(['item package width'], ['item_package_dimensions#1.width.value'])
+                            if c_pw: ws.cell(curr_r, c_pw).value = 2
+                            c_pwu = get_vc_col(['package width unit'], ['item_package_dimensions#1.width.unit'])
+                            if c_pwu: ws.cell(curr_r, c_pwu).value = "inches"
+
+                            c_ph = get_vc_col(['item package height'], ['item_package_dimensions#1.height.value'])
+                            if c_ph: ws.cell(curr_r, c_ph).value = 1.3
+                            c_phu = get_vc_col(['package height unit'], ['item_package_dimensions#1.height.unit'])
+                            if c_phu: ws.cell(curr_r, c_phu).value = "inches"
+
+                            c_pwt = get_vc_col(['package weight'], ['item_package_weight#1.value'])
+                            if c_pwt: ws.cell(curr_r, c_pwt).value = 380
+                            c_pwtu = get_vc_col(['package weight unit'], ['item_package_weight#1.unit'])
+                            if c_pwtu: ws.cell(curr_r, c_pwtu).value = "Grams"
+
+                            c_coo = get_vc_col(['country of origin'], ['country_of_origin#1.value'])
+                            if c_coo: ws.cell(curr_r, c_coo).value = "India"
 
                             curr_r += 1
                             total_variants_added += 1
