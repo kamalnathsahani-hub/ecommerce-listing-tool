@@ -2,14 +2,13 @@ import streamlit as st
 import openpyxl
 from openpyxl.styles import PatternFill, Font
 import io
-import os
 import re
 import zipfile
 
 st.set_page_config(page_title="Multi-Marketplace Auto Listing Generator", layout="wide")
 
-st.title("📦 Multi-Marketplace Auto Listing Generator (Pro V4)")
-st.caption("Ajio Specialized Intelligence: Category Sheet Mapping, Auto-Hyphen SKUs, CARGO Standards & Strict Formatting")
+st.title("📦 Multi-Marketplace Auto Listing Generator (Pro V5)")
+st.caption("Ajio Complete Fix: Manufactured/Marketed By, Exact Dimension Matching & Zero Mandatory Errors")
 
 # 1. Marketplace Selection
 col_m1, col_m2 = st.columns([2, 1])
@@ -43,9 +42,7 @@ folder_images_count = {}
 col_left, col_right = st.columns(2)
 
 def clean_sku_name(name):
-    """Space ko '-' me badalna taaki koi space na rahe: e.g. MENS JEANS 29 GREY -> MENS-JEANS-29-GREY"""
     cleaned = re.sub(r'[\s_]+', '-', name.strip())
-    # remove duplicate hyphens
     cleaned = re.sub(r'-+', '-', cleaned).strip('-')
     return cleaned
 
@@ -55,7 +52,7 @@ if "Option A" in input_mode:
         zip_file = st.file_uploader(
             "Product Folders Ka ZIP Upload Karein (.zip):",
             type=["zip"],
-            help="ZIP me chahe Jeans, Cargo, Shirt, T-shirt sab mix folder hon. Har folder me 1.jpg, 2.jpg... images honi chahiye."
+            help="ZIP me har product ka folder hona chahiye aur andar 1.jpg, 2.jpg... images honi chahiye."
         )
         if zip_file:
             try:
@@ -95,7 +92,7 @@ if "Option A" in input_mode:
         sizes_input = st.text_input(
             "Sizes (comma-separated):",
             value="30, 32, 34, 36, 38",
-            help="Numeric: 28, 30, 32 ya Alpha: S, M, L, XL, 2XL, 3XL, 4XL (CARGO format support)"
+            help="Numeric: 28, 30, 32 ya Alpha: S, M, L, XL, 2XL, 3XL, 4XL"
         )
         brand_name = st.text_input(
             "Brand Name (Default Blank - chahein toh fill karein):",
@@ -150,8 +147,26 @@ else:
 
 st.divider()
 
-# 3. Trending Keywords Section
-st.subheader("2. SEO & Trending Keywords")
+# 3. Manufacturer & Legal Information
+st.subheader("2. Manufacturer & Legal Details (Mandatory For Ajio)")
+col_l1, col_l2 = st.columns(2)
+with col_l1:
+    mfg_address = st.text_area(
+        "Manufactured By (Address with Pincode):",
+        value="61/C, BLOCK-N, SUMEL BUSINESS PARK 5, Flyover, ASARVA, Ahmedabad, Gujarat, India - 380016",
+        height=80
+    )
+with col_l2:
+    mkt_address = st.text_area(
+        "Marketed By (Address with Pincode):",
+        value="61/C, BLOCK-N, SUMEL BUSINESS PARK 5, Flyover, ASARVA, Ahmedabad, Gujarat, India - 380016",
+        height=80
+    )
+
+st.divider()
+
+# 4. Trending Keywords Section
+st.subheader("3. SEO & Trending Keywords")
 custom_keywords = st.text_area(
     "Custom Trending Keywords (Optional):",
     placeholder="e.g. multi pocket cargo, streetwear casuals, relaxed fit, premium cotton blend, clean wash",
@@ -160,14 +175,13 @@ custom_keywords = st.text_area(
 
 st.divider()
 
-# 4. Template Uploader
-st.subheader("3. Template File & Generate")
+# 5. Template Uploader
+st.subheader("4. Template File & Generate")
 uploaded_file = st.file_uploader(
     "Apni Excel Template (.xlsx ya .xlsm) Upload Karein:",
     type=["xlsx", "xlsm"]
 )
 
-# Helper: Detect Category from folder name (Jeans, Cargo, Shirt, T-Shirt)
 def detect_category(folder_name):
     low = folder_name.lower()
     if "cargo" in low:
@@ -182,12 +196,11 @@ def detect_category(folder_name):
         return "trousers"
     return "general"
 
-# Helper: Find the exact sheet in workbook matching product category
 def find_sheet_for_category(wb, category):
     ignore = ['instruction', 'guideline', 'extra', 'rejection', 'seller info']
     valid_sheets = [s for s in wb.sheetnames if not any(ign in s.lower() for ign in ignore)]
 
-    if category == "cargo" or category == "trousers":
+    if category in ["cargo", "trousers"]:
         for s in valid_sheets:
             if any(w in s.lower() for w in ['trouser', 'pant', 'cargo']):
                 return s
@@ -204,13 +217,11 @@ def find_sheet_for_category(wb, category):
             if 'shirt' in s.lower() and not any(w in s.lower() for w in ['t-shirt', 'tshirt']):
                 return s
 
-    # Fallback: Styles sheet
     for s in valid_sheets:
         if 'styles' in s.lower():
             return s
     return valid_sheets[0] if valid_sheets else wb.sheetnames[0]
 
-# Helper: Color detection
 COMMON_COLORS = [
     "LightGrey", "Grey", "DarkGrey", "Black", "Navy", "Blue", "LightBlue", "DarkBlue", 
     "IceBlue", "White", "Green", "Olive", "Beige", "Brown", "Coffee", "Charcoal", "Khaki"
@@ -256,7 +267,7 @@ def build_seo_content(style, color, category, user_keywords=""):
         desc = f"Men's Casual {style} in {color}. Premium quality, featuring {kw_str}. Designed for maximum comfort and style."
         return desc[:900], f"Premium quality | Color: {color}", "Machine wash cold."
 
-if uploaded_file and st.button("🚀 Generate Ajio Multi-Category Listing File"):
+if uploaded_file and st.button("🚀 Generate Multi-Category Listing File"):
     if not detected_folders:
         st.error("Kripya kam se kam ek folder/SKU enter karein ya ZIP file upload karein!")
     else:
@@ -264,12 +275,10 @@ if uploaded_file and st.button("🚀 Generate Ajio Multi-Category Listing File")
             is_xlsm = uploaded_file.name.lower().endswith(".xlsm")
             wb = openpyxl.load_workbook(uploaded_file, keep_vba=is_xlsm)
 
-            # Unprotect all sheets
             for s in wb.sheetnames:
                 wb[s].protection.sheet = False
                 wb[s].protection.disable()
 
-            # Group folders by category
             category_folders = {}
             for raw_folder in detected_folders:
                 cat = detect_category(raw_folder)
@@ -287,7 +296,6 @@ if uploaded_file and st.button("🚀 Generate Ajio Multi-Category Listing File")
                 ws = wb[target_sheet_name]
                 sheets_modified.add(target_sheet_name)
 
-                # Find header row
                 header_row = 1
                 best_matches = 0
                 keywords = ['style', 'sku', 'mrp', 'price', 'size', 'image', 'model', 'brand', 'description', 'weight']
@@ -300,66 +308,100 @@ if uploaded_file and st.button("🚀 Generate Ajio Multi-Category Listing File")
 
                 headers = {c: str(ws.cell(header_row, c).value or '').strip() for c in range(1, ws.max_column + 1)}
 
-                def match_c(keys):
+                def get_exact_col(exact_name):
+                    clean_target = exact_name.lower().replace('*', '').replace('_', ' ').replace('-', ' ').strip()
                     for c, h in headers.items():
-                        cln = h.lower().replace('*', '').replace('_', ' ').replace('-', ' ').strip()
-                        for k in keys:
-                            if k.lower() in cln:
-                                return c
+                        clean_h = h.lower().replace('*', '').replace('_', ' ').replace('-', ' ').strip()
+                        if clean_h == clean_target:
+                            return c
                     return None
 
-                col_style = match_c(['style code', 'parent sku'])
-                col_sku = match_c(['item sku', 'sku id', 'seller sku', 'sku'])
-                col_ean = match_c(['ean', 'barcode', 'upc'])
-                col_td = match_c(['td'])
-                col_size = match_c(['size', 'standard size', 'size format'])
-                col_std_size = match_c(['standardsize'])
-                col_brand = match_c(['brand', 'brand name'])
-                col_mrp = match_c(['mrp', 'maximum retail price', 'standard price'])
-                col_desc = match_c(['style description', 'product description', 'description', 'title'])
-                col_hsn = match_c(['hsn', 'hsn code', 'tax code'])
-                col_color = match_c(['color family', 'primary color', 'color'])
-                col_pri_color = match_c(['primary color'])
-                col_fabric = match_c(['fabric type', 'fabric', 'material'])
-                col_fabric_det = match_c(['fabric detail'])
-                col_wt_art = match_c(['articledimensionsunitweight', 'item weight', 'weight'])
-                col_wt_pkg = match_c(['packagedimensionsweight', 'package weight', 'shipping weight'])
-                col_wt_uom = match_c(['weightuom', 'weight unit'])
-                col_dim_h = match_c(['height', 'articledimensionsunitheight'])
-                col_dim_l = match_c(['length', 'articledimensionsunitlength'])
-                col_dim_w = match_c(['width', 'articledimensionsunitwidth'])
-                col_dim_uom = match_c(['lengthuom', 'dimension uom'])
-                col_highlight = match_c(['highlight', 'bullet point 1', 'key features'])
-                col_add_info = match_c(['additional information 1', 'bullet point 2'])
-                col_waist = match_c(['waist'])
-                col_to_fit = match_c(['to fit waist'])
-                col_inseam = match_c(['inseam'])
-                col_country = match_c(['country of origin'])
-                col_prod_grp = match_c(['product groups'])
-                col_fash_grp = match_c(['fashion groups'])
-                col_season_cd = match_c(['season code'])
-                col_season_yr = match_c(['season year'])
-                col_fit_type = match_c(['fit type', 'style type'])
-                col_front_style = match_c(['front style'])
-                col_length = match_c(['length'])
-                col_stretch = match_c(['stretch'])
-                col_waist_rise = match_c(['waist rise'])
-                col_waist_type = match_c(['waist type'])
-                col_pkg_contains = match_c(['package contains'])
-                col_net_qty = match_c(['net quantity'])
+                def get_fallback_col(candidates):
+                    for cand in candidates:
+                        c = get_exact_col(cand)
+                        if c:
+                            return c
+                    return None
 
+                # Exact column assignments to avoid substring conflicts
+                col_style = get_fallback_col(['Style Code', 'Parent SKU'])
+                col_desc = get_fallback_col(['Style Description', 'Product Description', 'Description'])
+                col_sku = get_fallback_col(['Item SKU', 'SKU ID', 'Seller SKU', 'SKU'])
+                col_brand = get_fallback_col(['Brand', 'Brand Name'])
+                col_ean = get_fallback_col(['EAN', 'Barcode', 'UPC'])
+                col_td = get_fallback_col(['TD'])
+                col_mrp = get_fallback_col(['MRP', 'Maximum Retail Price', 'Standard Price'])
+                col_hsn = get_fallback_col(['HSN', 'HSN Code'])
+                col_prod_grp = get_fallback_col(['Product Groups'])
+                col_fash_grp = get_fallback_col(['Fashion Groups'])
+                col_season_cd = get_fallback_col(['Season Code'])
+                col_season_yr = get_fallback_col(['Season Year'])
+                col_size = get_fallback_col(['Size'])
+                col_std_size = get_fallback_col(['StandardSize'])
+
+                # Article Dimensions
+                col_art_h = get_fallback_col(['articleDimensionsUnitHeight'])
+                col_art_l = get_fallback_col(['articleDimensionsUnitLength'])
+                col_art_w = get_fallback_col(['articleDimensionsUnitWidth'])
+                col_art_luom = get_fallback_col(['articleDimensionsUnitLengthUOM'])
+                col_art_wt = get_fallback_col(['articleDimensionsUnitWeight'])
+                col_art_wtuom = get_fallback_col(['articleDimensionsUnitWeightUOM'])
+
+                # Package Dimensions (Exact match with Article values)
+                col_pkg_h = get_fallback_col(['packageDimensionsHeight'])
+                col_pkg_l = get_fallback_col(['packageDimensionsLength'])
+                col_pkg_w = get_fallback_col(['packageDimensionsWidth'])
+                col_pkg_luom = get_fallback_col(['packageDimensionsLengthUOM'])
+                col_pkg_wt = get_fallback_col(['packageDimensionsWeight'])
+                col_pkg_wtuom = get_fallback_col(['packageDimensionsWeightUOM'])
+
+                # Mandatory Content Fields
+                col_comp_count = get_fallback_col(['Component Count'])
+                col_country = get_fallback_col(['Country of Origin'])
+                col_mfg_by = get_fallback_col(['Manufactured By'])
+                col_mkt_by = get_fallback_col(['Marketed By'])
+                col_net_qty = get_fallback_col(['Net Quantity'])
+                col_pkg_contains = get_fallback_col(['Package Contains'])
+
+                # Fabric & Pattern Attributes
+                col_color = get_fallback_col(['Color Family'])
+                col_pri_color = get_fallback_col(['Primary color'])
+                col_fab_detail = get_fallback_col(['Fabric Detail'])
+                col_fab_type = get_fallback_col(['Fabric Type'])
+                col_pattern = get_fallback_col(['Pattern'])
+                col_size_format = get_fallback_col(['Size Format'])
+                col_size_group = get_fallback_col(['Size Group'])
+                col_wash_care = get_fallback_col(['Wash Care'])
+
+                # Fit & Measurements
+                col_length = get_fallback_col(['Length'])
+                col_stretch = get_fallback_col(['Stretch'])
+                col_style_type = get_fallback_col(['Style Type'])
+                col_fit_type = get_fallback_col(['Fit Type'])
+                col_front_style = get_fallback_col(['Front Style'])
+                col_waist_rise = get_fallback_col(['Waist Rise'])
+                col_waist_type = get_fallback_col(['Waist Type'])
+                col_meas_type = get_fallback_col(['Measurement Type'])
+                col_to_fit = get_fallback_col(['To Fit Waist'])
+                col_waist = get_fallback_col(['Waist'])
+                col_inseam = get_fallback_col(['Inseam'])
+
+                col_highlight = get_fallback_col(['Highlight'])
+                col_add_info = get_fallback_col(['Additional Information 1'])
+
+                # Image Columns
                 img_cols = []
                 for i in range(1, 15):
-                    c_img = match_c([f'*model' if i==1 else f'model{i}', f'image {i}', f'image_{i}', f'main image' if i==1 else f'other image {i-1}', f'front image' if i==1 else f'back image'])
-                    if c_img and c_img not in img_cols:
-                        img_cols.append(c_img)
+                    target_name = '*MODEL' if i == 1 else f'MODEL{i}'
+                    c_i = get_fallback_col([target_name, f'Image {i}', f'Image_{i}'])
+                    if c_i and c_i not in img_cols:
+                        img_cols.append(c_i)
 
                 curr_r = header_row + 1
                 while ws.cell(curr_r, col_style if col_style else 1).value is not None:
                     curr_r += 1
 
                 for raw_fld in folder_list:
-                    # Clean Style Code (spaces to hyphens: e.g. MENS JEANS 29 GREY -> MENS-JEANS-29-GREY)
                     clean_style = clean_sku_name(raw_fld)
                     detected_col = detect_color(raw_fld)
                     desc_text, high_text, add_text = build_seo_content(clean_style, detected_col, cat, custom_keywords)
@@ -374,7 +416,6 @@ if uploaded_file and st.button("🚀 Generate Ajio Multi-Category Listing File")
                         clean_sz = clean_sku_name(sz)
                         full_sku = f"{clean_style}-{clean_sz}"
 
-                        # Waist calculations
                         try:
                             num_sz = int(re.findall(r'\d+', clean_sz)[0])
                             w_val = str(num_sz + 1)
@@ -383,54 +424,82 @@ if uploaded_file and st.button("🚀 Generate Ajio Multi-Category Listing File")
                             w_val = "34"
                             tf_val = "32"
 
-                        # Values mapping based on CARGO/Jeans rules
+                        # Core Identification
                         if col_style: ws.cell(curr_r, col_style).value = clean_style
-                        if col_sku: ws.cell(curr_r, col_sku).value = full_sku
-                        if col_ean: ws.cell(curr_r, col_ean).value = full_sku # Exact SKU match
-                        if col_td: ws.cell(curr_r, col_td).value = default_td # By default 50
-                        if col_size: ws.cell(curr_r, col_size).value = clean_sz
-                        if col_std_size: ws.cell(curr_r, col_std_size).value = clean_sz
-                        if col_brand: ws.cell(curr_r, col_brand).value = brand_name
                         if col_desc: ws.cell(curr_r, col_desc).value = desc_text
+                        if col_sku: ws.cell(curr_r, col_sku).value = full_sku
+                        if col_brand: ws.cell(curr_r, col_brand).value = brand_name
+                        if col_ean: ws.cell(curr_r, col_ean).value = full_sku
+                        if col_td: ws.cell(curr_r, col_td).value = default_td
                         if col_hsn: ws.cell(curr_r, col_hsn).value = 62034200 if cat in ['cargo', 'trousers'] else 62034290
                         if col_prod_grp: ws.cell(curr_r, col_prod_grp).value = "Casual"
                         if col_fash_grp: ws.cell(curr_r, col_fash_grp).value = "Fashion"
                         if col_season_cd: ws.cell(curr_r, col_season_cd).value = "Core"
                         if col_season_yr: ws.cell(curr_r, col_season_yr).value = "2026"
+                        if col_size: ws.cell(curr_r, col_size).value = clean_sz
+                        if col_std_size: ws.cell(curr_r, col_std_size).value = clean_sz
+
+                        # Dimensions: Article & Package Identical
+                        dim_h, dim_l, dim_w, dim_uom = "2", "25", "24", "CM"
+                        wt_val, wt_uom = "350", "GRAM"
+
+                        if col_art_h: ws.cell(curr_r, col_art_h).value = dim_h
+                        if col_art_l: ws.cell(curr_r, col_art_l).value = dim_l
+                        if col_art_w: ws.cell(curr_r, col_art_w).value = dim_w
+                        if col_art_luom: ws.cell(curr_r, col_art_luom).value = dim_uom
+                        if col_art_wt: ws.cell(curr_r, col_art_wt).value = wt_val
+                        if col_art_wtuom: ws.cell(curr_r, col_art_wtuom).value = wt_uom
+
+                        if col_pkg_h: ws.cell(curr_r, col_pkg_h).value = dim_h
+                        if col_pkg_l: ws.cell(curr_r, col_pkg_l).value = dim_l
+                        if col_pkg_w: ws.cell(curr_r, col_pkg_w).value = dim_w
+                        if col_pkg_luom: ws.cell(curr_r, col_pkg_luom).value = dim_uom
+                        if col_pkg_wt: ws.cell(curr_r, col_pkg_wt).value = wt_val
+                        if col_pkg_wtuom: ws.cell(curr_r, col_pkg_wtuom).value = wt_uom
+
+                        # Mandatory Legal Fields
+                        if col_comp_count: ws.cell(curr_r, col_comp_count).value = 1
                         if col_country: ws.cell(curr_r, col_country).value = "India"
+                        if col_mfg_by: ws.cell(curr_r, col_mfg_by).value = mfg_address
+                        if col_mkt_by: ws.cell(curr_r, col_mkt_by).value = mkt_address
+                        if col_net_qty: ws.cell(curr_r, col_net_qty).value = 1
+                        if col_pkg_contains: ws.cell(curr_r, col_pkg_contains).value = "1"
+
+                        # Mandatory Fabric, Pattern & Style Fields
+                        fab_type_val = "Cotton" if cat in ['cargo', 'trousers', 'shirt'] else "Denim"
+                        pattern_val = "Solid" if cat in ['cargo', 'trousers'] else "Washed"
+
                         if col_color: ws.cell(curr_r, col_color).value = detected_col
                         if col_pri_color: ws.cell(curr_r, col_pri_color).value = detected_col
+                        if col_fab_detail: ws.cell(curr_r, col_fab_detail).value = fab_type_val
+                        if col_fab_type: ws.cell(curr_r, col_fab_type).value = fab_type_val
+                        if col_pattern: ws.cell(curr_r, col_pattern).value = pattern_val
+                        if col_size_format: ws.cell(curr_r, col_size_format).value = "UNI"
+                        if col_size_group: ws.cell(curr_r, col_size_group).value = "Regular"
+                        if col_wash_care: ws.cell(curr_r, col_wash_care).value = "Machine wash"
 
-                        # Fabric & Attributes
-                        fab_val = "Cotton" if cat in ['cargo', 'trousers', 'shirt'] else "Denim"
-                        if col_fabric: ws.cell(curr_r, col_fabric).value = fab_val
-                        if col_fabric_det: ws.cell(curr_r, col_fabric_det).value = fab_val
-                        if col_fit_type: ws.cell(curr_r, col_fit_type).value = "Relaxed Fit" if cat in ['cargo', 'trousers'] else "Relaxed"
-                        if col_front_style: ws.cell(curr_r, col_front_style).value = "Flat Front"
+                        # Fits & Waist Parameters
                         if col_length: ws.cell(curr_r, col_length).value = "Full length"
                         if col_stretch: ws.cell(curr_r, col_stretch).value = "Stretch"
+                        if col_style_type: ws.cell(curr_r, col_style_type).value = "Cargo" if cat in ['cargo', 'trousers'] else "Relaxed"
+                        if col_fit_type: ws.cell(curr_r, col_fit_type).value = "Relaxed Fit"
+                        if col_front_style: ws.cell(curr_r, col_front_style).value = "Flat Front"
+
+                        # Fixed: Valid dropdown string for Waist Rise
                         if col_waist_rise: ws.cell(curr_r, col_waist_rise).value = "Mid Rise"
                         if col_waist_type: ws.cell(curr_r, col_waist_type).value = "Flexi waist" if cat in ['cargo', 'trousers'] else "Fixed waist"
-                        if col_pkg_contains: ws.cell(curr_r, col_pkg_contains).value = "1"
-                        if col_net_qty: ws.cell(curr_r, col_net_qty).value = "1"
 
-                        # Dimensions & Weight (CARGO standard 200g-350g, 25x24x2)
-                        if col_wt_art: ws.cell(curr_r, col_wt_art).value = "350"
-                        if col_wt_pkg: ws.cell(curr_r, col_wt_pkg).value = "380"
-                        if col_wt_uom: ws.cell(curr_r, col_wt_uom).value = "GRAM"
-                        if col_dim_h: ws.cell(curr_r, col_dim_h).value = "2"
-                        if col_dim_l: ws.cell(curr_r, col_dim_l).value = "25"
-                        if col_dim_w: ws.cell(curr_r, col_dim_w).value = "24"
-                        if col_dim_uom: ws.cell(curr_r, col_dim_uom).value = "CM"
-
-                        # Highlights & Add info
-                        if col_highlight and high_text: ws.cell(curr_r, col_highlight).value = high_text
-                        if col_add_info and add_text: ws.cell(curr_r, col_add_info).value = add_text
-                        if col_waist: ws.cell(curr_r, col_waist).value = w_val
+                        # Fixed: Mandatory Measurement fields
+                        if col_meas_type: ws.cell(curr_r, col_meas_type).value = "Garment Measurement"
                         if col_to_fit: ws.cell(curr_r, col_to_fit).value = tf_val
+                        if col_waist: ws.cell(curr_r, col_waist).value = w_val
                         if col_inseam: ws.cell(curr_r, col_inseam).value = "32"
 
-                        # Image sequence
+                        # Highlights & Additional Info
+                        if col_highlight and high_text: ws.cell(curr_r, col_highlight).value = high_text
+                        if col_add_info and add_text: ws.cell(curr_r, col_add_info).value = add_text
+
+                        # Image URLs
                         for img_idx, img_link in enumerate(sku_img_urls):
                             if img_idx < len(img_cols):
                                 ws.cell(curr_r, img_cols[img_idx]).value = img_link
@@ -452,7 +521,7 @@ if uploaded_file and st.button("🚀 Generate Ajio Multi-Category Listing File")
             wb.save(output)
             output.seek(0)
 
-            st.success(f"🎉 Zabardast! Total {len(detected_folders)} folders ke {total_variants_added} variants create ho gaye sheets me: {', '.join(sheets_modified)}!")
+            st.success(f"🎉 Total {len(detected_folders)} folders ke {total_variants_added} variants create ho gaye sheets me: {', '.join(sheets_modified)}!")
             st.download_button(
                 label="📥 Download Ready Ajio Listing File",
                 data=output,
