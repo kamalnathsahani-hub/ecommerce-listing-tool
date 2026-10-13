@@ -154,14 +154,16 @@ with col_s1:
 with col_s2:
     mfg_address = st.text_area(
         "Manufactured By (Address with Pincode):",
-        value="61/C, BLOCK-N, SUMEL BUSINESS PARK 5, Flyover, ASARVA, Ahmedabad, Gujarat, India - 380016",
+        value="",
+        placeholder="Enter Manufacturer complete address with Pincode...",
         height=100
     )
 
 with col_s3:
     mkt_address = st.text_area(
         "Marketed By / Packer Details:",
-        value="61/C, BLOCK-N, SUMEL BUSINESS PARK 5, Flyover, ASARVA, Ahmedabad, Gujarat, India - 380016",
+        value="",
+        placeholder="Enter Marketer / Packer complete address with Pincode...",
         height=100
     )
 
