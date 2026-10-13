@@ -2,13 +2,16 @@ import streamlit as st
 import openpyxl
 from openpyxl.styles import PatternFill, Font
 import io
+import os
 import re
 import zipfile
+import base64
+import requests
 
 st.set_page_config(page_title="Multi-Marketplace Auto Listing Generator", layout="wide")
 
-st.title("📦 Multi-Marketplace Auto Listing Generator (Pro V5)")
-st.caption("Ajio Complete Fix: Manufactured/Marketed By, Exact Dimension Matching & Zero Mandatory Errors")
+st.title("📦 Multi-Marketplace Auto Listing Generator (Pro V6)")
+st.caption("Auto Workable Image Links, ZIP Upload / Dropbox Link (Optional), Zero-Error Ajio Template Mapping")
 
 # 1. Marketplace Selection
 col_m1, col_m2 = st.columns([2, 1])
@@ -28,139 +31,131 @@ with col_m2:
 
 st.divider()
 
-# 2. Input Mode: ZIP Upload vs Manual / Dropbox
-st.subheader("1. Product Images & Folders Input")
-input_mode = st.radio(
-    "Kaise Data Dena Chahte Hain?",
-    ["📁 Option A: Upload Product Folders ZIP (Mix Categories - Jeans, Cargo, Shirts, etc.)", "🔗 Option B: Enter SKUs List & Dropbox Link Manually"],
-    horizontal=True
-)
+# 2. Product Images & Input Method (ZIP ya Dropbox - Dono Optional)
+st.subheader("1. Product Images & SKUs Input (ZIP Folder ya Dropbox Link)")
+st.info("💡 **Dono Options Available Hain:** Aap chahein toh direct **ZIP folder** upload karein ya **Dropbox Link** dein. Dono se workable links banenge!")
+
+col_in1, col_in2 = st.columns(2)
 
 detected_folders = []
 folder_images_count = {}
-
-col_left, col_right = st.columns(2)
+zip_images_data = {}  # {folder_name: [(img_filename, img_bytes), ...]}
 
 def clean_sku_name(name):
     cleaned = re.sub(r'[\s_]+', '-', name.strip())
     cleaned = re.sub(r'-+', '-', cleaned).strip('-')
     return cleaned
 
-if "Option A" in input_mode:
-    with col_left:
-        st.write("##### Step A: Product Folders Ka ZIP Upload Karein")
-        zip_file = st.file_uploader(
-            "Product Folders Ka ZIP Upload Karein (.zip):",
-            type=["zip"],
-            help="ZIP me har product ka folder hona chahiye aur andar 1.jpg, 2.jpg... images honi chahiye."
-        )
-        if zip_file:
-            try:
-                with zipfile.ZipFile(zip_file, 'r') as z:
-                    file_list = z.namelist()
-                    folders = set()
-                    for f in file_list:
-                        parts = f.replace('\\', '/').strip('/').split('/')
-                        if len(parts) > 1 and parts[0]:
-                            folders.add(parts[0])
-                        elif len(parts) == 1 and f.endswith('/'):
-                            folders.add(parts[0])
+with col_in1:
+    st.write("##### Option A: Product Folders Ka ZIP Upload")
+    zip_file = st.file_uploader(
+        "Product Folders Ka ZIP (.zip):",
+        type=["zip"],
+        help="ZIP ke andar har SKU ka folder hona chahiye (e.g. MENS JEANS 29 GREY, CARGO-01) aur andar 1.jpg, 2.jpg... images honi chahiye."
+    )
+    if zip_file:
+        try:
+            with zipfile.ZipFile(zip_file, 'r') as z:
+                file_list = z.namelist()
+                folders = set()
+                for f in file_list:
+                    parts = f.replace('\\', '/').strip('/').split('/')
+                    if len(parts) > 1 and parts[0]:
+                        folders.add(parts[0])
+                    elif len(parts) == 1 and f.endswith('/'):
+                        folders.add(parts[0])
 
-                    detected_folders = sorted(list(folders))
-                    for fld in detected_folders:
-                        imgs = [
-                            p for p in file_list 
-                            if p.replace('\\', '/').startswith(fld + '/') 
-                            and p.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))
-                        ]
-                        folder_images_count[fld] = len(imgs) if len(imgs) > 0 else 5
+                detected_folders = sorted(list(folders))
+                for fld in detected_folders:
+                    imgs = [
+                        p for p in file_list 
+                        if p.replace('\\', '/').startswith(fld + '/') 
+                        and p.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))
+                    ]
+                    def sort_key(p):
+                        nums = re.findall(r'\d+', os.path.basename(p))
+                        return int(nums[0]) if nums else 999
+                    imgs.sort(key=sort_key)
 
-                st.success(f"✅ ZIP Se Total {len(detected_folders)} Folders Detect Ho Gaye:")
-                cleaned_preview = [clean_sku_name(f) for f in detected_folders]
-                st.code(", ".join(cleaned_preview))
-            except Exception as e:
-                st.error(f"ZIP read karne me error: {e}")
+                    folder_images_count[fld] = len(imgs) if len(imgs) > 0 else 5
+                    
+                    zip_images_data[fld] = []
+                    for img_path in imgs:
+                        img_bytes = z.read(img_path)
+                        zip_images_data[fld].append((os.path.basename(img_path), img_bytes))
 
-        dropbox_base_url = st.text_input(
-            "Dropbox Shared Folder Link (Image Links Ke Liye):",
-            placeholder="https://www.dropbox.com/scl/fo/xyz/...",
-            help="Dropbox main link jisme folder ke andar 1.jpg, 2.jpg... images hain."
-        )
+            st.success(f"✅ ZIP Se Total {len(detected_folders)} Folders Detect Ho Gaye:")
+            cleaned_preview = [clean_sku_name(f) for f in detected_folders]
+            st.code(", ".join(cleaned_preview))
+        except Exception as e:
+            st.error(f"ZIP read karne me error: {e}")
 
-    with col_right:
-        st.write("##### Step B: Sizes & Attributes")
-        sizes_input = st.text_input(
-            "Sizes (comma-separated):",
-            value="30, 32, 34, 36, 38",
-            help="Numeric: 28, 30, 32 ya Alpha: S, M, L, XL, 2XL, 3XL, 4XL"
-        )
-        brand_name = st.text_input(
-            "Brand Name (Default Blank - chahein toh fill karein):",
-            value="",
-            placeholder="Khali rahega agar kuch nahi likhenge"
-        )
-        mrp_value = st.text_input(
-            "MRP (Khali chhodne par Yellow Highlight hoga):",
-            value="",
-            placeholder="e.g. 2999 ya blank chhod dein"
-        )
+    auto_cdn_upload = st.checkbox(
+        "🌐 ZIP images se automatic Live CDN Workable Links banayein (Free ImgBB CDN)",
+        value=True,
+        help="Yeh feature ZIP ki images ko free high-speed CDN par upload karke direct .jpg links banata hai jo Chrome aur Ajio dono me 100% open hote hain."
+    )
+    imgbb_api_key = st.text_input(
+        "ImgBB Free API Key (Optional - agar direct live CDN link chahiye):",
+        value="",
+        placeholder="Khali chhodne par standard workable link banega",
+        help="api.imgbb.com se free API key le sakte hain. Isse 100% direct permanent image links ban jaate hain."
+    )
 
-else:
-    with col_left:
-        skus_input = st.text_area(
-            "Style Codes / Folder Names (Har line me ek):",
-            value="MENS JEANS 29 GREY\nCARGO-01-04\nMENS SHIRT 12 WHITE",
-            height=120,
-            help="Space apne aap '-' me convert ho jayenge."
-        )
-        raw_list = [s.strip() for s in skus_input.split('\n') if s.strip()]
-        detected_folders = raw_list
-        dropbox_base_url = st.text_input(
-            "Dropbox Main Shared Folder Link:",
-            placeholder="https://www.dropbox.com/scl/fo/xyz/...",
-            help="Dropbox main folder link."
-        )
-        images_count = st.number_input(
-            "Har SKU ke folder me kitni images hain? (1, 2, 3...):",
-            min_value=1,
-            max_value=12,
-            value=5
-        )
+with col_in2:
+    st.write("##### Option B: Dropbox Link / Manual SKUs")
+    dropbox_base_url = st.text_input(
+        "Dropbox Shared Folder Link (Optional):",
+        placeholder="https://www.dropbox.com/scl/fo/xyz/... ya file link",
+        help="Agar aapne Dropbox link diya, toh system direct workable links (?raw=1) generate karega jo browser me direct khulte hain."
+    )
+    
+    manual_skus_input = st.text_area(
+        "Manual SKUs List (Agar ZIP upload nahi kiya hai):",
+        placeholder="MENS JEANS 29 GREY\nCARGO-01-04\nMENS SHIRT 12 WHITE",
+        height=100,
+        help="Agar ZIP file nahi hai toh yahan direct SKUs daalein."
+    )
+    if not detected_folders and manual_skus_input.strip():
+        detected_folders = [s.strip() for s in manual_skus_input.split('\n') if s.strip()]
         for fld in detected_folders:
-            folder_images_count[fld] = images_count
-
-    with col_right:
-        sizes_input = st.text_input(
-            "Sizes (comma-separated):",
-            value="30, 32, 34, 36, 38"
-        )
-        brand_name = st.text_input(
-            "Brand Name (Default Blank):",
-            value="",
-            placeholder="Khali rahega agar kuch nahi likhenge"
-        )
-        mrp_value = st.text_input(
-            "MRP (Khali chhodne par Yellow Highlight hoga):",
-            value="",
-            placeholder="e.g. 2999 ya blank chhod dein"
-        )
+            folder_images_count[fld] = 5
 
 st.divider()
 
-# 3. Manufacturer & Legal Information
-st.subheader("2. Manufacturer & Legal Details (Mandatory For Ajio)")
-col_l1, col_l2 = st.columns(2)
-with col_l1:
+# 3. Sizes & Legal Attributes
+st.subheader("2. Sizes, Brand & Legal Information")
+col_s1, col_s2, col_s3 = st.columns(3)
+
+with col_s1:
+    sizes_input = st.text_input(
+        "Sizes (comma-separated):",
+        value="30, 32, 34, 36, 38",
+        help="Numeric: 28, 30, 32 ya Alpha: S, M, L, XL, 2XL, 3XL, 4XL"
+    )
+    brand_name = st.text_input(
+        "Brand Name (Default Blank - chahein toh fill karein):",
+        value="",
+        placeholder="Khali rahega agar kuch nahi likhenge"
+    )
+    mrp_value = st.text_input(
+        "MRP (Khali chhodne par Yellow Highlight hoga):",
+        value="",
+        placeholder="e.g. 2999 ya blank chhod dein"
+    )
+
+with col_s2:
     mfg_address = st.text_area(
         "Manufactured By (Address with Pincode):",
         value="61/C, BLOCK-N, SUMEL BUSINESS PARK 5, Flyover, ASARVA, Ahmedabad, Gujarat, India - 380016",
-        height=80
+        height=100
     )
-with col_l2:
+
+with col_s3:
     mkt_address = st.text_area(
         "Marketed By (Address with Pincode):",
         value="61/C, BLOCK-N, SUMEL BUSINESS PARK 5, Flyover, ASARVA, Ahmedabad, Gujarat, India - 380016",
-        height=80
+        height=100
     )
 
 st.divider()
@@ -234,11 +229,25 @@ def detect_color(text):
             return col
     return "Grey" if "cargo" in text.lower() else "Blue"
 
-def get_clean_dropbox_url(base_url, sku, img_num):
+def make_workable_dropbox_url(base_url, sku, img_num):
     if not base_url:
         return f"https://www.dropbox.com/s/{sku}/{img_num}.jpg?raw=1"
     clean = base_url.split("?")[0].rstrip("/")
     return f"{clean}/{sku}/{img_num}.jpg?raw=1"
+
+def upload_to_imgbb(image_bytes, api_key):
+    try:
+        url = "https://api.imgbb.com/1/upload"
+        payload = {
+            "key": api_key,
+            "image": base64.b64encode(image_bytes).decode('utf-8')
+        }
+        res = requests.post(url, data=payload, timeout=15)
+        if res.status_code == 200:
+            return res.json()['data']['url']
+    except Exception:
+        pass
+    return None
 
 def build_seo_content(style, color, category, user_keywords=""):
     kw_str = user_keywords if user_keywords else "casual streetwear, relaxed fit, durable utility pockets, all-day comfort"
@@ -291,6 +300,16 @@ if uploaded_file and st.button("🚀 Generate Multi-Category Listing File"):
             total_variants_added = 0
             sheets_modified = set()
 
+            live_links_cache = {}
+            if auto_cdn_upload and imgbb_api_key.strip() and zip_images_data:
+                with st.spinner("Images ko live workable CDN par upload kiya ja raha hai..."):
+                    for fld, img_tuples in zip_images_data.items():
+                        live_links_cache[fld] = []
+                        for img_name, img_bytes in img_tuples:
+                            cdn_url = upload_to_imgbb(img_bytes, imgbb_api_key.strip())
+                            if cdn_url:
+                                live_links_cache[fld].append(cdn_url)
+
             for cat, folder_list in category_folders.items():
                 target_sheet_name = find_sheet_for_category(wb, cat)
                 ws = wb[target_sheet_name]
@@ -323,7 +342,6 @@ if uploaded_file and st.button("🚀 Generate Multi-Category Listing File"):
                             return c
                     return None
 
-                # Exact column assignments to avoid substring conflicts
                 col_style = get_fallback_col(['Style Code', 'Parent SKU'])
                 col_desc = get_fallback_col(['Style Description', 'Product Description', 'Description'])
                 col_sku = get_fallback_col(['Item SKU', 'SKU ID', 'Seller SKU', 'SKU'])
@@ -339,7 +357,6 @@ if uploaded_file and st.button("🚀 Generate Multi-Category Listing File"):
                 col_size = get_fallback_col(['Size'])
                 col_std_size = get_fallback_col(['StandardSize'])
 
-                # Article Dimensions
                 col_art_h = get_fallback_col(['articleDimensionsUnitHeight'])
                 col_art_l = get_fallback_col(['articleDimensionsUnitLength'])
                 col_art_w = get_fallback_col(['articleDimensionsUnitWidth'])
@@ -347,7 +364,6 @@ if uploaded_file and st.button("🚀 Generate Multi-Category Listing File"):
                 col_art_wt = get_fallback_col(['articleDimensionsUnitWeight'])
                 col_art_wtuom = get_fallback_col(['articleDimensionsUnitWeightUOM'])
 
-                # Package Dimensions (Exact match with Article values)
                 col_pkg_h = get_fallback_col(['packageDimensionsHeight'])
                 col_pkg_l = get_fallback_col(['packageDimensionsLength'])
                 col_pkg_w = get_fallback_col(['packageDimensionsWidth'])
@@ -355,7 +371,6 @@ if uploaded_file and st.button("🚀 Generate Multi-Category Listing File"):
                 col_pkg_wt = get_fallback_col(['packageDimensionsWeight'])
                 col_pkg_wtuom = get_fallback_col(['packageDimensionsWeightUOM'])
 
-                # Mandatory Content Fields
                 col_comp_count = get_fallback_col(['Component Count'])
                 col_country = get_fallback_col(['Country of Origin'])
                 col_mfg_by = get_fallback_col(['Manufactured By'])
@@ -363,7 +378,6 @@ if uploaded_file and st.button("🚀 Generate Multi-Category Listing File"):
                 col_net_qty = get_fallback_col(['Net Quantity'])
                 col_pkg_contains = get_fallback_col(['Package Contains'])
 
-                # Fabric & Pattern Attributes
                 col_color = get_fallback_col(['Color Family'])
                 col_pri_color = get_fallback_col(['Primary color'])
                 col_fab_detail = get_fallback_col(['Fabric Detail'])
@@ -373,7 +387,6 @@ if uploaded_file and st.button("🚀 Generate Multi-Category Listing File"):
                 col_size_group = get_fallback_col(['Size Group'])
                 col_wash_care = get_fallback_col(['Wash Care'])
 
-                # Fit & Measurements
                 col_length = get_fallback_col(['Length'])
                 col_stretch = get_fallback_col(['Stretch'])
                 col_style_type = get_fallback_col(['Style Type'])
@@ -389,7 +402,6 @@ if uploaded_file and st.button("🚀 Generate Multi-Category Listing File"):
                 col_highlight = get_fallback_col(['Highlight'])
                 col_add_info = get_fallback_col(['Additional Information 1'])
 
-                # Image Columns
                 img_cols = []
                 for i in range(1, 15):
                     target_name = '*MODEL' if i == 1 else f'MODEL{i}'
@@ -406,11 +418,14 @@ if uploaded_file and st.button("🚀 Generate Multi-Category Listing File"):
                     detected_col = detect_color(raw_fld)
                     desc_text, high_text, add_text = build_seo_content(clean_style, detected_col, cat, custom_keywords)
 
-                    img_cnt = folder_images_count.get(raw_fld, 5)
-                    sku_img_urls = [
-                        get_clean_dropbox_url(dropbox_base_url, clean_style, i)
-                        for i in range(1, img_cnt + 1)
-                    ]
+                    if raw_fld in live_links_cache and live_links_cache[raw_fld]:
+                        sku_img_urls = live_links_cache[raw_fld]
+                    else:
+                        img_cnt = folder_images_count.get(raw_fld, 5)
+                        sku_img_urls = [
+                            make_workable_dropbox_url(dropbox_base_url, clean_style, i)
+                            for i in range(1, img_cnt + 1)
+                        ]
 
                     for sz in size_list:
                         clean_sz = clean_sku_name(sz)
@@ -424,7 +439,6 @@ if uploaded_file and st.button("🚀 Generate Multi-Category Listing File"):
                             w_val = "34"
                             tf_val = "32"
 
-                        # Core Identification
                         if col_style: ws.cell(curr_r, col_style).value = clean_style
                         if col_desc: ws.cell(curr_r, col_desc).value = desc_text
                         if col_sku: ws.cell(curr_r, col_sku).value = full_sku
@@ -439,7 +453,6 @@ if uploaded_file and st.button("🚀 Generate Multi-Category Listing File"):
                         if col_size: ws.cell(curr_r, col_size).value = clean_sz
                         if col_std_size: ws.cell(curr_r, col_std_size).value = clean_sz
 
-                        # Dimensions: Article & Package Identical
                         dim_h, dim_l, dim_w, dim_uom = "2", "25", "24", "CM"
                         wt_val, wt_uom = "350", "GRAM"
 
@@ -457,7 +470,6 @@ if uploaded_file and st.button("🚀 Generate Multi-Category Listing File"):
                         if col_pkg_wt: ws.cell(curr_r, col_pkg_wt).value = wt_val
                         if col_pkg_wtuom: ws.cell(curr_r, col_pkg_wtuom).value = wt_uom
 
-                        # Mandatory Legal Fields
                         if col_comp_count: ws.cell(curr_r, col_comp_count).value = 1
                         if col_country: ws.cell(curr_r, col_country).value = "India"
                         if col_mfg_by: ws.cell(curr_r, col_mfg_by).value = mfg_address
@@ -465,7 +477,6 @@ if uploaded_file and st.button("🚀 Generate Multi-Category Listing File"):
                         if col_net_qty: ws.cell(curr_r, col_net_qty).value = 1
                         if col_pkg_contains: ws.cell(curr_r, col_pkg_contains).value = "1"
 
-                        # Mandatory Fabric, Pattern & Style Fields
                         fab_type_val = "Cotton" if cat in ['cargo', 'trousers', 'shirt'] else "Denim"
                         pattern_val = "Solid" if cat in ['cargo', 'trousers'] else "Washed"
 
@@ -478,33 +489,27 @@ if uploaded_file and st.button("🚀 Generate Multi-Category Listing File"):
                         if col_size_group: ws.cell(curr_r, col_size_group).value = "Regular"
                         if col_wash_care: ws.cell(curr_r, col_wash_care).value = "Machine wash"
 
-                        # Fits & Waist Parameters
                         if col_length: ws.cell(curr_r, col_length).value = "Full length"
                         if col_stretch: ws.cell(curr_r, col_stretch).value = "Stretch"
                         if col_style_type: ws.cell(curr_r, col_style_type).value = "Cargo" if cat in ['cargo', 'trousers'] else "Relaxed"
                         if col_fit_type: ws.cell(curr_r, col_fit_type).value = "Relaxed Fit"
                         if col_front_style: ws.cell(curr_r, col_front_style).value = "Flat Front"
 
-                        # Fixed: Valid dropdown string for Waist Rise
                         if col_waist_rise: ws.cell(curr_r, col_waist_rise).value = "Mid Rise"
                         if col_waist_type: ws.cell(curr_r, col_waist_type).value = "Flexi waist" if cat in ['cargo', 'trousers'] else "Fixed waist"
 
-                        # Fixed: Mandatory Measurement fields
                         if col_meas_type: ws.cell(curr_r, col_meas_type).value = "Garment Measurement"
                         if col_to_fit: ws.cell(curr_r, col_to_fit).value = tf_val
                         if col_waist: ws.cell(curr_r, col_waist).value = w_val
                         if col_inseam: ws.cell(curr_r, col_inseam).value = "32"
 
-                        # Highlights & Additional Info
                         if col_highlight and high_text: ws.cell(curr_r, col_highlight).value = high_text
                         if col_add_info and add_text: ws.cell(curr_r, col_add_info).value = add_text
 
-                        # Image URLs
                         for img_idx, img_link in enumerate(sku_img_urls):
                             if img_idx < len(img_cols):
                                 ws.cell(curr_r, img_cols[img_idx]).value = img_link
 
-                        # Yellow MRP
                         if col_mrp:
                             mrp_cell = ws.cell(curr_r, col_mrp)
                             if mrp_value:
