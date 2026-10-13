@@ -1,2 +1,6 @@
 streamlit
 openpyxl
+requests
+xlrd==1.2.0
+xlwt
+xlutils
