@@ -10,8 +10,11 @@ import requests
 
 st.set_page_config(page_title="Multi-Marketplace Auto Listing Generator", layout="wide")
 
-st.title("📦 Multi-Marketplace Auto Listing Generator (Pro V6)")
-st.caption("Auto Workable Image Links, ZIP Upload / Dropbox Link (Optional), Zero-Error Ajio Template Mapping")
+st.title("📦 Multi-Marketplace Auto Listing Generator (Pro V7)")
+st.caption("Permanent Live CDN Links, ZIP Upload / Dropbox Support, Zero-Error Ajio Template Mapping")
+
+# Permanent ImgBB API Key Hardcoded
+IMGBB_PERMANENT_KEY = "137be55d19cf3d6a7ec051e369137041"
 
 # 1. Marketplace Selection
 col_m1, col_m2 = st.columns([2, 1])
@@ -91,16 +94,11 @@ with col_in1:
             st.error(f"ZIP read karne me error: {e}")
 
     auto_cdn_upload = st.checkbox(
-        "🌐 ZIP images se automatic Live CDN Workable Links banayein (Free ImgBB CDN)",
+        "🌐 ZIP images se automatic Live CDN Workable Links banayein (Active)",
         value=True,
-        help="Yeh feature ZIP ki images ko free high-speed CDN par upload karke direct .jpg links banata hai jo Chrome aur Ajio dono me 100% open hote hain."
+        help="Yeh feature ZIP ki images ko high-speed permanent CDN par upload karke direct .jpg links banata hai jo Chrome aur Ajio dono me direct open hote hain."
     )
-    imgbb_api_key = st.text_input(
-        "ImgBB Free API Key (Optional - agar direct live CDN link chahiye):",
-        value="",
-        placeholder="Khali chhodne par standard workable link banega",
-        help="api.imgbb.com se free API key le sakte hain. Isse 100% direct permanent image links ban jaate hain."
-    )
+    st.success("⚡ Live Workable CDN Active: ZIP images automatic 100% working live links banegi!")
 
 with col_in2:
     st.write("##### Option B: Dropbox Link / Manual SKUs")
@@ -242,7 +240,7 @@ def upload_to_imgbb(image_bytes, api_key):
             "key": api_key,
             "image": base64.b64encode(image_bytes).decode('utf-8')
         }
-        res = requests.post(url, data=payload, timeout=15)
+        res = requests.post(url, data=payload, timeout=20)
         if res.status_code == 200:
             return res.json()['data']['url']
     except Exception:
@@ -300,13 +298,14 @@ if uploaded_file and st.button("🚀 Generate Multi-Category Listing File"):
             total_variants_added = 0
             sheets_modified = set()
 
+            # Automatic Live CDN Upload using permanent API Key
             live_links_cache = {}
-            if auto_cdn_upload and imgbb_api_key.strip() and zip_images_data:
+            if auto_cdn_upload and zip_images_data:
                 with st.spinner("Images ko live workable CDN par upload kiya ja raha hai..."):
                     for fld, img_tuples in zip_images_data.items():
                         live_links_cache[fld] = []
                         for img_name, img_bytes in img_tuples:
-                            cdn_url = upload_to_imgbb(img_bytes, imgbb_api_key.strip())
+                            cdn_url = upload_to_imgbb(img_bytes, IMGBB_PERMANENT_KEY)
                             if cdn_url:
                                 live_links_cache[fld].append(cdn_url)
 
