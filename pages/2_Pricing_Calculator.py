@@ -1,32 +1,49 @@
 import streamlit as st
-
-# --- SECURITY CHECK START ---
-if not st.session_state.get("pricing_access", False):
-    st.warning("🔒 Ye tool private hai. Isey use karne ke liye Access Code dalein.")
-    
-    pwd = st.text_input("Enter Access Code:", type="password")
-    if st.button("Unlock Tool"):
-        if pwd == "MYSECRET123":  # Same password jo app.py mein rakha hai
-            st.session_state.pricing_access = True
-            st.rerun()
-        else:
-            st.error("❌ Access Denied! Sahi code enter karein.")
-            
-    st.stop()  # Ye line niche ke calculator code ko load hone se rok degi jab tak password sahi na ho
-# --- SECURITY CHECK END ---
-
-# Iske niche aapka purana Pricing Calculator ka code jaisa hai waisa hi rahega...
-import streamlit as st
 import pandas as pd
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 import io
 
+# 1. Page Config hamesha sabse upar hona chahiye
 st.set_page_config(page_title="Pricing & TP Calculator", page_icon="💰", layout="wide")
 
-if st.button("⬅️ Back to Home"):
-    st.switch_page("app.py")
+# ==========================================
+# 🔒 SECURITY CHECK START
+# ==========================================
+# Yahan "MYSECRET123" ki jagah aap apna manpasand password likh sakte hain
+SECRET_PASSWORD = "MYSECRET123"
+
+if not st.session_state.get("pricing_access", False):
+    st.warning("🔒 Ye tool private hai. Isey use karne ke liye Access Code dalein.")
+    
+    pwd = st.text_input("Enter Access Code:", type="password")
+    col_btn1, col_btn2 = st.columns([1, 5])
+    with col_btn1:
+        if st.button("Unlock Tool 🔓", use_container_width=True):
+            if pwd == SECRET_PASSWORD:
+                st.session_state.pricing_access = True
+                st.rerun()
+            else:
+                st.error("❌ Access Denied! Sahi code enter karein.")
+    with col_btn2:
+        if st.button("⬅️ Back to Home"):
+            st.switch_page("app.py")
+            
+    st.stop()  # Jab tak password sahi nahi hoga, iske niche ka code run nahi hoga
+# ==========================================
+# 🔒 SECURITY CHECK END
+# ==========================================
+
+# Top Navigation & Logout Button
+top_col1, top_col2 = st.columns([8, 1])
+with top_col1:
+    if st.button("⬅️ Back to Home"):
+        st.switch_page("app.py")
+with top_col2:
+    if st.button("🔒 Lock Tool"):
+        st.session_state.pricing_access = False
+        st.rerun()
 
 st.title("💰 Multi-Brand Pricing & Amazon TP Calculator")
 st.caption("Auto-calculate ASP for ~10% Goal Margin | Live Formula Calculator Sheet + Vendor Cost & DF Attributes Master")
@@ -200,7 +217,6 @@ def calculate_row_metrics(asp, cost, tax_r, slab_info, ams_r, off_exp, cons_r, d
     margin_val = asp_wo_tax * m_pct
     ams_val = asp_wo_tax * ams_r
     tp_with_ams = asp_wo_tax - margin_val - ams_val
-    # User requirement: Do not round to integer, keep 2 decimal places (.25 etc.)
     final_tp = round(tp_with_ams + ams_val, 2)
     profit_gross = round(final_tp - cost, 2)
     profit_net = round(tp_with_ams - cost, 2)
@@ -243,9 +259,6 @@ def find_best_asp(cost, tax_r, slab_info, ams_r, off_exp, cons_r, deduct_c, endi
             diff = abs(m_pct - goal_pct)
             candidates.append((diff, m_pct >= goal_pct, cand_asp, res))
     
-    # Sort primarily by closeness to goal_pct (10%).
-    # First check candidates that are very close to 10% (preferring >= 9.8% or closest overall)
-    # Let's pick the candidate with minimum absolute difference to goal_pct
     candidates.sort(key=lambda x: x[0])
     return candidates[0][3]
 
@@ -257,7 +270,6 @@ def generate_calculator_workbook(df_results, brand_name, tax_r, slab_info, ams_r
     ws = wb.active
     ws.title = brand_name[:31]
 
-    # Styles
     title_font = Font(name="Calibri", size=13, bold=True, color="1F4E79")
     note_font = Font(name="Calibri", size=10, italic=True, color="595959")
     header_fill = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
@@ -277,7 +289,6 @@ def generate_calculator_workbook(df_results, brand_name, tax_r, slab_info, ams_r
     ws["A2"] = "Sirf peeli (yellow) cells me ASP aur Product Cost daalo. Baaki sab automatic calculate hoga. Har row = 1 article."
     ws["A2"].font = note_font
 
-    # Fixed Parameter Block (B4:B8)
     ws["A4"] = "Tax %"
     ws["B4"] = tax_r
     ws["B4"].number_format = "0.0%"
@@ -307,7 +318,6 @@ def generate_calculator_workbook(df_results, brand_name, tax_r, slab_info, ams_r
         ws[f"B{r}"].fill = param_fill
         ws[f"B{r}"].font = bold_font
 
-    # Slab Table if applicable
     if slab_info["type"] == "slab_3":
         ws["E4"], ws["F4"], ws["G4"] = "ASP slab", "ASP from", "Margin %"
         ws["E5"], ws["F5"], ws["G5"] = "Below 499", 0, slab_info["s1"]
@@ -341,7 +351,6 @@ def generate_calculator_workbook(df_results, brand_name, tax_r, slab_info, ams_r
         cell.font = header_font
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-    # Populate Data + 500 formula rows
     total_rows = max(500, len(df_results) + 50)
     for idx in range(total_rows):
         r = 12 + idx
@@ -354,7 +363,6 @@ def generate_calculator_workbook(df_results, brand_name, tax_r, slab_info, ams_r
         ws.cell(r, 2).fill = input_fill
         ws.cell(r, 3).fill = input_fill
 
-        # Formulas
         ws.cell(r, 4, f'=IF(OR($B{r}="",$C{r}=""),"",$B{r}/(1+$B$4))')
         if slab_info["type"] == "fixed":
             ws.cell(r, 5, f'=IF(OR($B{r}="",$C{r}=""),"",D{r}*$B$5)')
@@ -365,7 +373,6 @@ def generate_calculator_workbook(df_results, brand_name, tax_r, slab_info, ams_r
 
         ws.cell(r, 6, f'=IF(OR($B{r}="",$C{r}=""),"",D{r}*$B$6)')
         ws.cell(r, 7, f'=IF(OR($B{r}="",$C{r}=""),"",D{r}-E{r}-F{r})')
-        # Exact 2 decimal places instead of integer rounding
         ws.cell(r, 8, f'=IF(OR($B{r}="",$C{r}=""),"",ROUND(G{r}+F{r},2))')
         ws.cell(r, 9, f'=IF(OR($B{r}="",$C{r}=""),"",H{r}-$C{r})')
         ws.cell(r, 10, f'=IF(OR($B{r}="",$C{r}=""),"",G{r}-$C{r})')
@@ -388,12 +395,10 @@ def generate_calculator_workbook(df_results, brand_name, tax_r, slab_info, ams_r
             ws.cell(r, 17, f'=IF(OR($B{r}="",$C{r}=""),"",IF($B{r}>=$F$6,$G$6,$G$5))')
             ws.cell(r, 17).number_format = "0.0%"
 
-        # Number formatting for currency/decimals
         for c_i in [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]:
             ws.cell(r, c_i).number_format = "0.00"
             ws.cell(r, c_i).border = thin_border
 
-    # Auto-adjust column widths
     for col in range(1, len(headers) + 1):
         ws.column_dimensions[get_column_letter(col)].width = 18
     ws.row_dimensions[11].height = 32
@@ -408,15 +413,11 @@ def generate_calculator_workbook(df_results, brand_name, tax_r, slab_info, ams_r
 def generate_vendor_master_workbook(df_results, sc_vendor_str):
     wb = openpyxl.Workbook()
     
-    # Styles matching original template
     yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
     grey_fill = PatternFill(start_color="EFEFEF", end_color="EFEFEF", fill_type="solid")
     header_font = Font(name="Calibri", size=10, bold=True)
-    regular_font = Font(name="Calibri", size=10)
 
-    # ----------------------------------------
     # SHEET 1: Cost
-    # ----------------------------------------
     ws_cost = wb.active
     ws_cost.title = "Cost"
     cost_headers = [
@@ -439,7 +440,7 @@ def generate_vendor_master_workbook(df_results, sc_vendor_str):
         c1.fill = grey_fill
         c2.fill = grey_fill
 
-        ws_cost.cell(r_num, 3, None) # vendor_code blank as requested
+        ws_cost.cell(r_num, 3, None)
         ws_cost.cell(r_num, 4, "INR")
         
         c5 = ws_cost.cell(r_num, 5, tp_val)
@@ -455,17 +456,13 @@ def generate_vendor_master_workbook(df_results, sc_vendor_str):
     for col in range(1, 10):
         ws_cost.column_dimensions[get_column_letter(col)].width = 22
 
-    # ----------------------------------------
     # SHEET 2: validations
-    # ----------------------------------------
     ws_val = wb.create_sheet(title="validations")
     ws_val["A1"] = "FC"
     ws_val["A2"] = "DF"
     ws_val["A3"] = "Both FC and DF"
 
-    # ----------------------------------------
     # SHEET 3: DF Attributes
-    # ----------------------------------------
     ws_df = wb.create_sheet(title="DF Attributes")
     ws_df["A1"] = "version=1.0.0"
 
@@ -516,7 +513,7 @@ def generate_vendor_master_workbook(df_results, sc_vendor_str):
         ws_df.cell(r_num, 21, 30)
         ws_df.cell(r_num, 22, "centimeters")
         ws_df.cell(r_num, 23, 25)
-        ws_df.cell(r_num, 24, None) # list_price.value_with_tax same as current file (blank)
+        ws_df.cell(r_num, 24, None)
         ws_df.cell(r_num, 25, "INR")
         ws_df.cell(r_num, 26, str(row["SKU"]))
         if r_idx == 0:
@@ -525,9 +522,7 @@ def generate_vendor_master_workbook(df_results, sc_vendor_str):
     for col in range(1, 27):
         ws_df.column_dimensions[get_column_letter(col)].width = 24
 
-    # ----------------------------------------
     # SHEET 4: Deals - to be filled by VM
-    # ----------------------------------------
     ws_deals = wb.create_sheet(title="Deals - to be filled by VM")
     ws_deals["A1"] = "Action"
     ws_deals["B1"] = "ASIN"
@@ -535,9 +530,7 @@ def generate_vendor_master_workbook(df_results, sc_vendor_str):
     ws_deals["D1"] = "PAWS"
     ws_deals["F1"] = "*Sheet to be filled by VM"
 
-    # ----------------------------------------
     # SHEET 5: Sheet2
-    # ----------------------------------------
     ws_s2 = wb.create_sheet(title="Sheet2")
     s2_vals = ["Apparel", "Books", "MI", "OP", "Shoes", "SPB", "WLA"]
     for i, v in enumerate(s2_vals, start=1):
@@ -558,7 +551,6 @@ tab1, tab2 = st.tabs(["📂 Bulk Excel Processor (Auto ASP + 2 Workbooks)", "�
 with tab1:
     st.subheader("2️⃣ Step 2: Upload Input Excel (ASIN, SKU, Product Cost, MRP)")
     
-    # Provide Sample Input Template Download
     sample_df = pd.DataFrame({
         "ASIN": ["B0HMH6MRG1", "B0HMH1YKVP", "B0HMH52D6L"],
         "SKU": ["56-S-01-GREEN-2XL", "56-S-01-GREEN-L", "56-S-01-GREEN-M"],
@@ -595,7 +587,6 @@ with tab1:
 
             st.success(f"✅ File uploaded successfully! Total Rows: {len(raw_df)}")
 
-            # Smart Column Mapping
             cols = list(raw_df.columns)
             def guess_col(keywords, default_idx=0):
                 for idx, c in enumerate(cols):
@@ -618,7 +609,6 @@ with tab1:
                 mrp_default_idx = (mrp_guess + 1) if any(k in str(cols[mrp_guess]).lower() for k in ["mrp", "list"]) else 0
                 mrp_col = st.selectbox("MRP Column", mrp_options, index=mrp_default_idx)
 
-            # Process Rows
             processed_rows = []
             for idx, r in raw_df.iterrows():
                 asin_v = str(r[asin_col]).strip() if pd.notna(r[asin_col]) else ""
@@ -695,7 +685,6 @@ with tab1:
                     hide_index=True
                 )
 
-                # Recalculate if user edited ASP or Product Cost in data_editor
                 final_rows = []
                 for idx, r in edited_df.iterrows():
                     recalc = calculate_row_metrics(
