@@ -1,4 +1,22 @@
 import streamlit as st
+
+# --- SECURITY CHECK START ---
+if not st.session_state.get("pricing_access", False):
+    st.warning("🔒 Ye tool private hai. Isey use karne ke liye Access Code dalein.")
+    
+    pwd = st.text_input("Enter Access Code:", type="password")
+    if st.button("Unlock Tool"):
+        if pwd == "MYSECRET123":  # Same password jo app.py mein rakha hai
+            st.session_state.pricing_access = True
+            st.rerun()
+        else:
+            st.error("❌ Access Denied! Sahi code enter karein.")
+            
+    st.stop()  # Ye line niche ke calculator code ko load hone se rok degi jab tak password sahi na ho
+# --- SECURITY CHECK END ---
+
+# Iske niche aapka purana Pricing Calculator ka code jaisa hai waisa hi rahega...
+import streamlit as st
 import pandas as pd
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
