@@ -48,7 +48,7 @@ st.title("💰 Multi-Brand Pricing & Amazon TP Calculator")
 st.caption("Auto-calculate ASP for ~10% Goal Margin | Live Formula Calculator Sheet + Vendor Cost & DF Attributes Master")
 
 # ==========================================
-# 1. BRAND PRESET CONFIGURATIONS (Updated with Image Mapping)
+# 1. BRAND PRESET CONFIGURATIONS
 # ==========================================
 BRAND_CONFIGS = {
     "FABNEX": {
@@ -422,7 +422,9 @@ def generate_vendor_master_workbook(df_results, vendor_code_val, sc_vendor_str):
     grey_fill = PatternFill(start_color="EFEFEF", end_color="EFEFEF", fill_type="solid")
     header_font = Font(name="Calibri", size=10, bold=True)
 
+    # ==========================================
     # SHEET 1: Cost
+    # ==========================================
     ws_cost = wb.active
     ws_cost.title = "Cost"
     cost_headers = [
@@ -462,13 +464,9 @@ def generate_vendor_master_workbook(df_results, vendor_code_val, sc_vendor_str):
     for col in range(1, 10):
         ws_cost.column_dimensions[get_column_letter(col)].width = 22
 
-    # SHEET 2: validations
-    ws_val = wb.create_sheet(title="validations")
-    ws_val["A1"] = "FC"
-    ws_val["A2"] = "DF"
-    ws_val["A3"] = "Both FC and DF"
-
-    # SHEET 3: DF Attributes
+    # ==========================================
+    # SHEET 2: DF Attributes
+    # ==========================================
     ws_df = wb.create_sheet(title="DF Attributes")
     ws_df["A1"] = "version=1.0.0"
 
@@ -529,20 +527,15 @@ def generate_vendor_master_workbook(df_results, vendor_code_val, sc_vendor_str):
     for col in range(1, 27):
         ws_df.column_dimensions[get_column_letter(col)].width = 24
 
-    # SHEET 4: Deals - to be filled by VM
+    # ==========================================
+    # SHEET 3: Deals - to be filled by VM
+    # ==========================================
     ws_deals = wb.create_sheet(title="Deals - to be filled by VM")
     ws_deals["A1"] = "Action"
     ws_deals["B1"] = "ASIN"
     ws_deals["C1"] = "Deal Price"
     ws_deals["D1"] = "PAWS"
     ws_deals["F1"] = "*Sheet to be filled by VM"
-
-    # SHEET 5: Sheet2
-    ws_s2 = wb.create_sheet(title="Sheet2")
-    s2_vals = ["Apparel", "Books", "MI", "OP", "Shoes", "SPB", "WLA"]
-    for i, v in enumerate(s2_vals, start=1):
-        ws_s2.cell(i, 1, v)
-    ws_s2["E1"] = "INR"
 
     out = io.BytesIO()
     wb.save(out)
@@ -734,7 +727,6 @@ with tab1:
                     final_df, selected_brand, tax_pct, slab_params, ams_pct, office_exp, consult_pct, deduct_consult
                 )
                 
-                # Pass vendor_code and sc_vendor_name string to vendor workbook generator
                 vendor_excel_bytes = generate_vendor_master_workbook(final_df, target_vendor_code, target_sc_vendor_str)
 
                 with dl_col1:
