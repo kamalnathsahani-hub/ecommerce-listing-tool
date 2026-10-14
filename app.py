@@ -4,6 +4,8 @@ from openpyxl.styles import PatternFill, Font
 import io
 import os
 import re
+import json
+import time
 import zipfile
 import base64
 import hashlib
@@ -14,12 +16,23 @@ from datetime import datetime
 
 st.set_page_config(page_title="Multi-Marketplace Auto Listing Generator", layout="wide")
 
-st.title("📦 Multi-Marketplace Auto Listing Generator (Universal Pro V14)")
-st.caption("Ajio | Amazon Vendor Central | VC➜SC Convert | Amazon Seller Central | Flipkart | Meesho | Myntra — Har marketplace apne format ke according fill hota hai")
+st.title("📦 Multi-Marketplace Auto Listing Generator (Universal Pro V17 — AI Vision)")
+st.caption("Ajio | Amazon VC | VC➜SC | Amazon SC | Flipkart | Meesho | Myntra + 🤖 FREE Gemini Vision (Optional Tick)")
 
+# ======================================================================
+#                🔑 API KEYS & AI CONFIG (YAHI EDIT KARNA HOTA HAI)
+# ======================================================================
 IMGBB_PERMANENT_KEY = "137be55d19cf3d6a7ec051e369137041"
 
-# ================= 1. MARKETPLACE SELECTION =================
+# 🤖 GEMINI AI VISION (100% FREE) - Aapki key by default set hai.
+# Nayi key banane ke liye: https://aistudio.google.com/apikey
+# (Key badalni ho to sirf neeche quotes ke andar nayi key paste karo)
+DEFAULT_GEMINI_API_KEY = "AQ.Ab8RN6Iir4BoBSujYsKLtoZZkKzzSMlxIWT9LakOoiwawdVlpg"
+DEFAULT_VISION_MODEL = "gemini-2.0-flash"   # Free tier ka sabse fast model
+
+# ======================================================================
+# 1. MARKETPLACE SELECTION
+# ======================================================================
 col_m1, col_m2 = st.columns([2, 1])
 with col_m1:
     marketplace = st.selectbox(
@@ -38,22 +51,30 @@ with col_m2:
     default_td = st.number_input(
         "TD / Default Margin (%) [Ajio ke liye]:",
         min_value=0, max_value=100, value=50,
-        help="Ajio template ke TD column me ye value jayegi. Baaki marketplaces me ignore hota hai."
+        help="Ajio template ke TD column me ye value jayegi."
     )
 
 st.divider()
 CONVERT_MODE = marketplace.startswith("Convert:")
 
-# ================= GLOBAL STATE =================
+# ======================================================================
+# GLOBAL STATE
+# ======================================================================
 detected_folders = []
 folder_images_count = {}
 zip_images_data = {}
 detected_size_chart_info = {}
 if 'img_cache' not in st.session_state:
     st.session_state['img_cache'] = {}
+if 'category_overrides' not in st.session_state:
+    st.session_state['category_overrides'] = {}
+if 'vision_results' not in st.session_state:
+    st.session_state['vision_results'] = {}
 img_cache = st.session_state['img_cache']
 
-# ================= COMMON HELPERS =================
+# ======================================================================
+# COMMON HELPERS
+# ======================================================================
 def clean_sku_name(name):
     cleaned = re.sub(r'[\s_]+', '-', str(name).strip())
     cleaned = re.sub(r'-+', '-', cleaned).strip('-')
@@ -68,6 +89,7 @@ def _norm_h(s):
     return re.sub(r'[\s_\-*]+', '', str(s or '')).strip().lower()
 
 def detect_product_category(folder_name, user_keywords="", sheet_name=""):
+    """Python intelligence: folder-name se category detect karta hai."""
     combined = f"{folder_name} {user_keywords} {sheet_name}".lower()
     if any(k in combined for k in ["hoodie", "hoody", "hooded"]):
         return "hoodie"
@@ -97,6 +119,25 @@ def detect_product_category(folder_name, user_keywords="", sheet_name=""):
         return "shirt"
     return "apparel"
 
+CATEGORY_OPTIONS = ['hoodie', 'sweatshirt', 'tshirt', 'shirt', 'jeans', 'cargo',
+                    'trousers', 'joggers', 'shorts', 'jacket', 'kurta', 'apparel']
+
+def resolve_category(clean_style, ctx, sheet_name=""):
+    """Priority: User Override > AI Vision > Folder Name > Default Category > apparel"""
+    ov = st.session_state.get('category_overrides', {})
+    if clean_style in ov and ov[clean_style]:
+        return ov[clean_style]
+    vr = ctx.get('vision_results') or {}
+    if (vr.get(clean_style) or {}).get('category'):
+        return vr[clean_style]['category']
+    cat = detect_product_category(clean_style, ctx.get('keywords', ''), sheet_name)
+    if cat == 'apparel' and ctx.get('default_category'):
+        return ctx['default_category']
+    return cat
+
+# ======================================================================
+# COLOR DETECTION (PYTHON INTELLIGENCE - typo fixes ke saath)
+# ======================================================================
 COMMON_COLORS = [
     "Beige", "LightGrey", "Grey", "DarkGrey", "Black", "Navy", "Blue", "LightBlue", "DarkBlue",
     "IceBlue", "White", "Off White", "Green", "Olive", "Brown", "Coffee", "Charcoal", "Khaki",
@@ -109,13 +150,49 @@ STANDARD_COLOR_MAPS = [
     'Turquoise', 'White', 'Yellow'
 ]
 
+COLOR_MISSPELLINGS = {
+    'maron': 'Maroon', 'marron': 'Maroon', 'marun': 'Maroon',
+    'mahroon': 'Maroon', 'mehroon': 'Maroon', 'meroon': 'Maroon',
+    'greay': 'Grey', 'gray': 'Grey', 'gery': 'Grey', 'grrey': 'Grey',
+    'begie': 'Beige', 'baige': 'Beige', 'beigh': 'Beige',
+    'blak': 'Black', 'blackk': 'Black',
+    'wite': 'White', 'whit': 'White', 'whiet': 'White',
+    'offwhite': 'Off White', 'ofwhite': 'Off White',
+    'blu': 'Blue', 'bleu': 'Blue', 'navi': 'Navy',
+    'chochlate': 'Brown', 'cofee': 'Coffee',
+    'yello': 'Yellow', 'orenge': 'Orange', 'orang': 'Orange',
+    'pinke': 'Pink', 'gren': 'Green', 'oliv': 'Olive',
+}
+
 def detect_color(text):
+    """Folder-name se color: exact -> joined -> misspelling -> fuzzy -> Black"""
     text_clean = str(text).replace('-', ' ').replace('_', ' ').lower()
-    # Lambe color names PEHLE (warna DarkGrey me Grey pehle match ho jata tha)
+    words = [w for w in text_clean.split() if w]
+    joined = ''.join(words)
     for col in sorted(COMMON_COLORS, key=len, reverse=True):
-        if col.lower() in text_clean:
+        cl = col.lower()
+        if cl in text_clean or cl.replace(' ', '') in joined:
             return col
-    return "Black"  # Universal safe default
+    for key in sorted(COLOR_MISSPELLINGS, key=len, reverse=True):
+        if key in words or key == joined:
+            return COLOR_MISSPELLINGS[key]
+    color_lowers = [c.lower() for c in COMMON_COLORS]
+    for w in words:
+        if len(w) < 4:
+            continue
+        close = difflib.get_close_matches(w, color_lowers, n=1, cutoff=0.75)
+        if close:
+            for col in COMMON_COLORS:
+                if col.lower() == close[0]:
+                    return col
+    return "Black"
+
+def resolve_color(raw_fld, clean_style, ctx):
+    """Priority: AI Vision (image me jo dikh raha) > Folder Name"""
+    vr = ctx.get('vision_results') or {}
+    if (vr.get(clean_style) or {}).get('color'):
+        return vr[clean_style]['color']
+    return detect_color(raw_fld)
 
 COLOR_FAMILY_MAP = {
     'maroon': 'Red', 'mehroon': 'Red', 'red': 'Red', 'wine': 'Red',
@@ -137,10 +214,29 @@ COLOR_FAMILY_MAP = {
     'gold': 'Gold', 'bronze': 'Bronze', 'metallic': 'Metallic',
 }
 
+def _canonicalize_color(name):
+    if not name:
+        return name
+    raw = str(name).strip().lower().replace('-', ' ').replace('_', ' ')
+    words = raw.split()
+    joined = ''.join(words)
+    for key in sorted(COLOR_MISSPELLINGS, key=len, reverse=True):
+        if key == joined or key in words:
+            return COLOR_MISSPELLINGS[key]
+    for w in words:
+        if len(w) >= 4:
+            close = difflib.get_close_matches(w, [c.lower() for c in COMMON_COLORS], n=1, cutoff=0.75)
+            if close:
+                for col in COMMON_COLORS:
+                    if col.lower() == close[0]:
+                        return col
+    return name
+
 def map_to_standard_color_map(det_col):
-    """Relevant Color Map value: Maroon -> Red | Navy -> Blue | Khaki -> Beige | Coffee -> Brown"""
+    """Relevant Color Map: Maroon -> Red | Navy -> Blue | Khaki -> Beige"""
     if not det_col:
         return "Black"
+    det_col = _canonicalize_color(det_col)
     raw = str(det_col).strip().lower().replace('-', ' ').replace('_', ' ')
     words = raw.split()
     joined = ''.join(words)
@@ -152,6 +248,28 @@ def map_to_standard_color_map(det_col):
             return COLOR_FAMILY_MAP[key]
     return "Multicolor"
 
+# ======================================================================
+# POCKET DETECTION
+# ======================================================================
+POCKET_BY_CATEGORY = {
+    'hoodie': 'Kangaroo Pocket', 'sweatshirt': 'Kangaroo Pocket',
+    'cargo': 'Cargo Pocket', 'jeans': 'Five Pocket',
+    'trousers': 'Slash Pocket', 'pants': 'Slash Pocket',
+    'joggers': 'Side Pocket', 'shorts': 'Side Pocket',
+    'jacket': 'Welt Pocket', 'shirt': 'Chest Pocket',
+    'tshirt': 'No Pocket', 'kurta': 'Side Pocket', 'apparel': 'Side Pocket',
+}
+
+def get_pocket_for_cat(cat):
+    return POCKET_BY_CATEGORY.get(cat, 'Side Pocket')
+
+def resolve_pocket(clean_style, cat, ctx):
+    """Priority: AI Vision > Category-based"""
+    vr = ctx.get('vision_results') or {}
+    if (vr.get(clean_style) or {}).get('pocket'):
+        return vr[clean_style]['pocket']
+    return get_pocket_for_cat(cat)
+
 CATEGORY_LABELS = {
     'hoodie': 'Hoodie', 'sweatshirt': 'Sweatshirt', 'cargo': 'Cargo Pants',
     'jeans': 'Jeans', 'tshirt': 'T-Shirt', 'shirt': 'Shirt', 'trousers': 'Trousers',
@@ -159,7 +277,6 @@ CATEGORY_LABELS = {
     'pants': 'Pants', 'apparel': 'Casual Wear',
 }
 
-# Category-wise HSN codes (chapal se edit kar sakte hain)
 HSN_CODE_MAP = {
     'jeans': '62034290', 'cargo': '62034200', 'trousers': '62034200', 'pants': '62034200',
     'joggers': '62034200', 'shorts': '62034200', 'tshirt': '61099090', 'shirt': '62052000',
@@ -210,7 +327,6 @@ def upload_to_imgbb(image_bytes, api_key):
     return None
 
 def upload_to_imgbb_cached(image_bytes, api_key, cache):
-    """Duplicate image dobara upload nahi hogi (MD5 cache)."""
     h = hashlib.md5(image_bytes).hexdigest()
     if h in cache:
         return cache[h]
@@ -219,7 +335,9 @@ def upload_to_imgbb_cached(image_bytes, api_key, cache):
         cache[h] = url
     return url
 
-# ================= DROPDOWN-SAFETY ENGINE (Universal) =================
+# ======================================================================
+# DROPDOWN-SAFETY ENGINE
+# ======================================================================
 def _resolve_validation_formula(ws, f1):
     f1 = str(f1).strip()
     if f1.startswith('"') and f1.endswith('"'):
@@ -293,7 +411,7 @@ def get_dropdown_options_for_column(ws, col_idx):
 
 def pick_dropdown_value(ws, col_idx, desired, fallback=None):
     """VALUE SIRF DROPDOWN SE: exact -> partial -> fuzzy -> dropdown ka pehla option.
-    Dropdown hi na mile to aapki di hui value hi likhi jaati hai."""
+    Dropdown na mile to aapki di hui value hi likhi jaati hai."""
     options = get_dropdown_options_for_column(ws, col_idx)
     if not options:
         return desired if desired is not None else fallback
@@ -315,7 +433,133 @@ def pick_dropdown_value(ws, col_idx, desired, fallback=None):
         return close[0]
     return options[0]
 
-# ================= CONTENT BUILDERS (GENERIC - NO SKU/COLOR) =================
+# ======================================================================
+# 🤖 AI VISION ENGINE (FREE - GOOGLE GEMINI)
+# ======================================================================
+KNOWN_POCKETS = [
+    'Kangaroo Pocket', 'Cargo Pocket', 'Five Pocket', 'Side Pocket', 'No Pocket',
+    'Welt Pocket', 'Chest Pocket', 'Slash Pocket', 'Flap Pocket', 'Utility Pocket',
+]
+
+AI_CAT_MAP = {
+    'hooded sweatshirt': 'hoodie', 'hooded': 'hoodie', 'hood': 'hoodie', 'pullover': 'hoodie',
+    'sweat shirt': 'sweatshirt', 'sweater': 'sweatshirt', 'crewneck': 'sweatshirt',
+    't-shirt': 'tshirt', 'tshirt': 'tshirt', 'tee': 'tshirt', 'polo': 'tshirt',
+    'denim': 'jeans', 'denim jeans': 'jeans', 'denim pants': 'jeans',
+    'pants': 'trousers', 'chinos': 'trousers', 'formal pants': 'trousers',
+    'track pants': 'joggers', 'trackpants': 'joggers', 'sweatpants': 'joggers',
+    'co-ord': 'apparel',
+}
+
+def guess_mime(filename):
+    low = str(filename or '').lower()
+    if low.endswith('.png'):
+        return 'image/png'
+    if low.endswith('.webp'):
+        return 'image/webp'
+    return 'image/jpeg'
+
+def gemini_vision_detect(image_bytes, img_name, api_key, model="gemini-2.0-flash"):
+    """Folder ki pehli image Gemini ko bhej kar Category+Color+Pocket JSON me leta hai."""
+    if not api_key or not image_bytes:
+        return None
+    cats = ", ".join([c for c in CATEGORY_OPTIONS if c != 'apparel'])
+    prompt = (
+        "You are a fashion product cataloging expert. Analyze this garment product photo and reply with ONLY valid JSON, no markdown, no extra text. Format:\n"
+        '{"category": "<one of: ' + cats + '>", "color": "<dominant visible color of the garment in simple English e.g. Maroon, Black, Navy, Grey, Beige, Olive, Khaki, Mustard, Off White>", "pocket": "<pocket style visible: Kangaroo Pocket / Cargo Pocket / Five Pocket / Side Pocket / Welt Pocket / Chest Pocket / No Pocket>"}\n'
+        "Rules: category = the exact garment type you SEE. color = dominant garment color (NOT background). "
+        "For a hoodie/sweatshirt with front pouch pocket use Kangaroo Pocket. If no visible pockets use No Pocket."
+    )
+    try:
+        b64 = base64.b64encode(image_bytes).decode('utf-8')
+        payload = {
+            "contents": [{"parts": [
+                {"text": prompt},
+                {"inline_data": {"mime_type": guess_mime(img_name), "data": b64}}
+            ]}],
+            "generationConfig": {"temperature": 0.0, "maxOutputTokens": 300},
+        }
+        res = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
+            json=payload, timeout=60
+        )
+        if res.status_code != 200:
+            return None
+        cands = res.json().get('candidates') or []
+        if not cands:
+            return None
+        parts = (cands[0].get('content') or {}).get('parts') or []
+        text = ''.join(str(p.get('text', '')) for p in parts)
+        m = re.search(r'\{.*\}', text, re.DOTALL)
+        if not m:
+            return None
+        return json.loads(m.group(0))
+    except Exception:
+        return None
+
+def canonicalize_ai_category(cat_str):
+    cat = str(cat_str or '').strip().lower().replace('-', ' ').strip()
+    cat = AI_CAT_MAP.get(cat, cat)
+    if cat in CATEGORY_OPTIONS:
+        return cat
+    close = difflib.get_close_matches(cat, [c for c in CATEGORY_OPTIONS if c != 'apparel'], n=1, cutoff=0.6)
+    return close[0] if close else None
+
+def canonicalize_ai_color(col_str):
+    col = str(col_str or '').strip()
+    if not col:
+        return None
+    canon = str(_canonicalize_color(col))
+    joined = canon.lower().replace(' ', '')
+    for c in COMMON_COLORS:
+        if c.lower().replace(' ', '') == joined:
+            return c
+    words = re.split(r'[\s\-]+', canon)
+    return ' '.join(w.capitalize() for w in words if w)
+
+def canonicalize_ai_pocket(p_str):
+    p = str(p_str or '').strip()
+    if not p:
+        return None
+    pl = p.lower()
+    for k in KNOWN_POCKETS:
+        if k.lower() == pl:
+            return k
+    close = difflib.get_close_matches(p, KNOWN_POCKETS, n=1, cutoff=0.5)
+    return close[0] if close else p.title()
+
+def run_vision_detection(zip_images_data, api_key, model):
+    """Har folder ki PEHLI image analyze karta hai. Returns (results, failed_folders)."""
+    results, failed = {}, []
+    folders = [f for f in zip_images_data.keys() if zip_images_data.get(f)]
+    if not folders:
+        return results, failed
+    progress = st.progress(0.0)
+    status = st.empty()
+    for i, fld in enumerate(folders):
+        cs = clean_sku_name(fld)
+        img_name, img_bytes = zip_images_data[fld][0]
+        status.info(f"🤖 AI analyzing: **{cs}** ({i+1}/{len(folders)})...")
+        data = gemini_vision_detect(img_bytes, img_name, api_key, model)
+        if data:
+            cat = canonicalize_ai_category(data.get('category'))
+            col = canonicalize_ai_color(data.get('color'))
+            poc = canonicalize_ai_pocket(data.get('pocket'))
+            if cat or col or poc:
+                results[cs] = {'category': cat, 'color': col, 'pocket': poc}
+            else:
+                failed.append(cs)
+        else:
+            failed.append(cs)
+        time.sleep(0.6)
+        progress.progress(min((i + 1) / len(folders), 1.0))
+    progress.empty()
+    status.empty()
+    return results, failed
+
+# ======================================================================
+# CONTENT BUILDERS (GENERIC - NO SKU/COLOR)
+# ======================================================================
 def _user_kw_list(user_kw):
     if not user_kw:
         return []
@@ -377,7 +621,6 @@ def generate_generic_keywords_200(cat, det_col, user_kw):
     return "; ".join(kw_list)[:200]
 
 def build_freehand_bullets_and_desc(cat, brand):
-    """Amazon ke liye - NOTE: SKU/Color jaan-boojh kar use NAHI hote (category-generic)."""
     b_prefix = f"{brand} " if brand else ""
     cat_label = CATEGORY_LABELS.get(cat, str(cat).title() if cat else "Casual Wear")
 
@@ -434,7 +677,6 @@ def build_freehand_bullets_and_desc(cat, brand):
     return bullets, desc
 
 def build_ajio_seo_content(cat, user_keywords=""):
-    """Ajio ke liye generic Description/Highlight/Additional Info (no SKU, no Color)."""
     kw_str = user_keywords if user_keywords else "casual streetwear, relaxed fit, durable quality, all-day comfort"
     if cat == 'cargo':
         desc = ("CARGO FOR MEN - Designed for unmatched utility and streetwear style, this Men's Cargo Pants "
@@ -464,6 +706,9 @@ def build_ajio_seo_content(cat, user_keywords=""):
         add_info = "Wash Care: Machine wash cold with like colors. Do not bleach."
     return desc[:950], highlight[:500], add_info[:500]
 
+# ======================================================================
+# WORKBOOK HELPERS
+# ======================================================================
 def ungroup_worksheet(ws):
     for col_dim in ws.column_dimensions.values():
         col_dim.outline_level = 0
@@ -504,9 +749,9 @@ def get_sku_img_urls(raw_fld, ctx, clean_style):
         urls.append(ctx['size_chart_cdn_url'])
     return urls
 
-# ============================================================
-#                    AJIO ENGINE (V7 MERGED)
-# ============================================================
+# ======================================================================
+#                    AJIO ENGINE
+# ======================================================================
 def find_sheet_for_category(wb, category):
     ignore = ['instruction', 'guideline', 'extra', 'rejection', 'seller info']
     valid_sheets = [s for s in wb.sheetnames if not any(ign in s.lower() for ign in ignore)]
@@ -546,7 +791,8 @@ def run_ajio(uploaded_file, ctx):
 
     category_folders = {}
     for raw_folder in ctx['folders']:
-        cat = detect_product_category(raw_folder, ctx['keywords'])
+        cs = clean_sku_name(raw_folder)
+        cat = resolve_category(cs, ctx)
         category_folders.setdefault(cat, []).append(raw_folder)
 
     size_list = ctx['sizes']
@@ -664,7 +910,7 @@ def run_ajio(uploaded_file, ctx):
 
         for raw_fld in folder_list:
             clean_style = clean_sku_name(raw_fld)
-            det_col = detect_color(raw_fld)
+            det_col = resolve_color(raw_fld, clean_style, ctx)
             color_family_val = map_to_standard_color_map(det_col)
             desc_text, high_text, add_text = build_ajio_seo_content(cat, ctx['keywords'])
             sku_img_urls = get_sku_img_urls(raw_fld, ctx, clean_style)
@@ -712,11 +958,10 @@ def run_ajio(uploaded_file, ctx):
                 aset(ws, curr_r, col_comp_count, 1)
                 aset(ws, curr_r, col_country, "India", dropdown=True)
                 aset(ws, curr_r, col_mfg_by, ctx['mfg'])
-                aset(ws, curr_r, col_mkt_by, ctx['mkt'])
+                aset(ws, curr_r, col_mkt_by, ctx['mfg'])
                 aset(ws, curr_r, col_net_qty, 1)
                 aset(ws, curr_r, col_pkg_contains, "1")
 
-                # Color Family = RELEVANT FAMILY (Maroon->Red), Primary color = exact
                 aset(ws, curr_r, col_color, color_family_val, dropdown=True)
                 aset(ws, curr_r, col_pri_color, det_col, dropdown=True)
                 aset(ws, curr_r, col_fab_detail, fab_type_val)
@@ -762,9 +1007,9 @@ def run_ajio(uploaded_file, ctx):
     output.seek(0)
     return output.getvalue(), preview, total_variants_added, sheets_modified
 
-# ============================================================
+# ======================================================================
 #              AMAZON VENDOR CENTRAL ENGINE
-# ============================================================
+# ======================================================================
 def run_vendor_central(uploaded_file, ctx):
     wb = load_workbook_clean(uploaded_file, uploaded_file.name)
     ws = pick_template_sheet(wb)
@@ -813,8 +1058,8 @@ def run_vendor_central(uploaded_file, ctx):
 
     for raw_fld in ctx['folders']:
         clean_style = clean_sku_name(raw_fld)
-        det_col = detect_color(raw_fld)
-        cat = detect_product_category(raw_fld, ctx['keywords'], ws.title)
+        det_col = resolve_color(raw_fld, clean_style, ctx)
+        cat = resolve_category(clean_style, ctx, ws.title)
         cat_label = CATEGORY_LABELS.get(cat, cat.title() if cat else "Casual Wear")
 
         sku_img_urls = get_sku_img_urls(raw_fld, ctx, clean_style)
@@ -823,11 +1068,12 @@ def run_vendor_central(uploaded_file, ctx):
         style_val = get_style_from_dropdown(cat)
         item_type_val = get_item_type_name_from_dropdown(cat)
         color_map_val = map_to_standard_color_map(det_col)
+        pocket_val = resolve_pocket(clean_style, cat, ctx)
         mat_val = "Cotton" if cat in ['cargo', 'hoodie', 'sweatshirt'] else "Cotton Blend"
 
         preview.append({'SKU': clean_style, 'Category': cat, 'Color': det_col,
                         'Color Map': color_map_val, 'Item Type': item_type_val,
-                        'Style': style_val, 'Material': mat_val})
+                        'Style': style_val, 'Pocket': pocket_val, 'Material': mat_val})
 
         for sz in ctx['sizes']:
             clean_sz = clean_sku_name(sz)
@@ -982,9 +1228,10 @@ def run_vendor_central(uploaded_file, ctx):
             c_fit = get_vc_col(['fit type'], ['fit_type#1.value'])
             if c_fit:
                 vset(c_fit, "Relaxed", dropdown=True)
+
             c_poc = get_vc_col(['pocket description'], ['pocket_description#1.value'])
             if c_poc:
-                ws.cell(curr_r, c_poc).value = "Utility Pocket" if cat == 'cargo' else "Basic-5-Pocket"
+                vset(c_poc, pocket_val, dropdown=True)
 
             c_care = get_vc_col(['care instructions'], ['care_instructions#1.value'])
             if c_care:
@@ -1036,7 +1283,7 @@ def run_vendor_central(uploaded_file, ctx):
 
             c_pkr = get_vc_col(['packer contact information'], ['packer_contact_information#1.value'])
             if c_pkr:
-                ws.cell(curr_r, c_pkr).value = ctx['mkt'] or None
+                ws.cell(curr_r, c_pkr).value = ctx['mfg'] or None
 
             c_iwt = get_vc_col(['item weight'], ['item_weight#1.value'])
             if c_iwt:
@@ -1124,9 +1371,9 @@ def run_vendor_central(uploaded_file, ctx):
     output.seek(0)
     return output.getvalue(), preview, added
 
-# ============================================================
-#        AMAZON SELLER CENTRAL ENGINE (header-based)
-# ============================================================
+# ======================================================================
+#        AMAZON SELLER CENTRAL ENGINE
+# ======================================================================
 SC_FIELDS = {
     'sku': ['sku', 'seller sku', 'sellersku', 'sku id'],
     'product_type': ['product type', 'feed product type', 'product_type'],
@@ -1318,7 +1565,7 @@ def fill_sc_rows(ws, find, bullets_cols, others_cols, start_row, records, ctx):
             W(r, 'item_weight', rec['item_weight'])
             W(r, 'item_weight_unit', rec.get('item_weight_unit') or 'grams')
         W(r, 'hsn_code', rec.get('hsn_code'))
-        W(r, 'pocket_description', rec.get('pocket_description'))
+        W(r, 'pocket_description', rec.get('pocket_description'), dropdown=True)
         W(r, 'sleeve_length', rec.get('sleeve_length'), dropdown=True)
         if rec.get('waist_size'):
             W(r, 'waist_size', rec['waist_size'])
@@ -1339,8 +1586,8 @@ def run_seller_central(uploaded_file, ctx):
     records, preview = [], []
     for raw_fld in ctx['folders']:
         clean_style = clean_sku_name(raw_fld)
-        det_col = detect_color(raw_fld)
-        cat = detect_product_category(raw_fld, ctx['keywords'], ws.title)
+        det_col = resolve_color(raw_fld, clean_style, ctx)
+        cat = resolve_category(clean_style, ctx, ws.title)
 
         urls = get_sku_img_urls(raw_fld, ctx, clean_style)
         bullets_list, desc_text = build_freehand_bullets_and_desc(cat, ctx['brand'])
@@ -1348,11 +1595,12 @@ def run_seller_central(uploaded_file, ctx):
         style_val = get_style_from_dropdown(cat)
         item_type_val = get_item_type_name_from_dropdown(cat)
         color_map_val = map_to_standard_color_map(det_col)
+        pocket_val = resolve_pocket(clean_style, cat, ctx)
         mat_val = "Cotton" if cat in ['cargo', 'hoodie', 'sweatshirt'] else "Cotton Blend"
 
         preview.append({'SKU': clean_style, 'Category': cat, 'Color': det_col,
                         'Color Map': color_map_val, 'Item Type': item_type_val,
-                        'Style': style_val, 'Material': mat_val})
+                        'Style': style_val, 'Pocket': pocket_val, 'Material': mat_val})
 
         for sz in ctx['sizes']:
             clean_sz = clean_sku_name(sz)
@@ -1384,7 +1632,7 @@ def run_seller_central(uploaded_file, ctx):
                 'special_size_type': 'Standard',
                 'item_weight': 350, 'item_weight_unit': 'grams',
                 'hsn_code': get_hsn_code(cat),
-                'pocket_description': 'Utility Pocket' if cat == 'cargo' else 'Basic-5-Pocket',
+                'pocket_description': pocket_val,
                 'sleeve_length': 'Long Sleeve' if cat in ['hoodie', 'sweatshirt', 'shirt'] else 'Short Sleeve',
                 'waist_size': clean_sz if clean_sz.isdigit() else None,
                 'waist_unit': 'inches' if clean_sz.isdigit() else None,
@@ -1396,9 +1644,9 @@ def run_seller_central(uploaded_file, ctx):
     output.seek(0)
     return output.getvalue(), preview, count
 
-# ============================================================
+# ======================================================================
 #        UNIVERSAL ENGINE (Flipkart / Meesho / Myntra)
-# ============================================================
+# ======================================================================
 MP_FIELD_CANDIDATES = {
     'Flipkart': {
         'sku': ['listing sku', 'seller sku', 'sku', 'sku id'],
@@ -1417,6 +1665,7 @@ MP_FIELD_CANDIDATES = {
         'generic_kw': ['search keywords', 'keywords', 'search terms'],
         'gender': ['gender'],
         'care': ['wash care', 'care instructions'],
+        'manufacturer': ['manufactured by', 'manufacturer', 'packer details', 'marketed by'],
         'img1': ['main image url', 'image url 1', 'image 1', 'image1', 'primary image url'],
     },
     'Meesho': {
@@ -1436,6 +1685,7 @@ MP_FIELD_CANDIDATES = {
         'generic_kw': ['keywords', 'search keywords'],
         'gender': ['gender'],
         'care': ['wash care', 'care instructions'],
+        'manufacturer': ['manufactured by', 'manufacturer', 'packer details', 'marketed by'],
         'img1': ['image url 1', 'image 1', 'image1', 'main image url', 'primary image url'],
     },
     'Myntra': {
@@ -1455,6 +1705,7 @@ MP_FIELD_CANDIDATES = {
         'generic_kw': ['keywords', 'search keywords'],
         'gender': ['gender', 'customer gender'],
         'care': ['wash care', 'care instructions'],
+        'manufacturer': ['manufactured by', 'manufacturer', 'marketed by', 'packer details'],
         'img1': ['image 1', 'image1', 'images1', 'main image url', 'primary image url'],
     },
 }
@@ -1465,7 +1716,6 @@ def run_generic_marketplace(uploaded_file, ctx, mp):
     mrp_fill = PatternFill(start_color="FFF200", end_color="FFF200", fill_type="solid")
     mrp_font = Font(bold=True)
 
-    # Sab sheets me best header (sku wala) dhundo
     best_ws, best_row, best_score = None, None, -1
     sku_cands = [_norm_h(x) for x in fields['sku']]
     for sname in wb.sheetnames:
@@ -1501,7 +1751,6 @@ def run_generic_marketplace(uploaded_file, ctx, mp):
     fcol = {k: find(v) for k, v in fields.items()}
     sku_col = fcol['sku'] or (find(['sku']) or 1)
 
-    # Numbered image columns
     img_cols = []
     for c in range(1, ws.max_column + 1):
         h = _norm_h(ws.cell(header_row, c).value)
@@ -1511,7 +1760,6 @@ def run_generic_marketplace(uploaded_file, ctx, mp):
         img_cols.insert(0, fcol['img1'])
     img_cols = sorted(set(img_cols))
 
-    # Bullet columns (agar hon)
     bullet_cols = []
     for c in range(1, ws.max_column + 1):
         h = _norm_h(ws.cell(header_row, c).value)
@@ -1533,8 +1781,8 @@ def run_generic_marketplace(uploaded_file, ctx, mp):
     count, preview = 0, []
     for raw_fld in ctx['folders']:
         clean_style = clean_sku_name(raw_fld)
-        det_col = detect_color(raw_fld)
-        cat = detect_product_category(raw_fld, ctx['keywords'], ws.title)
+        det_col = resolve_color(raw_fld, clean_style, ctx)
+        cat = resolve_category(clean_style, ctx, ws.title)
         color_family_val = map_to_standard_color_map(det_col)
         bullets_list, desc_text = build_freehand_bullets_and_desc(cat, ctx['brand'])
         gen_kw = re.sub(r'\s+', ' ', str(generate_generic_keywords_200(cat, det_col, ctx['keywords'])).replace(';', ' ')).strip()
@@ -1564,6 +1812,7 @@ def run_generic_marketplace(uploaded_file, ctx, mp):
             W(r, 'gender', 'Men', dropdown=True)
             W(r, 'care', 'Machine Wash', dropdown=True)
             W(r, 'hsn', get_hsn_code(cat))
+            W(r, 'manufacturer', ctx['mfg'])
 
             for bi, bc in enumerate(bullet_cols):
                 if bi < len(bullets_list):
@@ -1589,9 +1838,9 @@ def run_generic_marketplace(uploaded_file, ctx, mp):
     output.seek(0)
     return output.getvalue(), preview, count
 
-# ============================================================
-#              VC ➜ SC CONVERT ENGINE (V13 se)
-# ============================================================
+# ======================================================================
+#              VC ➜ SC CONVERT ENGINE
+# ======================================================================
 def read_vendor_central_records(vc_bytes):
     wb = openpyxl.load_workbook(io.BytesIO(vc_bytes), data_only=True)
     ws = pick_template_sheet(wb)
@@ -1658,17 +1907,19 @@ def vc_record_to_sc(rec, ctx):
     style_part = sku
     if size and sku.endswith('-' + str(size)):
         style_part = sku[:-(len(str(size)) + 1)]
-    cat = detect_product_category(style_part, '', '')
+    cs = clean_sku_name(style_part)
+    cat = resolve_category(cs, ctx, '')
 
     r['size_name'] = size
     r['size_system'] = g('bottoms_size#1.size_system', 'apparel_size#1.size_system') or 'IN'
     r['item_name'] = g('item_name#1.value', 'item name')
     r['brand_name'] = g('brand#1.value', 'brand name') or (ctx.get('brand') or None)
-    r['manufacturer'] = g('manufacturer#1.value', 'manufacturer')
+    r['manufacturer'] = g('manufacturer#1.value', 'manufacturer') or (ctx.get('mfg') or None)
     r['model_number'] = g('model_number#1.value', 'model number') or sku
     r['part_number'] = g('part_number#1.value', 'part number') or sku
     r['model_name'] = g('model_name#1.value', 'model name')
-    r['color_name'] = g('color#1.value', 'color') or detect_color(style_part)
+    vc_color = _canonicalize_color(g('color#1.value', 'color'))
+    r['color_name'] = vc_color or resolve_color(style_part, cs, ctx)
     r['color_map'] = g('color#1.standardized_values#1', 'color map') or map_to_standard_color_map(r['color_name'])
     r['item_type_name'] = g('item_type_name#1.value', 'item type name') or get_item_type_name_from_dropdown(cat)
     r['style_name'] = g('style#1.value', 'style') or get_style_from_dropdown(cat)
@@ -1713,7 +1964,7 @@ def vc_record_to_sc(rec, ctx):
     r['item_weight'] = g('item_weight#1.value', 'item weight')
     r['item_weight_unit'] = g('item_weight#1.unit', 'item weight unit') or 'Grams'
     r['hsn_code'] = g('external_product_information#1.value', 'hsn code')
-    r['pocket_description'] = g('pocket_description#1.value', 'pocket description')
+    r['pocket_description'] = g('pocket_description#1.value', 'pocket description') or resolve_pocket(cs, cat, ctx)
     r['sleeve_length'] = g('sleeve length description', 'sleeve length', 'sleeve_length#1.value')
     r['waist_size'] = g('waist#1.size#1.value', 'waist size')
     r['waist_unit'] = g('waist#1.size#1.unit') or ('inches' if r['waist_size'] else None)
@@ -1744,7 +1995,9 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
     output.seek(0)
     return output.getvalue(), preview, count
 
-# ================= 2. PRODUCT IMAGES & SKUs INPUT =================
+# ======================================================================
+# 2. PRODUCT IMAGES & SKUs INPUT
+# ======================================================================
 dropbox_base_url = ""
 if not CONVERT_MODE:
     st.subheader("1. Product Images & SKUs Input (ZIP Folder ya Dropbox Link)")
@@ -1789,19 +2042,11 @@ if not CONVERT_MODE:
                 if detected_size_chart_info:
                     st.info(f"📐 **Size Chart Detect Hua:** `{detected_size_chart_info['filename']}`")
 
-                # LIVE PREVIEW
-                if detected_folders:
-                    prev_rows = []
-                    for fld in detected_folders:
-                        p_cat = detect_product_category(fld, custom_keywords if 'custom_keywords' in dir() else "", "")
-                        p_col = detect_color(fld)
-                        prev_rows.append({
-                            'Folder/SKU': clean_sku_name(fld), 'Category': p_cat, 'Color': p_col,
-                            'Color Map/Family': map_to_standard_color_map(p_col),
-                            'Item Type': get_item_type_name_from_dropdown(p_cat),
-                            'Style': get_style_from_dropdown(p_cat),
-                        })
-                    st.dataframe(prev_rows, use_container_width=True)
+                # Naya ZIP aane par stale AI results clear karo
+                valid_keys = {clean_sku_name(f) for f in detected_folders}
+                st.session_state['vision_results'] = {
+                    k: v for k, v in st.session_state['vision_results'].items() if k in valid_keys
+                }
             except Exception as e:
                 st.error(f"ZIP read karne me error: {e}")
 
@@ -1825,28 +2070,140 @@ if not CONVERT_MODE:
 
     st.divider()
 
-# ================= 3. SIZES, BRAND & LEGAL =================
+# ======================================================================
+# 1a. 🤖 AI VISION (OPTIONAL TICK) + PREVIEW + OVERRIDES
+# ======================================================================
+default_category = None
+if not CONVERT_MODE and detected_folders:
+    st.subheader("1a. 🤖 AI Vision (Optional) + SKU-wise Category / Color Check")
+    st.caption(
+        "✅ **Tick ON** = Generate dabane par har folder ki pehli image **FREE Gemini AI** se analyze hogi "
+        "(Category + Color + Pocket image dekh kar set honge). "
+        "⬜ **Tick OFF** = 100% Python intelligence (folder-name detection, typo-fixes ke saath) — koi API use nahi hogi. "
+        "Agar AI fail ho jaye (limit khatam/Network), to automatic Python intelligence par fall back hoga. "
+        "Priority: **Override > AI > Folder Name**."
+    )
+
+    vr_all = st.session_state.get('vision_results', {})
+    kw_now = st.session_state.get('kw_input', '')
+
+    # LIVE PREVIEW (abhi ke available sources ke saath)
+    _ctx_tmp = {'vision_results': vr_all, 'keywords': kw_now, 'default_category': None}
+    prev_rows = []
+    for fld in detected_folders:
+        cs = clean_sku_name(fld)
+        p_cat = resolve_category(cs, _ctx_tmp, "")
+        p_col = resolve_color(fld, cs, _ctx_tmp)
+        if cs in vr_all:
+            source = '🤖 AI'
+        elif cs in st.session_state.get('category_overrides', {}):
+            source = '✍️ Override'
+        else:
+            source = '📄 Python'
+        prev_rows.append({
+            'Folder/SKU': cs, 'Category': p_cat, 'Color': p_col,
+            'Color Map/Family': map_to_standard_color_map(p_col),
+            'Item Type': get_item_type_name_from_dropdown(p_cat),
+            'Style': get_style_from_dropdown(p_cat),
+            'Pocket': resolve_pocket(cs, p_cat, _ctx_tmp),
+            'Source': source,
+        })
+    st.dataframe(prev_rows, use_container_width=True)
+
+    # ⬜ OPTION TICK — uncheck karte hi 100% Python intelligence chalega
+    vision_enabled = st.checkbox(
+        "🤖 AI Vision Enable Karein (FREE Gemini) — OFF karo to sirf Python intelligence chalega",
+        value=True, key="vision_enabled",
+        help="Tick OFF karne par koi API call nahi hogi — chahe limit poori ho ya na ho, file banane me koi dikkat nahi aayegi."
+    )
+
+    vision_api_key, vision_model = "", DEFAULT_VISION_MODEL
+    if vision_enabled:
+        if zip_images_data:
+            cv1, cv2 = st.columns(2)
+            with cv1:
+                vision_api_key = st.text_input(
+                    "Gemini API Key (FREE):", type="password",
+                    value=DEFAULT_GEMINI_API_KEY, placeholder="AIza... ya AQ...",
+                    key="vision_key",
+                    help="Free key: aistudio.google.com/apikey — key code me already set hai, yahan se badal bhi sakte hain."
+                )
+            with cv2:
+                vision_model = st.selectbox(
+                    "Model:", ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-1.5-flash"],
+                    index=0, key="vision_model"
+                )
+
+            c_run1, c_run2 = st.columns(2)
+            with c_run1:
+                if st.button("🔍 Abhi AI Detect Karo (Manual)"):
+                    if not vision_api_key.strip():
+                        st.error("Gemini API key khaali hai — upar daalein.")
+                    else:
+                        results, failed = run_vision_detection(zip_images_data, vision_api_key.strip(), vision_model)
+                        st.session_state['vision_results'] = results
+                        if results:
+                            st.success(f"✅ {len(results)} folders AI se detect ho gaye! Preview update ho gaya.")
+                            st.rerun()
+                        else:
+                            st.warning("AI se result nahi mila — folder-name detection use hoga.")
+            with c_run2:
+                st.caption("ℹ️ **Generate dabane par bhi AI automatic chalega** (agar tick ON hai aur results abhi tak nahi bane).")
+        else:
+            st.caption("ℹ️ AI Vision sirf ZIP mode me chalta hai (images locally hone chahiye). Dropbox/Manual mode me Python intelligence use hogi.")
+
+    # Default Category + Per-SKU Override
+    with st.expander("⚙️ Default Category & Per-SKU Override (galat detect ho to yahan badlein)"):
+        c_o1, c_o2 = st.columns([1, 2])
+        with c_o1:
+            defcat_sel = st.selectbox("Default Category (jinme kuch detect nahi hua):",
+                                      ["(auto)"] + CATEGORY_OPTIONS, key="defcat_sel")
+            default_category = None if defcat_sel == "(auto)" else defcat_sel
+
+        valid_keys = {clean_sku_name(f) for f in detected_folders}
+        st.session_state['category_overrides'] = {
+            k: v for k, v in st.session_state['category_overrides'].items() if k in valid_keys
+        }
+        ov_cols = st.columns(3)
+        for i, fld in enumerate(detected_folders):
+            cs = clean_sku_name(fld)
+            ai_cat = (st.session_state['vision_results'].get(cs) or {}).get('category')
+            auto_cat = ai_cat or detect_product_category(cs, kw_now, "")
+            tag = "🤖" if ai_cat else ""
+            with ov_cols[i % 3]:
+                choice = st.selectbox(f"{cs} (auto: {auto_cat} {tag})", ["(auto)"] + CATEGORY_OPTIONS, key=f"ov_{cs}")
+                if choice != "(auto)":
+                    st.session_state['category_overrides'][cs] = choice
+                else:
+                    st.session_state['category_overrides'].pop(cs, None)
+
+    st.divider()
+
+# ======================================================================
+# 3. SIZES, BRAND & LEGAL (SINGLE ADDRESS)
+# ======================================================================
 st.subheader("2. Sizes, Brand & Legal Information")
-col_s1, col_s2, col_s3 = st.columns(3)
+col_s1, col_s2 = st.columns([1, 2])
 
 with col_s1:
     sizes_input = st.text_input("Sizes (comma-separated):", value="30, 32, 34, 36, 38")
-    brand_name = st.text_input("Brand Name:", value="", placeholder="e.g. Lymio (blank = not applicable)")
+    brand_name = st.text_input(
+        "Brand Name:", value="",
+        placeholder="Enter Brand Name (blank = not applicable)"
+    )
     mrp_value = st.text_input("MRP (Khali chhodne par Yellow Highlight hoga):", value="", placeholder="e.g. 2999")
 
 with col_s2:
-    mfg_address = st.text_area("Manufactured By (Address with Pincode):", value="",
-                               placeholder="Enter Manufacturer complete address with Pincode...", height=100)
-
-with col_s3:
-    mkt_address = st.text_area("Marketed By / Packer Details:", value="",
-                               placeholder="Enter Marketer / Packer complete address with Pincode...", height=100)
+    mfg_address = st.text_area(
+        "Manufactured By (Address with Pincode):", value="",
+        placeholder="Enter complete address with Pincode...\n(Yahi address Manufactured By, Marketed By aur Packer Details — sab jagah use hoga)",
+        height=120
+    )
 
 if CONVERT_MODE:
     st.caption("ℹ️ Convert mode me data VC file se aayega — ye fields sirf blank fallback ke liye hain.")
 st.divider()
 
-# Seller Central / Convert Extra Fields
 sc_quantity, sc_selling_price = 1, ""
 if marketplace in ["Amazon - Seller Central", "Convert: Vendor Central ➜ Seller Central"]:
     st.subheader("Seller Central Extra Fields")
@@ -1857,17 +2214,22 @@ if marketplace in ["Amazon - Seller Central", "Convert: Vendor Central ➜ Selle
         sc_selling_price = st.text_input("Selling Price (optional):", placeholder="e.g. 899")
     st.divider()
 
-# ================= 4. SEO KEYWORDS =================
+# ======================================================================
+# 4. SEO KEYWORDS
+# ======================================================================
 custom_keywords = ""
 if not CONVERT_MODE:
     st.subheader("3. SEO & Trending Keywords")
     custom_keywords = st.text_area(
         "Custom Trending Keywords (Optional):",
-        placeholder="e.g. printed hoodie, casual hoodie, fleece pullover, cotton blend winter wear"
+        placeholder="e.g. printed hoodie, casual hoodie, fleece pullover, cotton blend winter wear",
+        key="kw_input"
     )
     st.divider()
 
-# ================= 5. TEMPLATE & GENERATE =================
+# ======================================================================
+# 5. TEMPLATE & GENERATE
+# ======================================================================
 def build_ctx():
     return {
         'folders': detected_folders,
@@ -1875,7 +2237,6 @@ def build_ctx():
         'brand': brand_name.strip(),
         'mrp': mrp_value.strip(),
         'mfg': mfg_address,
-        'mkt': mkt_address,
         'keywords': custom_keywords,
         'dropbox': dropbox_base_url if not CONVERT_MODE else "",
         'live_links_cache': {},
@@ -1884,11 +2245,13 @@ def build_ctx():
         'quantity': int(sc_quantity),
         'selling_price': sc_selling_price.strip(),
         'td': int(default_td),
+        'default_category': default_category,
+        'vision_results': st.session_state.get('vision_results', {}),
     }
 
 if CONVERT_MODE:
     st.subheader("3. Convert: VC File + SC Template Upload")
-    st.info("💡 Filled **Vendor Central file** + khali **Seller Central template** upload karein. Dropdown wali values template ke dropdown options se hi match hongi.")
+    st.info("💡 Filled **Vendor Central file** + khali **Seller Central template** upload karein.")
     vc_file = st.file_uploader("📥 Filled Vendor Central File (.xlsx/.xlsm):", type=["xlsx", "xlsm"], key="vcfile")
     sc_template = st.file_uploader("📤 Seller Central Template (.xlsx/.xlsm):", type=["xlsx", "xlsm"], key="sctpl")
 
@@ -1901,7 +2264,7 @@ if CONVERT_MODE:
                 with st.spinner("VC file read + SC template fill ho raha hai..."):
                     out, preview, count = convert_vc_to_sc(vc_file, sc_template, ctx)
                 if out:
-                    st.success(f"🎉 Conversion complete! Total {count} rows SC template me fill hui.")
+                    st.success(f"🎉 Conversion complete! Total {count} rows fill hui.")
                     if preview:
                         st.dataframe(preview, use_container_width=True)
                     out_name = f"{os.path.splitext(sc_template.name)[0]}_Converted.xlsx"
@@ -1928,6 +2291,34 @@ else:
         else:
             ctx = build_ctx()
 
+            # ==========================================================
+            # 🤖 AUTO AI VISION — SIRF TAB JAB TICK ON HO
+            # Tick OFF = 100% Python intelligence (koi API call nahi)
+            # Tick ON but API fail = automatic Python fallback
+            # ==========================================================
+            v_enabled = st.session_state.get('vision_enabled', True)
+            v_key = (st.session_state.get('vision_key', '') or DEFAULT_GEMINI_API_KEY).strip()
+            v_model = st.session_state.get('vision_model', DEFAULT_VISION_MODEL)
+
+            if v_enabled and v_key and zip_images_data and not ctx['vision_results']:
+                with st.spinner("🤖 AI Vision: har folder ki pehli image analyze ho rahi hai (Category + Color + Pocket)..."):
+                    auto_results, auto_failed = run_vision_detection(zip_images_data, v_key, v_model)
+                    ctx['vision_results'] = auto_results
+                    st.session_state['vision_results'] = auto_results
+                if auto_results:
+                    st.success(f"🤖 AI Vision: {len(auto_results)} SKUs auto-detect ho gaye!" +
+                               (f" | Fail (Python fallback hoga): {', '.join(auto_failed)}" if auto_failed else ""))
+                    st.dataframe([
+                        {'SKU': k, 'Category': v.get('category'), 'Color': v.get('color'), 'Pocket': v.get('pocket')}
+                        for k, v in auto_results.items()
+                    ], use_container_width=True)
+                else:
+                    st.warning("🤖 AI se result nahi mila — Python intelligence (folder-name detection) use hoga. "
+                               "(Tip: Tick OFF karke bhi file ban sakti hai.)")
+            elif not v_enabled and zip_images_data:
+                st.info("⬜ AI Vision OFF hai — 100% Python intelligence se file ban rahi hai.")
+
+            # CDN Upload (cached + progress bar)
             if auto_cdn_upload:
                 with st.spinner("Images ko live CDN par upload kiya ja raha hai..."):
                     progress = st.progress(0.0)
@@ -1955,7 +2346,7 @@ else:
 
                 if marketplace == "Ajio":
                     out, preview, added, extra = run_ajio(uploaded_file, ctx)
-                    st.success(f"🎉 Ajio template perfectly filled! Total {added} variants | Sheets: {', '.join(extra)}")
+                    st.success(f"🎉 Ajio template filled! Total {added} variants | Sheets: {', '.join(extra)}")
                     out_name = f"AJIO_MULTI_CATEGORY_LISTED.{'xlsm' if uploaded_file.name.lower().endswith('.xlsm') else 'xlsx'}"
 
                 elif marketplace == "Amazon - Vendor Central":
