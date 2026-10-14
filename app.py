@@ -299,10 +299,10 @@ def get_style_from_dropdown(cat):
     return mapping.get(cat, 'Modern')
 
 SC_PRODUCT_TYPE = {
-    'hoodie': 'sweatshirt', 'sweatshirt': 'sweatshirt', 'jacket': 'jacket',
-    'jeans': 'jeans', 'cargo': 'pants', 'trousers': 'pants', 'pants': 'pants',
-    'joggers': 'pants', 'shorts': 'shorts', 'tshirt': 'shirt', 'shirt': 'shirt',
-    'kurta': 'kurta', 'apparel': 'shirt',
+    'hoodie': 'SWEATSHIRT', 'sweatshirt': 'SWEATSHIRT', 'jacket': 'COAT',
+    'jeans': 'PANTS', 'cargo': 'PANTS', 'trousers': 'PANTS', 'pants': 'PANTS',
+    'joggers': 'PANTS', 'shorts': 'SHORTS', 'tshirt': 'SHIRT', 'shirt': 'SHIRT',
+    'kurta': 'KURTA', 'apparel': 'SHIRT',
 }
 
 def make_workable_dropbox_url(base_url, sku, img_num):
@@ -1392,7 +1392,7 @@ def run_vendor_central(uploaded_file, ctx):
     return output.getvalue(), preview, added
 
 # ======================================================================
-#        AMAZON SELLER CENTRAL ENGINE
+#        AMAZON SELLER CENTRAL ENGINE (UNIFIED PARENT/CHILD FORMAT)
 # ======================================================================
 SC_FIELDS = {
     'sku': ['sku', 'seller sku', 'sellersku', 'sku id'],
@@ -1436,6 +1436,102 @@ SC_FIELDS = {
     'waist_size': ['waist size', 'waist_size', 'waist'],
     'waist_unit': ['waist size unit of measure', 'waist_size_unit_of_measure', 'waist unit of measure'],
 }
+
+def _norm_amazon_key(k):
+    """Normalize Amazon VC/SC attribute keys so matching columns align 1-to-1."""
+    if not k:
+        return ""
+    s = str(k).strip().lower()
+    s = re.sub(r'\[(marketplace_id|language_tag|content_language|content_type)=[^\]]*\]', '', s)
+    s = s.replace('[audience=all]', '')
+    if s.startswith('rtip_'):
+        s = s[5:]
+    return s
+
+VC_TO_SC_KEY_ALIASES = {
+    'vendor_sku#1.value': 'contribution_sku#1.value',
+    'external_product_id#1.type': 'amzn1.volt.ca.product_id_type',
+    'external_product_id#1.value': 'amzn1.volt.ca.product_id_value',
+    'merchant_suggested_asin#1.value': 'amzn1.volt.ca.product_id_value',
+    'list_price#1.value_with_tax': 'purchasable_offer#1.maximum_retail_price#1.schedule#1.value_with_tax',
+}
+
+VC_TO_SC_LABEL_ALIASES = {
+    'vendor sku': 'sku',
+    'maximum retail price (mrp)': 'maximum retail price (sell on amazon, in)',
+    'external product id type': 'product id type',
+    'external product id': 'product id',
+    'merchant suggested asin': 'product id',
+}
+
+# Columns to replicate onto Parent SKU rows from the Child SKU data
+PARENT_INHERITED_LABELS = {
+    'product type',
+    'brand name',
+    'product description',
+    'bullet point',
+    'generic keywords',
+    'material',
+    'fabric type',
+    'fit type',
+    'pocket description',
+    'care instructions',
+    'manufacturer contact information',
+    'pattern',
+    'external product information entity',
+    'external product information',
+    'seasons',
+    'packer contact information',
+    'sleeve length description',
+    'sleeve type',
+    'item weight',
+    'item weight unit',
+    'item length',
+    'item length unit',
+    'item width',
+    'item width unit',
+    'item height',
+    'item height unit',
+    'item package length',
+    'package length unit',
+    'item package width',
+    'package width unit',
+    'item package height',
+    'package height unit',
+    'package weight',
+    'package weight unit',
+    'country of origin',
+    'dangerous goods regulations',
+}
+
+def _build_parent_title_from_child(child_title, parent_sku):
+    """Replace trailing (<child_sku>) in child title with (<parent_sku>)."""
+    if not child_title:
+        return f"({parent_sku})" if parent_sku else ""
+    t = str(child_title).strip()
+    if not parent_sku:
+        return t
+    if re.search(r'\([^()]*\)\s*$', t):
+        return re.sub(r'\([^()]*\)\s*$', f'({parent_sku})', t)
+    return f"{t} ({parent_sku})"
+
+def _detect_amz_sheet_rows(ws, default_lbl=3, default_key=4, default_data=7):
+    """Detect (label_row, key_row, data_start_row) from Row 1 metadata or header scan."""
+    r1_str = " ".join(str(ws.cell(1, c).value or '') for c in range(1, min(15, ws.max_column + 1)))
+    lbl_m = re.search(r'labelRow=(\d+)', r1_str)
+    key_m = re.search(r'attributeRow=(\d+)', r1_str)
+    dat_m = re.search(r'dataRow=(\d+)', r1_str)
+    if lbl_m and key_m and dat_m:
+        return int(lbl_m.group(1)), int(key_m.group(1)), int(dat_m.group(1))
+    for r in range(1, min(10, ws.max_row + 1)):
+        vals = [str(ws.cell(r, c).value or '').strip().lower() for c in range(1, min(40, ws.max_column + 1))]
+        if any(v in ('vendor sku', 'sku', 'seller sku') for v in vals) and any(v in ('item name', 'product type', 'brand name') for v in vals):
+            lbl_row = r
+            next_vals = [str(ws.cell(r + 1, c).value or '').strip().lower() for c in range(1, min(20, ws.max_column + 1))]
+            has_keys = any(('#' in v or '::' in v or '_sku' in v) for v in next_vals if v)
+            key_row = r + 1 if has_keys else None
+            return lbl_row, key_row, max(default_data, (key_row or lbl_row) + 1)
+    return default_lbl, default_key, default_data
 
 def find_sc_header(ws):
     scan_cols = min(ws.max_column, 60)
@@ -1572,7 +1668,7 @@ def fill_sc_rows(ws, find, bullets_cols, others_cols, start_row, records, ctx):
 
         q = rec.get('quantity')
         if q in (None, ''):
-            q = ctx.get('quantity', 1)
+            q = ctx.get('quantity', 0)
         W(r, 'quantity', q)
 
         mcol = find(SC_FIELDS['material'])
@@ -1606,21 +1702,167 @@ def fill_sc_rows(ws, find, bullets_cols, others_cols, start_row, records, ctx):
     return count
 
 def run_seller_central(uploaded_file, ctx):
+    """
+    Generates Seller Central 'Template' sheet directly from ZIP images / folders & AI Vision / Python
+    intelligence using the exact same Parent + Child structure and column layout as VC ➜ SC conversion.
+    """
     wb = load_workbook_clean(uploaded_file, uploaded_file.name)
-    ws = pick_template_sheet(wb)
+    ws = None
+    for sname in wb.sheetnames:
+        if sname.strip().lower() == 'template':
+            ws = wb[sname]
+            break
+    if ws is None:
+        ws = pick_template_sheet(wb)
+
     try:
         ungroup_worksheet(ws)
     except Exception:
         pass
 
-    sku_col, start_row, find, bullets_cols, others_cols = locate_sc_grid(ws)
+    sc_lbl_r, sc_key_r, sc_data_r = _detect_amz_sheet_rows(ws, 4, 5, 7)
 
-    records, preview = [], []
+    sc_key_to_col = {}
+    sc_lbl_occ_to_col = {}
+    sc_lbl_counts = {}
+    sc_col_to_lbl = {}
+    for c in range(1, ws.max_column + 1):
+        lbl = str(ws.cell(sc_lbl_r, c).value or '').strip().lower()
+        key = str(ws.cell(sc_key_r, c).value or '').strip() if sc_key_r else ''
+        nk = _norm_amazon_key(key)
+        sc_col_to_lbl[c] = lbl
+        if nk and nk not in sc_key_to_col:
+            sc_key_to_col[nk] = c
+        if lbl:
+            occ = sc_lbl_counts.get(lbl, 0) + 1
+            sc_lbl_counts[lbl] = occ
+            sc_lbl_occ_to_col[(lbl, occ)] = c
+
+    def get_sc_col(labels=(), keys=(), occ=1):
+        for k in keys:
+            nk = _norm_amazon_key(k)
+            if nk in sc_key_to_col:
+                return sc_key_to_col[nk]
+        for l in labels:
+            ll = l.strip().lower()
+            if (ll, occ) in sc_lbl_occ_to_col:
+                return sc_lbl_occ_to_col[(ll, occ)]
+        return None
+
+    c_sku = get_sc_col(['sku', 'seller sku'], ['contribution_sku#1.value']) or 1
+    c_prod_type = get_sc_col(['product type', 'feed product type'], ['product_type#1.value'])
+    c_action = get_sc_col(['listing action'], ['::record_action'])
+    c_parentage = get_sc_col(['parentage level'], ['parentage_level#1.value'])
+    c_parent_sku = get_sc_col(['parent sku'], ['child_parent_sku_relationship#1.parent_sku'])
+    c_var_theme = get_sc_col(['variation theme name'], ['variation_theme#1.name'])
+    c_title = get_sc_col(['item name', 'product name', 'title'], ['item_name#1.value'])
+    c_brand = get_sc_col(['brand name', 'brand'], ['brand#1.value'])
+    c_prod_id_type = get_sc_col(['product id type', 'external product id type'], ['amzn1.volt.ca.product_id_type'])
+    c_prod_id_val = get_sc_col(['product id', 'external product id'], ['amzn1.volt.ca.product_id_value'])
+    c_mod_num = get_sc_col(['model number'], ['model_number#1.value'])
+    c_mod_name = get_sc_col(['model name'], ['model_name#1.value'])
+    c_mfg = get_sc_col(['manufacturer'], ['manufacturer#1.value'])
+    c_main_img = get_sc_col(['main image url'], ['main_product_image_locator#1.media_location'])
+    c_other_imgs = [
+        get_sc_col(['other image url'], [f'other_product_image_locator_{i}#1.media_location'], occ=i)
+        for i in range(1, 9)
+    ]
+    c_desc = get_sc_col(['product description', 'description'], ['product_description#1.value'])
+    c_bullets = [
+        get_sc_col(['bullet point'], [f'bullet_point#{i}.value'], occ=i)
+        for i in range(1, 6)
+    ]
+    c_gkw = get_sc_col(['generic keywords', 'search terms'], ['generic_keyword#1.value'])
+    c_lifestyle = get_sc_col(['lifestyle'], ['lifestyle#1.value'])
+    c_style = get_sc_col(['style', 'style name'], ['style#1.value'])
+    c_dept = get_sc_col(['department name', 'department'], ['department#1.value'])
+    c_gender = get_sc_col(['target gender', 'gender'], ['target_gender#1.value'])
+    c_age = get_sc_col(['age range description', 'age range'], ['age_range_description#1.value'])
+    c_ssys = get_sc_col(['apparel size system', 'bottoms size system', 'size system'], ['apparel_size#1.size_system', 'bottoms_size#1.size_system'])
+    c_scls = get_sc_col(['apparel size class', 'bottoms size class', 'size class'], ['apparel_size#1.size_class', 'bottoms_size#1.size_class'])
+    c_sval = get_sc_col(['apparel size value', 'bottoms size value', 'size value', 'size name', 'size'], ['apparel_size#1.size', 'bottoms_size#1.size'])
+    c_mat = get_sc_col(['material', 'outer material type'], ['material#1.value'])
+    c_fab = get_sc_col(['fabric type'], ['fabric_type#1.value'])
+    c_noi = get_sc_col(['number of items'], ['number_of_items#1.value'])
+    c_itn = get_sc_col(['item type name'], ['item_type_name#1.value'])
+    c_spec_sz = get_sc_col(['special size', 'special size type'], ['special_size_type#1.value'])
+    c_cmap = get_sc_col(['color map'], ['color#1.standardized_values#1'])
+    c_color = get_sc_col(['color', 'color name'], ['color#1.value'])
+    c_part = get_sc_col(['part number'], ['part_number#1.value'])
+    c_fit = get_sc_col(['fit type'], ['fit_type#1.value'])
+    c_poc = get_sc_col(['pocket description'], ['pocket_description#1.value'])
+    c_care = get_sc_col(['care instructions'], ['care_instructions#1.value'])
+    c_mfg_cnt = get_sc_col(['manufacturer contact information'], ['manufacturer_contact_information#1.value', 'rtip_manufacturer_contact_information#1.value'])
+    c_pat = get_sc_col(['pattern', 'pattern type'], ['pattern#1.value'])
+    c_uc = get_sc_col(['unit count'], ['unit_count#1.value'])
+    c_uct = get_sc_col(['unit count type'], ['unit_count#1.type.value'])
+    c_pld = get_sc_col(['product site launch date'], ['product_site_launch_date#1.value'])
+    c_hsn_ent = get_sc_col(['external product information entity'], ['external_product_information#1.entity'])
+    c_hsn_val = get_sc_col(['external product information', 'hsn code'], ['external_product_information#1.value'])
+    c_sea = get_sc_col(['seasons'], ['seasons#1.value'])
+    c_pkr = get_sc_col(['packer contact information'], ['packer_contact_information#1.value'])
+    c_sld = get_sc_col(['sleeve length description', 'sleeve length'], ['sleeve#1.length_description#1.value'])
+    c_st = get_sc_col(['sleeve type'], ['sleeve#1.type#1.value'])
+    c_iwt = get_sc_col(['item weight'], ['item_weight#1.value'])
+    c_iwtu = get_sc_col(['item weight unit', 'item weight unit of measure'], ['item_weight#1.unit'])
+    c_cond = get_sc_col(['item condition'], ['condition_type#1.value'])
+    c_fulfill = get_sc_col(['fulfillment channel code (in)'], ['fulfillment_availability#1.fulfillment_channel_code'])
+    c_qty = get_sc_col(['quantity (in)', 'quantity'], ['fulfillment_availability#1.quantity'])
+    c_price = get_sc_col(['your price inr (sell on amazon, in)', 'standard price', 'selling price'], ['purchasable_offer#1.our_price#1.schedule#1.value_with_tax'])
+    c_mrp = get_sc_col(['maximum retail price (sell on amazon, in)', 'list price', 'mrp'], ['purchasable_offer#1.maximum_retail_price#1.schedule#1.value_with_tax'])
+    c_ship_tpl = get_sc_col(['shipping template (in)'], ['merchant_shipping_group#1.value'])
+    c_il = get_sc_col(['item length'], ['item_dimensions#1.length.value'])
+    c_ilu = get_sc_col(['item length unit'], ['item_dimensions#1.length.unit'])
+    c_iw = get_sc_col(['item width'], ['item_dimensions#1.width.value'])
+    c_iwu = get_sc_col(['item width unit'], ['item_dimensions#1.width.unit'])
+    c_ih = get_sc_col(['item height'], ['item_dimensions#1.height.value'])
+    c_ihu = get_sc_col(['item height unit'], ['item_dimensions#1.height.unit'])
+    c_pl = get_sc_col(['item package length'], ['item_package_dimensions#1.length.value'])
+    c_plu = get_sc_col(['package length unit'], ['item_package_dimensions#1.length.unit'])
+    c_pw = get_sc_col(['item package width'], ['item_package_dimensions#1.width.value'])
+    c_pwu = get_sc_col(['package width unit'], ['item_package_dimensions#1.width.unit'])
+    c_ph = get_sc_col(['item package height'], ['item_package_dimensions#1.height.value'])
+    c_phu = get_sc_col(['package height unit'], ['item_package_dimensions#1.height.unit'])
+    c_pwt = get_sc_col(['package weight'], ['item_package_weight#1.value'])
+    c_pwtu = get_sc_col(['package weight unit'], ['item_package_weight#1.unit'])
+    c_coo = get_sc_col(['country of origin'], ['country_of_origin#1.value'])
+    c_dg = get_sc_col(['dangerous goods regulations'], ['supplier_declared_dg_hz_regulation#1.value'])
+
+    parent_inherited_sc_cols = {
+        c for c, lbl in sc_col_to_lbl.items() if lbl in PARENT_INHERITED_LABELS
+    }
+
+    curr_r = sc_data_r
+    while curr_r <= ws.max_row and ws.cell(curr_r, c_sku).value not in (None, ''):
+        curr_r += 1
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    mrp_fill = PatternFill(start_color="FFF200", end_color="FFF200", fill_type="solid")
+    mrp_font = Font(bold=True)
+    material_fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")
+
+    action_val = "Create or Replace (Full Update)"
+    parent_val = pick_dropdown_value(ws, c_parentage, "Parent", "Parent") if c_parentage else "Parent"
+    child_val = pick_dropdown_value(ws, c_parentage, "Child", "Child") if c_parentage else "Child"
+    var_theme_val = "SIZE/COLOR"
+    cond_new_val = "New"
+    fulfillment_default_val = "Fulfillment by Merchant (Default)"
+    qty_zero_val = 0
+    ship_tpl_val = "Migrated Template"
+    asin_type_val = "ASIN"
+
+    custom_parent_model = (ctx.get('sc_parent_model') or '').strip()
+
+    # Build child rows data per folder & size
+    generated_rows = []
+    model_first_child_cells = {}
+
     for raw_fld in ctx['folders']:
         clean_style = clean_sku_name(raw_fld)
         det_col = resolve_color(raw_fld, clean_style, ctx)
         cat = resolve_category(clean_style, ctx, ws.title)
 
+        model_str = custom_parent_model if custom_parent_model else clean_style
         urls = get_sku_img_urls(raw_fld, ctx, clean_style)
         bullets_list, desc_text = build_freehand_bullets_and_desc(cat, ctx['brand'])
         gen_kw = generate_generic_keywords_200(cat, det_col, ctx['keywords'])
@@ -1628,52 +1870,191 @@ def run_seller_central(uploaded_file, ctx):
         item_type_val = get_item_type_name_from_dropdown(cat)
         color_map_val = map_to_standard_color_map(det_col)
         pocket_val = resolve_pocket(clean_style, cat, ctx)
-        mat_val = "Cotton" if cat in ['cargo', 'hoodie', 'sweatshirt'] else "Cotton Blend"
-
-        preview.append({'SKU': clean_style, 'Category': cat, 'Color': det_col,
-                        'Color Map': color_map_val, 'Item Type': item_type_val,
-                        'Style': style_val, 'Pocket': pocket_val, 'Material': mat_val})
+        mat_val = "Fleece" if cat in ['hoodie', 'sweatshirt'] else ("Cotton" if cat in ['cargo'] else "Cotton Blend")
+        fab_val = "20% Cotton, 80% Polyester" if cat in ['hoodie', 'sweatshirt'] else f"100% {mat_val}"
+        prod_type_raw = SC_PRODUCT_TYPE.get(cat, 'SWEATSHIRT')
+        prod_type_val = pick_dropdown_value(ws, c_prod_type, prod_type_raw, prod_type_raw) if c_prod_type else prod_type_raw
 
         for sz in ctx['sizes']:
             clean_sz = clean_sku_name(sz)
             full_sku = f"{clean_style}-{clean_sz}"
-            sc_title = build_sc_title(ctx['brand'], cat, full_sku, ctx['keywords'], 150)
-            records.append({
-                'sku': full_sku,
-                'item_name': sc_title,
-                'brand_name': ctx['brand'] or None,
-                'manufacturer': ctx['mfg'] or None,
-                'model_number': full_sku, 'part_number': full_sku,
-                'model_name': f"{cat.capitalize()} {clean_style}",
-                'item_type_name': item_type_val,
-                'color_name': det_col, 'color_map': color_map_val,
-                'size_name': clean_sz, 'size_system': 'IN',
-                'bullets': bullets_list[:5],
-                'generic_keywords': gen_kw, 'description': desc_text,
-                'main_image_url': urls[0] if urls else None,
-                'other_images': urls[1:9],
-                'list_price': ctx['mrp'] or None,
-                'standard_price': ctx['selling_price'] or None,
-                'quantity': ctx['quantity'],
-                'material': mat_val, 'fabric_type': f"100% {mat_val}",
-                'care_instructions': 'Machine Wash', 'country_of_origin': 'India',
-                'pattern_type': 'Solid', 'fit_type': 'Relaxed', 'style_name': style_val,
-                'department_name': 'Mens', 'target_gender': 'male', 'age_range_description': 'adult',
-                'seasons': 'All-Season', 'lifestyle': 'Casual', 'unit_count': 1,
-                'special_size_type': 'Standard',
-                'item_weight': 350, 'item_weight_unit': 'grams',
-                'hsn_code': get_hsn_code(cat),
-                'pocket_description': pocket_val,
-                'sleeve_length': 'Long Sleeve' if cat in ['hoodie', 'sweatshirt', 'shirt'] else 'Short Sleeve',
-                'waist_size': clean_sz if clean_sz.isdigit() else None,
-                'waist_unit': 'inches' if clean_sz.isdigit() else None,
-            })
+            is_num_sz = clean_sz.isdigit()
+            size_class_val = "Numeric" if is_num_sz else "Alpha"
+            child_title = build_vendor_title(ctx['brand'], cat, full_sku, ctx['keywords'], 150)
 
-    count = fill_sc_rows(ws, find, bullets_cols, others_cols, start_row, records, ctx)
+            cells = {}
+            def s_col(col_idx, val, dropdown=False):
+                if not col_idx or val in (None, ''):
+                    return
+                cells[col_idx] = pick_dropdown_value(ws, col_idx, val, val) if dropdown else val
+
+            s_col(c_sku, full_sku)
+            s_col(c_prod_type, prod_type_val)
+            s_col(c_title, child_title)
+            s_col(c_brand, ctx['brand'])
+            s_col(c_mod_num, full_sku)
+            s_col(c_mod_name, model_str)
+            s_col(c_mfg, ctx['mfg'])
+            if c_main_img and urls:
+                s_col(c_main_img, urls[0])
+            for idx_img, c_oi in enumerate(c_other_imgs):
+                if c_oi and idx_img + 1 < len(urls):
+                    s_col(c_oi, urls[idx_img + 1])
+            s_col(c_desc, desc_text)
+            for idx_b, c_bp in enumerate(c_bullets):
+                if c_bp and idx_b < len(bullets_list):
+                    s_col(c_bp, bullets_list[idx_b])
+            s_col(c_gkw, gen_kw)
+            s_col(c_lifestyle, "Casual", dropdown=True)
+            s_col(c_style, style_val, dropdown=True)
+            s_col(c_dept, "Mens", dropdown=True)
+            s_col(c_gender, "Male", dropdown=True)
+            s_col(c_age, "Adult", dropdown=True)
+            s_col(c_ssys, "IN", dropdown=True)
+            s_col(c_scls, size_class_val, dropdown=True)
+            s_col(c_sval, clean_sz)
+            s_col(c_mat, mat_val, dropdown=True)
+            s_col(c_fab, fab_val)
+            s_col(c_noi, 1)
+            s_col(c_itn, item_type_val, dropdown=True)
+            s_col(c_spec_sz, "Standard", dropdown=True)
+            s_col(c_cmap, color_map_val, dropdown=True)
+            s_col(c_color, det_col)
+            s_col(c_part, full_sku)
+            s_col(c_fit, "Relaxed", dropdown=True)
+            s_col(c_poc, pocket_val, dropdown=True)
+            s_col(c_care, "Machine Wash", dropdown=True)
+            s_col(c_mfg_cnt, ctx['mfg'])
+            s_col(c_pat, "Solid", dropdown=True)
+            s_col(c_uc, 1)
+            s_col(c_uct, "count", dropdown=True)
+            s_col(c_pld, today_str)
+            s_col(c_hsn_ent, "HSN Code", dropdown=True)
+            s_col(c_hsn_val, get_hsn_code(cat))
+            s_col(c_sea, "All", dropdown=True)
+            s_col(c_pkr, ctx['mfg'])
+            s_col(c_sld, "Long Sleeve" if cat in ['hoodie', 'sweatshirt', 'shirt'] else "Short Sleeve", dropdown=True)
+            s_col(c_st, "Regular Sleeve", dropdown=True)
+            s_col(c_iwt, 350)
+            s_col(c_iwtu, "Grams", dropdown=True)
+            if ctx.get('selling_price'):
+                s_col(c_price, ctx['selling_price'])
+            if ctx.get('mrp'):
+                mv = ctx['mrp']
+                s_col(c_mrp, int(mv) if str(mv).isdigit() else mv)
+            s_col(c_il, 10)
+            s_col(c_ilu, "Inches", dropdown=True)
+            s_col(c_iw, 2)
+            s_col(c_iwu, "Inches", dropdown=True)
+            s_col(c_ih, 1.3)
+            s_col(c_ihu, "Inches", dropdown=True)
+            s_col(c_pl, 10)
+            s_col(c_plu, "Inches", dropdown=True)
+            s_col(c_pw, 2)
+            s_col(c_pwu, "Inches", dropdown=True)
+            s_col(c_ph, 1.3)
+            s_col(c_phu, "Inches", dropdown=True)
+            s_col(c_pwt, 380)
+            s_col(c_pwtu, "Grams", dropdown=True)
+            s_col(c_coo, "India", dropdown=True)
+            s_col(c_dg, "Not Applicable", dropdown=True)
+
+            if model_str not in model_first_child_cells:
+                model_first_child_cells[model_str] = cells
+            generated_rows.append((full_sku, model_str, cells))
+
+    preview = []
+    total_written = 0
+
+    def apply_common_fixed_fields(row_idx):
+        if c_action:
+            ws.cell(row_idx, c_action).value = action_val
+        if c_var_theme:
+            ws.cell(row_idx, c_var_theme).value = var_theme_val
+        if c_cond:
+            ws.cell(row_idx, c_cond).value = cond_new_val
+        if c_fulfill:
+            ws.cell(row_idx, c_fulfill).value = fulfillment_default_val
+        if c_qty:
+            ws.cell(row_idx, c_qty).value = qty_zero_val
+
+    def write_parent_row(model_sku):
+        nonlocal curr_r, total_written
+        ref_cells = model_first_child_cells.get(model_sku) or (generated_rows[0][2] if generated_rows else {})
+        for sc_c in parent_inherited_sc_cols:
+            if sc_c in ref_cells and ref_cells[sc_c] not in (None, ''):
+                ws.cell(curr_r, sc_c).value = ref_cells[sc_c]
+        ws.cell(curr_r, c_sku).value = model_sku
+        if c_prod_type and c_prod_type in ref_cells:
+            ws.cell(curr_r, c_prod_type).value = ref_cells[c_prod_type]
+        if c_parentage:
+            ws.cell(curr_r, c_parentage).value = parent_val
+        parent_title = ""
+        if c_title:
+            child_title = ref_cells.get(c_title, '')
+            parent_title = _build_parent_title_from_child(child_title, model_sku)
+            ws.cell(curr_r, c_title).value = parent_title
+        apply_common_fixed_fields(curr_r)
+        preview.append({
+            'Row': curr_r,
+            'SKU': model_sku,
+            'Product Type': ref_cells.get(c_prod_type, '') if c_prod_type else '',
+            'Listing Action': action_val,
+            'Parentage Level': parent_val,
+            'Parent SKU': '',
+            'Variation Theme': var_theme_val,
+            'Shipping Template': '',
+            'Item Name': parent_title,
+        })
+        curr_r += 1
+        total_written += 1
+
+    def write_child_row(child_sku, model_str, mapped_cells):
+        nonlocal curr_r, total_written
+        for sc_c, val in mapped_cells.items():
+            ws.cell(curr_r, sc_c).value = val
+        if c_mat and c_mat in mapped_cells:
+            ws.cell(curr_r, c_mat).fill = material_fill
+        if c_mrp and not ctx.get('mrp'):
+            ws.cell(curr_r, c_mrp).fill = mrp_fill
+            ws.cell(curr_r, c_mrp).font = mrp_font
+        ws.cell(curr_r, c_sku).value = child_sku
+        if c_parentage:
+            ws.cell(curr_r, c_parentage).value = child_val
+        if c_parent_sku and model_str:
+            ws.cell(curr_r, c_parent_sku).value = model_str
+        if c_mod_name and model_str:
+            ws.cell(curr_r, c_mod_name).value = model_str
+        if c_prod_id_type:
+            ws.cell(curr_r, c_prod_id_type).value = asin_type_val
+        if c_ship_tpl:
+            ws.cell(curr_r, c_ship_tpl).value = ship_tpl_val
+        apply_common_fixed_fields(curr_r)
+        preview.append({
+            'Row': curr_r,
+            'SKU': child_sku,
+            'Product Type': mapped_cells.get(c_prod_type, '') if c_prod_type else '',
+            'Listing Action': action_val,
+            'Parentage Level': child_val,
+            'Parent SKU': model_str,
+            'Variation Theme': var_theme_val,
+            'Shipping Template': ship_tpl_val,
+            'Item Name': mapped_cells.get(c_title, '') if c_title else '',
+        })
+        curr_r += 1
+        total_written += 1
+
+    inserted_parents = set()
+    for c_sku_val, m_str, m_cells in generated_rows:
+        if m_str and m_str not in inserted_parents:
+            inserted_parents.add(m_str)
+            write_parent_row(m_str)
+        write_child_row(c_sku_val, m_str, m_cells)
+
     output = io.BytesIO()
     wb.save(output)
     output.seek(0)
-    return output.getvalue(), preview, count
+    return output.getvalue(), preview, total_written
 
 # ======================================================================
 #        UNIVERSAL ENGINE (Flipkart / Meesho / Myntra)
@@ -1872,102 +2253,6 @@ def run_generic_marketplace(uploaded_file, ctx, mp):
 # ======================================================================
 #              VC ➜ SC CONVERT ENGINE (REPLICATION + PARENT/CHILD)
 # ======================================================================
-def _norm_amazon_key(k):
-    """Normalize Amazon VC/SC attribute keys so matching columns align 1-to-1."""
-    if not k:
-        return ""
-    s = str(k).strip().lower()
-    s = re.sub(r'\[(marketplace_id|language_tag|content_language|content_type)=[^\]]*\]', '', s)
-    s = s.replace('[audience=all]', '')
-    if s.startswith('rtip_'):
-        s = s[5:]
-    return s
-
-VC_TO_SC_KEY_ALIASES = {
-    'vendor_sku#1.value': 'contribution_sku#1.value',
-    'external_product_id#1.type': 'amzn1.volt.ca.product_id_type',
-    'external_product_id#1.value': 'amzn1.volt.ca.product_id_value',
-    'merchant_suggested_asin#1.value': 'amzn1.volt.ca.product_id_value',
-    'list_price#1.value_with_tax': 'purchasable_offer#1.maximum_retail_price#1.schedule#1.value_with_tax',
-}
-
-VC_TO_SC_LABEL_ALIASES = {
-    'vendor sku': 'sku',
-    'maximum retail price (mrp)': 'maximum retail price (sell on amazon, in)',
-    'external product id type': 'product id type',
-    'external product id': 'product id',
-    'merchant suggested asin': 'product id',
-}
-
-# Columns to replicate onto Parent SKU rows from the Child SKU data
-PARENT_INHERITED_LABELS = {
-    'product type',
-    'brand name',
-    'product description',
-    'bullet point',
-    'generic keywords',
-    'material',
-    'fabric type',
-    'fit type',
-    'pocket description',
-    'care instructions',
-    'manufacturer contact information',
-    'pattern',
-    'external product information entity',
-    'external product information',
-    'seasons',
-    'packer contact information',
-    'sleeve length description',
-    'sleeve type',
-    'item weight',
-    'item weight unit',
-    'item length',
-    'item length unit',
-    'item width',
-    'item width unit',
-    'item height',
-    'item height unit',
-    'item package length',
-    'package length unit',
-    'item package width',
-    'package width unit',
-    'item package height',
-    'package height unit',
-    'package weight',
-    'package weight unit',
-    'country of origin',
-    'dangerous goods regulations',
-}
-
-def _build_parent_title_from_child(child_title, parent_sku):
-    """Replace trailing (<child_sku>) in child title with (<parent_sku>)."""
-    if not child_title:
-        return f"({parent_sku})" if parent_sku else ""
-    t = str(child_title).strip()
-    if not parent_sku:
-        return t
-    if re.search(r'\([^()]*\)\s*$', t):
-        return re.sub(r'\([^()]*\)\s*$', f'({parent_sku})', t)
-    return f"{t} ({parent_sku})"
-
-def _detect_amz_sheet_rows(ws, default_lbl=3, default_key=4, default_data=7):
-    """Detect (label_row, key_row, data_start_row) from Row 1 metadata or header scan."""
-    r1_str = " ".join(str(ws.cell(1, c).value or '') for c in range(1, min(15, ws.max_column + 1)))
-    lbl_m = re.search(r'labelRow=(\d+)', r1_str)
-    key_m = re.search(r'attributeRow=(\d+)', r1_str)
-    dat_m = re.search(r'dataRow=(\d+)', r1_str)
-    if lbl_m and key_m and dat_m:
-        return int(lbl_m.group(1)), int(key_m.group(1)), int(dat_m.group(1))
-    for r in range(1, min(10, ws.max_row + 1)):
-        vals = [str(ws.cell(r, c).value or '').strip().lower() for c in range(1, min(40, ws.max_column + 1))]
-        if any(v in ('vendor sku', 'sku', 'seller sku') for v in vals) and any(v in ('item name', 'product type', 'brand name') for v in vals):
-            lbl_row = r
-            next_vals = [str(ws.cell(r + 1, c).value or '').strip().lower() for c in range(1, min(20, ws.max_column + 1))]
-            has_keys = any(('#' in v or '::' in v or '_sku' in v) for v in next_vals if v)
-            key_row = r + 1 if has_keys else None
-            return lbl_row, key_row, max(default_data, (key_row or lbl_row) + 1)
-    return default_lbl, default_key, default_data
-
 def read_vendor_central_records(vc_bytes):
     wb = openpyxl.load_workbook(io.BytesIO(vc_bytes), data_only=True)
     ws = pick_template_sheet(wb)
@@ -2064,7 +2349,7 @@ def vc_record_to_sc(rec, ctx):
 
     r['list_price'] = g('list_price#1.value_with_tax', 'maximum retail price (mrp)')
     r['standard_price'] = ctx.get('selling_price') or None
-    r['quantity'] = ctx.get('quantity', 1)
+    r['quantity'] = ctx.get('quantity', 0)
     r['material'] = g('material#1.value', 'material')
     r['fabric_type'] = g('fabric_type#1.value', 'fabric type')
     r['care_instructions'] = g('care_instructions#1.value', 'care instructions') or 'Machine Wash'
@@ -2093,9 +2378,10 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
     'Template' sheet, and adds each unique Model Name as a Parent SKU row (Parentage Level = Parent)
     with required Parent details inherited from Child rows, while marking all copied Vendor Central
     SKUs as Child (Parentage Level = Child, Parent SKU = Model Name, Product Id Type = ASIN,
-    Product Id = Merchant Suggested ASIN).
-    Also sets Variation Theme Name = SIZE/COLOR, Item Condition = New,
-    Fulfillment Channel Code (IN) = Fulfillment by Merchant (Default), and Quantity (IN) = 0.
+    Product Id = Merchant Suggested ASIN, Shipping Template (IN) = Migrated Template).
+    Also sets Listing Action = Create or Replace (Full Update), Variation Theme Name = SIZE/COLOR,
+    Item Condition = New, Fulfillment Channel Code (IN) = Fulfillment by Merchant (Default),
+    and Quantity (IN) = 0 on all rows.
     """
     wb_vc = openpyxl.load_workbook(io.BytesIO(vc_file.getvalue()), data_only=True)
     ws_vc = pick_template_sheet(wb_vc)
@@ -2180,6 +2466,10 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
         sc_key_to_col.get('product_type#1.value')
         or sc_lbl_occ_to_col.get(('product type', 1))
     )
+    sc_action_col = (
+        sc_key_to_col.get('::record_action')
+        or sc_lbl_occ_to_col.get(('listing action', 1))
+    )
     sc_parentage_col = (
         sc_key_to_col.get('parentage_level#1.value')
         or sc_lbl_occ_to_col.get(('parentage level', 1))
@@ -2208,15 +2498,6 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
         sc_key_to_col.get('model_name#1.value')
         or sc_lbl_occ_to_col.get(('model name', 1))
     )
-    sc_color_col = (
-        sc_key_to_col.get('color#1.value')
-        or sc_lbl_occ_to_col.get(('color', 1))
-    )
-    sc_size_col = (
-        sc_key_to_col.get('apparel_size#1.size')
-        or sc_lbl_occ_to_col.get(('apparel size value', 1))
-        or sc_lbl_occ_to_col.get(('size', 1))
-    )
     sc_condition_col = (
         sc_key_to_col.get('condition_type#1.value')
         or sc_lbl_occ_to_col.get(('item condition', 1))
@@ -2229,6 +2510,10 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
         sc_key_to_col.get('fulfillment_availability#1.quantity')
         or sc_lbl_occ_to_col.get(('quantity (in)', 1))
         or sc_lbl_occ_to_col.get(('quantity', 1))
+    )
+    sc_shipping_tpl_col = (
+        sc_key_to_col.get('merchant_shipping_group#1.value')
+        or sc_lbl_occ_to_col.get(('shipping template (in)', 1))
     )
 
     # Identify all SC columns whose label is in PARENT_INHERITED_LABELS
@@ -2274,6 +2559,7 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
     if not vc_rows_data:
         return None, [], 0
 
+    action_val = "Create or Replace (Full Update)"
     parent_val = pick_dropdown_value(ws_sc, sc_parentage_col, "Parent", "Parent") if sc_parentage_col else "Parent"
     child_val = pick_dropdown_value(ws_sc, sc_parentage_col, "Child", "Child") if sc_parentage_col else "Child"
     var_theme_val = "SIZE/COLOR"
@@ -2281,6 +2567,7 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
     cond_new_val = "New"
     fulfillment_default_val = "Fulfillment by Merchant (Default)"
     qty_zero_val = 0
+    shipping_tpl_val = "Migrated Template"
 
     parent_position = ctx.get('parent_position', 'before_group')
     seen_models = set()
@@ -2294,6 +2581,8 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
     total_written = 0
 
     def apply_common_fixed_fields(row_idx):
+        if sc_action_col:
+            ws_sc.cell(row_idx, sc_action_col).value = action_val
         if sc_var_theme_col:
             ws_sc.cell(row_idx, sc_var_theme_col).value = var_theme_val
         if sc_condition_col:
@@ -2331,11 +2620,13 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
             'Row': curr_r,
             'SKU': model_sku,
             'Product Type': ref_cells.get(sc_prod_type_col, '') if sc_prod_type_col else '',
+            'Listing Action': action_val,
             'Parentage Level': parent_val,
             'Parent SKU': '',
             'Variation Theme': var_theme_val,
             'Product Id Type': '',
             'Product Id': '',
+            'Shipping Template': '',
             'Model Name': '',
             'Item Name': parent_title,
         })
@@ -2356,6 +2647,8 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
             ws_sc.cell(curr_r, sc_model_name_col).value = model_str
         if sc_prod_id_type_col:
             ws_sc.cell(curr_r, sc_prod_id_type_col).value = asin_type_val
+        if sc_shipping_tpl_col:
+            ws_sc.cell(curr_r, sc_shipping_tpl_col).value = shipping_tpl_val
 
         apply_common_fixed_fields(curr_r)
 
@@ -2363,11 +2656,13 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
             'Row': curr_r,
             'SKU': child_sku,
             'Product Type': mapped_cells.get(sc_prod_type_col, '') if sc_prod_type_col else '',
+            'Listing Action': action_val,
             'Parentage Level': child_val,
             'Parent SKU': model_str,
             'Variation Theme': var_theme_val,
             'Product Id Type': asin_type_val,
             'Product Id': mapped_cells.get(sc_prod_id_val_col, '') if sc_prod_id_val_col else '',
+            'Shipping Template': shipping_tpl_val,
             'Model Name': model_str,
             'Item Name': mapped_cells.get(sc_title_col, '') if sc_title_col else '',
         })
@@ -2551,12 +2846,12 @@ st.subheader("2. Sizes, Brand & Legal Information")
 col_s1, col_s2 = st.columns([1, 2])
 
 with col_s1:
-    sizes_input = st.text_input("Sizes (comma-separated):", value="30, 32, 34, 36, 38")
+    sizes_input = st.text_input("Sizes (comma-separated):", value="3XL, 2XL, XL, L, M, S")
     brand_name = st.text_input(
         "Brand Name:", value="",
         placeholder="Enter Brand Name (blank = not applicable)"
     )
-    mrp_value = st.text_input("MRP (Khali chhodne par Yellow Highlight hoga):", value="", placeholder="e.g. 2999")
+    mrp_value = st.text_input("MRP (Khali chhodne par Yellow Highlight hoga):", value="", placeholder="e.g. 3999")
 
 with col_s2:
     mfg_address = st.text_area(
@@ -2569,14 +2864,20 @@ if CONVERT_MODE:
     st.caption("ℹ️ Convert mode me matching columns ka data seedha Vendor Central file se Seller Central ke `Template` sheet me replicate hoga.")
 st.divider()
 
-sc_quantity, sc_selling_price = 0, ""
+sc_quantity, sc_selling_price, sc_parent_model = 0, "", ""
 if marketplace in ["Amazon - Seller Central", "Convert: Vendor Central ➜ Seller Central"]:
     st.subheader("Seller Central Extra Fields")
-    c_sc1, c_sc2 = st.columns(2)
+    c_sc1, c_sc2, c_sc3 = st.columns(3)
     with c_sc1:
-        sc_quantity = st.number_input("Default Stock Quantity:", min_value=0, value=0 if CONVERT_MODE else 5)
+        sc_quantity = st.number_input("Default Stock Quantity (0 Fixed):", min_value=0, value=0)
     with c_sc2:
         sc_selling_price = st.text_input("Selling Price (optional):", placeholder="e.g. 899")
+    with c_sc3:
+        sc_parent_model = st.text_input(
+            "Common Parent SKU / Model Name (Optional):",
+            value="",
+            placeholder="e.g. H-63-66 (Blank = folder name per SKU)"
+        )
     st.divider()
 
 # ======================================================================
@@ -2609,6 +2910,7 @@ def build_ctx():
         'size_chart_cdn_url': None,
         'quantity': int(sc_quantity),
         'selling_price': sc_selling_price.strip(),
+        'sc_parent_model': sc_parent_model.strip(),
         'td': int(default_td),
         'default_category': default_category,
         'vision_results': st.session_state.get('vision_results', {}),
@@ -2621,8 +2923,8 @@ if CONVERT_MODE:
         "1. Niche **Filled Vendor Central File** aur **Blank Seller Central File** upload karein.\n"
         "2. Seller Central ke **`Template`** sheet me Vendor Central ke saare matching columns ka data replicate hoga.\n"
         "3. Har unique **`Model Name`** ko **`SKU`** column me **`Parent`** row ke roop me add kiya jayega (jisme `Product Type`, `Item Name (parent_sku)`, `Product Description`, `Bullet Points`, `Generic Keywords`, `Material`, `Fabric Type`, `Fit Type`, `Pocket Description`, `Care Instructions`, `Manufacturer/Packer Contact`, `Pattern`, `HSN`, `Seasons`, `Sleeve`, `Weight/Dimensions`, `Country of Origin`, `Dangerous Goods` child data ke hisab se rahenge).\n"
-        "4. Sabhi Child SKUs me **`Parentage Level = Child`**, **`Parent SKU = Model Name`**, **`Product Id Type = ASIN`**, aur **`Product Id = Merchant Suggested ASIN`** set hoga.\n"
-        "5. Sabhi rows me **`Variation Theme Name = SIZE/COLOR`**, **`Item Condition = New`**, **`Fulfillment Channel Code (IN) = Fulfillment by Merchant (Default)`**, aur **`Quantity (IN) = 0`** rahega."
+        "4. Sabhi Child SKUs me **`Parentage Level = Child`**, **`Parent SKU = Model Name`**, **`Product Id Type = ASIN`**, **`Product Id = Merchant Suggested ASIN`**, aur **`Shipping Template (IN) = Migrated Template`** set hoga.\n"
+        "5. Sabhi rows me **`Listing Action = Create or Replace (Full Update)`**, **`Variation Theme Name = SIZE/COLOR`**, **`Item Condition = New`**, **`Fulfillment Channel Code (IN) = Fulfillment by Merchant (Default)`**, aur **`Quantity (IN) = 0`** rahega."
     )
     c_up1, c_up2 = st.columns(2)
     with c_up1:
@@ -2757,7 +3059,7 @@ else:
 
                 elif marketplace == "Amazon - Seller Central":
                     out, preview, added = run_seller_central(uploaded_file, ctx)
-                    st.success(f"🎉 Amazon Seller Central template filled! Total {added} variants.")
+                    st.success(f"🎉 Amazon Seller Central template (`Template` sheet) filled! Total {added} rows (Parent + Child).")
                     out_name = uploaded_file.name
 
                 elif marketplace in ["Flipkart", "Meesho", "Myntra"]:
@@ -2768,8 +3070,13 @@ else:
                 if out:
                     if preview:
                         st.dataframe(preview, use_container_width=True)
+                    out_mime = (
+                        "application/vnd.ms-excel.sheet.macroEnabled.12"
+                        if str(out_name).lower().endswith('.xlsm')
+                        else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
                     st.download_button("📥 Download Filled File", data=out, file_name=out_name,
-                                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                                       mime=out_mime)
             except ValueError as ve:
                 st.error(str(ve))
             except Exception as e:
