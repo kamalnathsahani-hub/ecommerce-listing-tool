@@ -1492,7 +1492,6 @@ def locate_sc_grid(ws):
     if not sku_col:
         raise ValueError("'sku' column nahi mila template me.")
 
-    # Check if Row 1 specifies dataRow (e.g. Unified Seller Central template where Row 4=Label, Row 5=Key, Row 6=Example, Row 7=Data)
     r1_str = " ".join(str(ws.cell(1, c).value or '') for c in range(1, min(15, ws.max_column + 1)))
     dat_m = re.search(r'dataRow=(\d+)', r1_str)
     start_row = int(dat_m.group(1)) if dat_m else (header_row + 1)
@@ -1888,6 +1887,7 @@ VC_TO_SC_KEY_ALIASES = {
     'vendor_sku#1.value': 'contribution_sku#1.value',
     'external_product_id#1.type': 'amzn1.volt.ca.product_id_type',
     'external_product_id#1.value': 'amzn1.volt.ca.product_id_value',
+    'merchant_suggested_asin#1.value': 'amzn1.volt.ca.product_id_value',
     'list_price#1.value_with_tax': 'purchasable_offer#1.maximum_retail_price#1.schedule#1.value_with_tax',
 }
 
@@ -1896,7 +1896,59 @@ VC_TO_SC_LABEL_ALIASES = {
     'maximum retail price (mrp)': 'maximum retail price (sell on amazon, in)',
     'external product id type': 'product id type',
     'external product id': 'product id',
+    'merchant suggested asin': 'product id',
 }
+
+# Columns to replicate onto Parent SKU rows from the Child SKU data
+PARENT_INHERITED_LABELS = {
+    'product type',
+    'brand name',
+    'product description',
+    'bullet point',
+    'generic keywords',
+    'material',
+    'fabric type',
+    'fit type',
+    'pocket description',
+    'care instructions',
+    'manufacturer contact information',
+    'pattern',
+    'external product information entity',
+    'external product information',
+    'seasons',
+    'packer contact information',
+    'sleeve length description',
+    'sleeve type',
+    'item weight',
+    'item weight unit',
+    'item length',
+    'item length unit',
+    'item width',
+    'item width unit',
+    'item height',
+    'item height unit',
+    'item package length',
+    'package length unit',
+    'item package width',
+    'package width unit',
+    'item package height',
+    'package height unit',
+    'package weight',
+    'package weight unit',
+    'country of origin',
+    'dangerous goods regulations',
+}
+
+def _build_parent_title_from_child(child_title, parent_sku):
+    """Replace trailing (<child_sku>) in child title with (<parent_sku>)."""
+    if not child_title:
+        return f"({parent_sku})" if parent_sku else ""
+    t = str(child_title).strip()
+    if not parent_sku:
+        return t
+    if re.search(r'\([^()]*\)\s*$', t):
+        return re.sub(r'\([^()]*\)\s*$', f'({parent_sku})', t)
+    return f"{t} ({parent_sku})"
 
 def _detect_amz_sheet_rows(ws, default_lbl=3, default_key=4, default_data=7):
     """Detect (label_row, key_row, data_start_row) from Row 1 metadata or header scan."""
@@ -2039,7 +2091,11 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
     """
     Replicates all matching columns from filled Vendor Central file to blank Seller Central
     'Template' sheet, and adds each unique Model Name as a Parent SKU row (Parentage Level = Parent)
-    while marking all copied Vendor Central SKUs as Child (Parentage Level = Child).
+    with required Parent details inherited from Child rows, while marking all copied Vendor Central
+    SKUs as Child (Parentage Level = Child, Parent SKU = Model Name, Product Id Type = ASIN,
+    Product Id = Merchant Suggested ASIN).
+    Also sets Variation Theme Name = SIZE/COLOR, Item Condition = New,
+    Fulfillment Channel Code (IN) = Fulfillment by Merchant (Default), and Quantity (IN) = 0.
     """
     wb_vc = openpyxl.load_workbook(io.BytesIO(vc_file.getvalue()), data_only=True)
     ws_vc = pick_template_sheet(wb_vc)
@@ -2066,10 +2122,12 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
     sc_key_to_col = {}
     sc_lbl_occ_to_col = {}
     sc_lbl_counts = {}
+    sc_col_to_lbl = {}
     for c in range(1, ws_sc.max_column + 1):
         lbl = str(ws_sc.cell(sc_lbl_r, c).value or '').strip().lower()
         key = str(ws_sc.cell(sc_key_r, c).value or '').strip() if sc_key_r else ''
         nk = _norm_amazon_key(key)
+        sc_col_to_lbl[c] = lbl
         if nk and nk not in sc_key_to_col:
             sc_key_to_col[nk] = c
         if lbl:
@@ -2082,6 +2140,7 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
     vc_lbl_counts = {}
     vc_sku_col = None
     vc_model_name_col = None
+    vc_asin_col = None
 
     for c in range(1, ws_vc.max_column + 1):
         lbl = str(ws_vc.cell(vc_lbl_r, c).value or '').strip().lower()
@@ -2091,6 +2150,8 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
             vc_sku_col = c
         if vc_model_name_col is None and (nk == 'model_name#1.value' or lbl == 'model name'):
             vc_model_name_col = c
+        if vc_asin_col is None and (nk == 'merchant_suggested_asin#1.value' or lbl == 'merchant suggested asin'):
+            vc_asin_col = c
         nk_target = VC_TO_SC_KEY_ALIASES.get(nk, nk)
         occ = 1
         if lbl:
@@ -2115,17 +2176,37 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
         or sc_lbl_occ_to_col.get(('seller sku', 1))
         or 1
     )
+    sc_prod_type_col = (
+        sc_key_to_col.get('product_type#1.value')
+        or sc_lbl_occ_to_col.get(('product type', 1))
+    )
     sc_parentage_col = (
         sc_key_to_col.get('parentage_level#1.value')
         or sc_lbl_occ_to_col.get(('parentage level', 1))
     )
-    sc_model_name_col = (
-        sc_key_to_col.get('model_name#1.value')
-        or sc_lbl_occ_to_col.get(('model name', 1))
+    sc_parent_sku_col = (
+        sc_key_to_col.get('child_parent_sku_relationship#1.parent_sku')
+        or sc_lbl_occ_to_col.get(('parent sku', 1))
+    )
+    sc_var_theme_col = (
+        sc_key_to_col.get('variation_theme#1.name')
+        or sc_lbl_occ_to_col.get(('variation theme name', 1))
     )
     sc_title_col = (
         sc_key_to_col.get('item_name#1.value')
         or sc_lbl_occ_to_col.get(('item name', 1))
+    )
+    sc_prod_id_type_col = (
+        sc_key_to_col.get('amzn1.volt.ca.product_id_type')
+        or sc_lbl_occ_to_col.get(('product id type', 1))
+    )
+    sc_prod_id_val_col = (
+        sc_key_to_col.get('amzn1.volt.ca.product_id_value')
+        or sc_lbl_occ_to_col.get(('product id', 1))
+    )
+    sc_model_name_col = (
+        sc_key_to_col.get('model_name#1.value')
+        or sc_lbl_occ_to_col.get(('model name', 1))
     )
     sc_color_col = (
         sc_key_to_col.get('color#1.value')
@@ -2136,6 +2217,24 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
         or sc_lbl_occ_to_col.get(('apparel size value', 1))
         or sc_lbl_occ_to_col.get(('size', 1))
     )
+    sc_condition_col = (
+        sc_key_to_col.get('condition_type#1.value')
+        or sc_lbl_occ_to_col.get(('item condition', 1))
+    )
+    sc_fulfillment_col = (
+        sc_key_to_col.get('fulfillment_availability#1.fulfillment_channel_code')
+        or sc_lbl_occ_to_col.get(('fulfillment channel code (in)', 1))
+    )
+    sc_quantity_col = (
+        sc_key_to_col.get('fulfillment_availability#1.quantity')
+        or sc_lbl_occ_to_col.get(('quantity (in)', 1))
+        or sc_lbl_occ_to_col.get(('quantity', 1))
+    )
+
+    # Identify all SC columns whose label is in PARENT_INHERITED_LABELS
+    parent_inherited_sc_cols = {
+        c for c, lbl in sc_col_to_lbl.items() if lbl in PARENT_INHERITED_LABELS
+    }
 
     # Find first empty data row in Seller Central 'Template' sheet
     curr_r = sc_data_r
@@ -2150,6 +2249,7 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
         guard += 1
 
     vc_rows_data = []
+    model_first_child_cells = {}
     while r_vc <= ws_vc.max_row:
         sku_val = ws_vc.cell(r_vc, vc_sku_col).value
         if sku_val in (None, ''):
@@ -2160,8 +2260,14 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
             val = ws_vc.cell(r_vc, vc_c).value
             if val not in (None, ''):
                 mapped_cells[sc_c] = val
+        if vc_asin_col and sc_prod_id_val_col:
+            asin_val = ws_vc.cell(r_vc, vc_asin_col).value
+            if asin_val not in (None, ''):
+                mapped_cells[sc_prod_id_val_col] = str(asin_val).strip()
         model_name_val = ws_vc.cell(r_vc, vc_model_name_col).value if vc_model_name_col else None
         model_str = str(model_name_val).strip() if model_name_val not in (None, '') else ''
+        if model_str and model_str not in model_first_child_cells:
+            model_first_child_cells[model_str] = mapped_cells
         vc_rows_data.append((str(sku_val).strip(), model_str, mapped_cells))
         r_vc += 1
 
@@ -2170,6 +2276,11 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
 
     parent_val = pick_dropdown_value(ws_sc, sc_parentage_col, "Parent", "Parent") if sc_parentage_col else "Parent"
     child_val = pick_dropdown_value(ws_sc, sc_parentage_col, "Child", "Child") if sc_parentage_col else "Child"
+    var_theme_val = "SIZE/COLOR"
+    asin_type_val = "ASIN"
+    cond_new_val = "New"
+    fulfillment_default_val = "Fulfillment by Merchant (Default)"
+    qty_zero_val = 0
 
     parent_position = ctx.get('parent_position', 'before_group')
     seen_models = set()
@@ -2182,19 +2293,51 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
     preview = []
     total_written = 0
 
+    def apply_common_fixed_fields(row_idx):
+        if sc_var_theme_col:
+            ws_sc.cell(row_idx, sc_var_theme_col).value = var_theme_val
+        if sc_condition_col:
+            ws_sc.cell(row_idx, sc_condition_col).value = cond_new_val
+        if sc_fulfillment_col:
+            ws_sc.cell(row_idx, sc_fulfillment_col).value = fulfillment_default_val
+        if sc_quantity_col:
+            ws_sc.cell(row_idx, sc_quantity_col).value = qty_zero_val
+
     def write_parent_row(model_sku):
         nonlocal curr_r, total_written
+        ref_cells = model_first_child_cells.get(model_sku) or (vc_rows_data[0][2] if vc_rows_data else {})
+
+        # Copy all Parent-inherited columns from Child data
+        for sc_c in parent_inherited_sc_cols:
+            if sc_c in ref_cells and ref_cells[sc_c] not in (None, ''):
+                ws_sc.cell(curr_r, sc_c).value = ref_cells[sc_c]
+
         ws_sc.cell(curr_r, sc_sku_col).value = model_sku
+        if sc_prod_type_col and sc_prod_type_col in ref_cells:
+            ws_sc.cell(curr_r, sc_prod_type_col).value = ref_cells[sc_prod_type_col]
         if sc_parentage_col:
             ws_sc.cell(curr_r, sc_parentage_col).value = parent_val
+
+        # Build Parent Item Name with (<parent_sku>) at the end
+        parent_title = ""
+        if sc_title_col:
+            child_title = ref_cells.get(sc_title_col, '')
+            parent_title = _build_parent_title_from_child(child_title, model_sku)
+            ws_sc.cell(curr_r, sc_title_col).value = parent_title
+
+        apply_common_fixed_fields(curr_r)
+
         preview.append({
             'Row': curr_r,
             'SKU': model_sku,
+            'Product Type': ref_cells.get(sc_prod_type_col, '') if sc_prod_type_col else '',
             'Parentage Level': parent_val,
+            'Parent SKU': '',
+            'Variation Theme': var_theme_val,
+            'Product Id Type': '',
+            'Product Id': '',
             'Model Name': '',
-            'Item Name': '(Parent SKU Row)',
-            'Color': '',
-            'Size': '',
+            'Item Name': parent_title,
         })
         curr_r += 1
         total_written += 1
@@ -2203,19 +2346,30 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
         nonlocal curr_r, total_written
         for sc_c, val in mapped_cells.items():
             ws_sc.cell(curr_r, sc_c).value = val
+
         ws_sc.cell(curr_r, sc_sku_col).value = child_sku
-        if sc_model_name_col and model_str:
-            ws_sc.cell(curr_r, sc_model_name_col).value = model_str
         if sc_parentage_col:
             ws_sc.cell(curr_r, sc_parentage_col).value = child_val
+        if sc_parent_sku_col and model_str:
+            ws_sc.cell(curr_r, sc_parent_sku_col).value = model_str
+        if sc_model_name_col and model_str:
+            ws_sc.cell(curr_r, sc_model_name_col).value = model_str
+        if sc_prod_id_type_col:
+            ws_sc.cell(curr_r, sc_prod_id_type_col).value = asin_type_val
+
+        apply_common_fixed_fields(curr_r)
+
         preview.append({
             'Row': curr_r,
             'SKU': child_sku,
+            'Product Type': mapped_cells.get(sc_prod_type_col, '') if sc_prod_type_col else '',
             'Parentage Level': child_val,
+            'Parent SKU': model_str,
+            'Variation Theme': var_theme_val,
+            'Product Id Type': asin_type_val,
+            'Product Id': mapped_cells.get(sc_prod_id_val_col, '') if sc_prod_id_val_col else '',
             'Model Name': model_str,
             'Item Name': mapped_cells.get(sc_title_col, '') if sc_title_col else '',
-            'Color': mapped_cells.get(sc_color_col, '') if sc_color_col else '',
-            'Size': mapped_cells.get(sc_size_col, '') if sc_size_col else '',
         })
         curr_r += 1
         total_written += 1
@@ -2415,12 +2569,12 @@ if CONVERT_MODE:
     st.caption("ℹ️ Convert mode me matching columns ka data seedha Vendor Central file se Seller Central ke `Template` sheet me replicate hoga.")
 st.divider()
 
-sc_quantity, sc_selling_price = 1, ""
+sc_quantity, sc_selling_price = 0, ""
 if marketplace in ["Amazon - Seller Central", "Convert: Vendor Central ➜ Seller Central"]:
     st.subheader("Seller Central Extra Fields")
     c_sc1, c_sc2 = st.columns(2)
     with c_sc1:
-        sc_quantity = st.number_input("Default Stock Quantity:", min_value=1, value=5)
+        sc_quantity = st.number_input("Default Stock Quantity:", min_value=0, value=0 if CONVERT_MODE else 5)
     with c_sc2:
         sc_selling_price = st.text_input("Selling Price (optional):", placeholder="e.g. 899")
     st.divider()
@@ -2465,8 +2619,10 @@ if CONVERT_MODE:
     st.info(
         "💡 **Kaise kaam karega:**\n"
         "1. Niche **Filled Vendor Central File** aur **Blank Seller Central File** upload karein.\n"
-        "2. Seller Central ke **`Template`** sheet me Vendor Central ke saare matching columns ka data same-to-same replicate hoga (jaise `Model Name` jitni baar hai utni baar copy hoga).\n"
-        "3. Saath hi har unique **`Model Name`** ko **`SKU`** column me 1 alag row ke roop me add kiya jayega jiske samne **`Parentage Level = Parent`** select hoga, aur Vendor Central se copy kiye gaye sabhi SKUs ke samne **`Parentage Level = Child`** select hoga."
+        "2. Seller Central ke **`Template`** sheet me Vendor Central ke saare matching columns ka data replicate hoga.\n"
+        "3. Har unique **`Model Name`** ko **`SKU`** column me **`Parent`** row ke roop me add kiya jayega (jisme `Product Type`, `Item Name (parent_sku)`, `Product Description`, `Bullet Points`, `Generic Keywords`, `Material`, `Fabric Type`, `Fit Type`, `Pocket Description`, `Care Instructions`, `Manufacturer/Packer Contact`, `Pattern`, `HSN`, `Seasons`, `Sleeve`, `Weight/Dimensions`, `Country of Origin`, `Dangerous Goods` child data ke hisab se rahenge).\n"
+        "4. Sabhi Child SKUs me **`Parentage Level = Child`**, **`Parent SKU = Model Name`**, **`Product Id Type = ASIN`**, aur **`Product Id = Merchant Suggested ASIN`** set hoga.\n"
+        "5. Sabhi rows me **`Variation Theme Name = SIZE/COLOR`**, **`Item Condition = New`**, **`Fulfillment Channel Code (IN) = Fulfillment by Merchant (Default)`**, aur **`Quantity (IN) = 0`** rahega."
     )
     c_up1, c_up2 = st.columns(2)
     with c_up1:
