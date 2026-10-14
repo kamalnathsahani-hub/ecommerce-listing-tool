@@ -399,6 +399,28 @@ def get_dropdown_options_for_column(ws, col_idx):
         if opts:
             options = opts
             break
+    # Fallback for Amazon Unified Templates with INDIRECT() dropdowns via 'Dropdown Lists' sheet
+    if not options and hasattr(ws, 'parent') and ws.parent and 'Dropdown Lists' in ws.parent.sheetnames:
+        try:
+            ws_dd = ws.parent['Dropdown Lists']
+            col_keys = {
+                str(ws.cell(r, col_idx).value or '').strip()
+                for r in (4, 5)
+                if ws.cell(r, col_idx).value not in (None, '')
+            }
+            for dd_c in range(1, ws_dd.max_column + 1):
+                dd_k = str(ws_dd.cell(3, dd_c).value or '').strip()
+                if dd_k and dd_k in col_keys:
+                    vals = [
+                        str(ws_dd.cell(r, dd_c).value).strip()
+                        for r in range(4, ws_dd.max_row + 1)
+                        if ws_dd.cell(r, dd_c).value not in (None, '')
+                    ]
+                    if vals:
+                        options = vals
+                        break
+        except Exception:
+            pass
     if options:
         junk = {'', 'select', 'select one', 'choose', 'choose one', 'dropdown'}
         options = [o for o in options if str(o).strip().lower() not in junk]
@@ -727,8 +749,17 @@ def load_workbook_clean(uploaded_file_or_bytes, name=""):
     return wb
 
 def pick_template_sheet(wb):
+    # Priority 1: Exact 'Template' sheet (important for Seller Central files that also have 'Changes to the template')
     for sname in wb.sheetnames:
-        if 'template' in sname.lower():
+        if sname.strip().lower() == 'template':
+            return wb[sname]
+    # Priority 2: Sheet starting with 'template' (e.g., 'Template-SWEATSHIRT' in Vendor Central)
+    for sname in wb.sheetnames:
+        if sname.strip().lower().startswith('template'):
+            return wb[sname]
+    # Priority 3: Any sheet containing 'template' except 'changes to the template'
+    for sname in wb.sheetnames:
+        if 'template' in sname.lower() and 'change' not in sname.lower():
             return wb[sname]
     return wb.worksheets[0]
 
@@ -1375,11 +1406,11 @@ SC_FIELDS = {
     'item_type_name': ['item type name', 'item_type_name', 'item type keyword'],
     'color_name': ['color name', 'color_name', 'color', 'colour name', 'colour'],
     'color_map': ['color map', 'color_map', 'colour map'],
-    'size_name': ['size name', 'size_name', 'size'],
-    'size_system': ['size system', 'size_system'],
-    'quantity': ['quantity', 'qty'],
-    'standard_price': ['standard price', 'standard_price', 'price', 'selling price'],
-    'list_price': ['list price', 'list_price', 'mrp', 'maximum retail price', 'mrp inr'],
+    'size_name': ['size name', 'size_name', 'size', 'apparel size value', 'bottoms size value', 'size value'],
+    'size_system': ['size system', 'size_system', 'apparel size system', 'bottoms size system'],
+    'quantity': ['quantity', 'qty', 'quantity (in)'],
+    'standard_price': ['standard price', 'standard_price', 'price', 'selling price', 'your price inr (sell on amazon, in)'],
+    'list_price': ['list price', 'list_price', 'mrp', 'maximum retail price', 'mrp inr', 'maximum retail price (sell on amazon, in)'],
     'main_image_url': ['main image url', 'main_image_url', 'main product image url', 'main image'],
     'generic_keywords': ['generic keywords', 'generic_keywords', 'search terms', 'keywords'],
     'description': ['product description', 'product_description', 'description'],
@@ -1398,8 +1429,8 @@ SC_FIELDS = {
     'unit_count': ['unit count', 'unit_count', 'number of items'],
     'special_size_type': ['special size type', 'special_size_type', 'special size'],
     'item_weight': ['item weight', 'item_weight', 'weight'],
-    'item_weight_unit': ['item weight unit of measure', 'item_weight_unit_of_measure', 'weight unit of measure'],
-    'hsn_code': ['hsn code', 'hsn_code', 'hsn', 'tax code'],
+    'item_weight_unit': ['item weight unit of measure', 'item_weight_unit_of_measure', 'weight unit of measure', 'item weight unit'],
+    'hsn_code': ['hsn code', 'hsn_code', 'hsn', 'tax code', 'external product information'],
     'pocket_description': ['pocket description', 'pocket_description', 'pocket type'],
     'sleeve_length': ['sleeve length', 'sleeve_length', 'sleeve length description'],
     'waist_size': ['waist size', 'waist_size', 'waist'],
@@ -1437,21 +1468,35 @@ def locate_sc_grid(ws):
         return None
 
     bullets_cols, others_cols = {}, {}
+    b_seq, o_seq = 0, 0
     for c in range(1, ws.max_column + 1):
         h = _norm_h(ws.cell(header_row, c).value)
         if not h:
             continue
+        matched = False
         for pat, tgt in [(r'bulletpoint(\d+)$', bullets_cols), (r'keyproductfeatures(\d+)$', bullets_cols),
                          (r'otherimageurl(\d+)$', others_cols)]:
             m = re.match(pat, h)
             if m:
                 tgt[int(m.group(1))] = c
+                matched = True
+        if not matched:
+            if h == 'bulletpoint':
+                b_seq += 1
+                bullets_cols.setdefault(b_seq, c)
+            elif h == 'otherimageurl':
+                o_seq += 1
+                others_cols.setdefault(o_seq, c)
 
     sku_col = find(SC_FIELDS['sku'])
     if not sku_col:
         raise ValueError("'sku' column nahi mila template me.")
 
-    start_row = header_row + 1
+    # Check if Row 1 specifies dataRow (e.g. Unified Seller Central template where Row 4=Label, Row 5=Key, Row 6=Example, Row 7=Data)
+    r1_str = " ".join(str(ws.cell(1, c).value or '') for c in range(1, min(15, ws.max_column + 1)))
+    dat_m = re.search(r'dataRow=(\d+)', r1_str)
+    start_row = int(dat_m.group(1)) if dat_m else (header_row + 1)
+
     while start_row <= ws.max_row:
         v = ws.cell(start_row, sku_col).value
         if v in (None, ''):
@@ -1826,21 +1871,55 @@ def run_generic_marketplace(uploaded_file, ctx, mp):
     return output.getvalue(), preview, count
 
 # ======================================================================
-#              VC ➜ SC CONVERT ENGINE
+#              VC ➜ SC CONVERT ENGINE (REPLICATION + PARENT/CHILD)
 # ======================================================================
+def _norm_amazon_key(k):
+    """Normalize Amazon VC/SC attribute keys so matching columns align 1-to-1."""
+    if not k:
+        return ""
+    s = str(k).strip().lower()
+    s = re.sub(r'\[(marketplace_id|language_tag|content_language|content_type)=[^\]]*\]', '', s)
+    s = s.replace('[audience=all]', '')
+    if s.startswith('rtip_'):
+        s = s[5:]
+    return s
+
+VC_TO_SC_KEY_ALIASES = {
+    'vendor_sku#1.value': 'contribution_sku#1.value',
+    'external_product_id#1.type': 'amzn1.volt.ca.product_id_type',
+    'external_product_id#1.value': 'amzn1.volt.ca.product_id_value',
+    'list_price#1.value_with_tax': 'purchasable_offer#1.maximum_retail_price#1.schedule#1.value_with_tax',
+}
+
+VC_TO_SC_LABEL_ALIASES = {
+    'vendor sku': 'sku',
+    'maximum retail price (mrp)': 'maximum retail price (sell on amazon, in)',
+    'external product id type': 'product id type',
+    'external product id': 'product id',
+}
+
+def _detect_amz_sheet_rows(ws, default_lbl=3, default_key=4, default_data=7):
+    """Detect (label_row, key_row, data_start_row) from Row 1 metadata or header scan."""
+    r1_str = " ".join(str(ws.cell(1, c).value or '') for c in range(1, min(15, ws.max_column + 1)))
+    lbl_m = re.search(r'labelRow=(\d+)', r1_str)
+    key_m = re.search(r'attributeRow=(\d+)', r1_str)
+    dat_m = re.search(r'dataRow=(\d+)', r1_str)
+    if lbl_m and key_m and dat_m:
+        return int(lbl_m.group(1)), int(key_m.group(1)), int(dat_m.group(1))
+    for r in range(1, min(10, ws.max_row + 1)):
+        vals = [str(ws.cell(r, c).value or '').strip().lower() for c in range(1, min(40, ws.max_column + 1))]
+        if any(v in ('vendor sku', 'sku', 'seller sku') for v in vals) and any(v in ('item name', 'product type', 'brand name') for v in vals):
+            lbl_row = r
+            next_vals = [str(ws.cell(r + 1, c).value or '').strip().lower() for c in range(1, min(20, ws.max_column + 1))]
+            has_keys = any(('#' in v or '::' in v or '_sku' in v) for v in next_vals if v)
+            key_row = r + 1 if has_keys else None
+            return lbl_row, key_row, max(default_data, (key_row or lbl_row) + 1)
+    return default_lbl, default_key, default_data
+
 def read_vendor_central_records(vc_bytes):
     wb = openpyxl.load_workbook(io.BytesIO(vc_bytes), data_only=True)
     ws = pick_template_sheet(wb)
-    label_row = key_row = None
-    for r in range(1, min(ws.max_row, 8) + 1):
-        vals = [str(ws.cell(r, c).value or '').strip().lower() for c in range(1, min(ws.max_column, 80) + 1)]
-        if 'vendor sku' in vals:
-            label_row = r
-            break
-    if label_row:
-        key_row = label_row + 1
-    else:
-        label_row, key_row = 3, 4
+    label_row, key_row, r = _detect_amz_sheet_rows(ws, 3, 4, 7)
 
     col_meta, sku_col = {}, None
     for c in range(1, ws.max_column + 1):
@@ -1854,7 +1933,7 @@ def read_vendor_central_records(vc_bytes):
     if sku_col is None:
         sku_col = 2
 
-    r, guard = key_row + 1, 0
+    guard = 0
     while r <= ws.max_row and ws.cell(r, sku_col).value in (None, '') and guard < 10:
         r += 1
         guard += 1
@@ -1957,29 +2036,213 @@ def vc_record_to_sc(rec, ctx):
     return r
 
 def convert_vc_to_sc(vc_file, sc_file, ctx):
-    raw_records = read_vendor_central_records(vc_file.getvalue())
-    if not raw_records:
-        return None, [], 0
-    records = [vc_record_to_sc(r, ctx) for r in raw_records]
+    """
+    Replicates all matching columns from filled Vendor Central file to blank Seller Central
+    'Template' sheet, and adds each unique Model Name as a Parent SKU row (Parentage Level = Parent)
+    while marking all copied Vendor Central SKUs as Child (Parentage Level = Child).
+    """
+    wb_vc = openpyxl.load_workbook(io.BytesIO(vc_file.getvalue()), data_only=True)
+    ws_vc = pick_template_sheet(wb_vc)
+    vc_lbl_r, vc_key_r, vc_data_r = _detect_amz_sheet_rows(ws_vc, 3, 4, 7)
 
-    wb = load_workbook_clean(io.BytesIO(sc_file.getvalue()), sc_file.name)
-    ws = pick_template_sheet(wb)
+    wb_sc = load_workbook_clean(io.BytesIO(sc_file.getvalue()), sc_file.name)
+    # Target specifically the 'Template' sheet in Seller Central
+    ws_sc = None
+    for sname in wb_sc.sheetnames:
+        if sname.strip().lower() == 'template':
+            ws_sc = wb_sc[sname]
+            break
+    if ws_sc is None:
+        ws_sc = pick_template_sheet(wb_sc)
+
     try:
-        ungroup_worksheet(ws)
+        ungroup_worksheet(ws_sc)
     except Exception:
         pass
 
-    sku_col, start_row, find, bullets_cols, others_cols = locate_sc_grid(ws)
-    count = fill_sc_rows(ws, find, bullets_cols, others_cols, start_row, records, ctx)
+    sc_lbl_r, sc_key_r, sc_data_r = _detect_amz_sheet_rows(ws_sc, 4, 5, 7)
 
-    preview = [{'SKU': r.get('sku'), 'Title': r.get('item_name'), 'Color': r.get('color_name'),
-                'Color Map': r.get('color_map'), 'Size': r.get('size_name'),
-                'Item Type': r.get('item_type_name'), 'Style': r.get('style_name')} for r in records]
+    # Index Seller Central columns by normalized attribute key and by (label, occurrence_index)
+    sc_key_to_col = {}
+    sc_lbl_occ_to_col = {}
+    sc_lbl_counts = {}
+    for c in range(1, ws_sc.max_column + 1):
+        lbl = str(ws_sc.cell(sc_lbl_r, c).value or '').strip().lower()
+        key = str(ws_sc.cell(sc_key_r, c).value or '').strip() if sc_key_r else ''
+        nk = _norm_amazon_key(key)
+        if nk and nk not in sc_key_to_col:
+            sc_key_to_col[nk] = c
+        if lbl:
+            occ = sc_lbl_counts.get(lbl, 0) + 1
+            sc_lbl_counts[lbl] = occ
+            sc_lbl_occ_to_col[(lbl, occ)] = c
+
+    # Map Vendor Central columns to Seller Central columns
+    vc_to_sc_col = {}
+    vc_lbl_counts = {}
+    vc_sku_col = None
+    vc_model_name_col = None
+
+    for c in range(1, ws_vc.max_column + 1):
+        lbl = str(ws_vc.cell(vc_lbl_r, c).value or '').strip().lower()
+        key = str(ws_vc.cell(vc_key_r, c).value or '').strip() if vc_key_r else ''
+        nk = _norm_amazon_key(key)
+        if vc_sku_col is None and (nk == 'vendor_sku#1.value' or lbl in ('vendor sku', 'sku', 'seller sku')):
+            vc_sku_col = c
+        if vc_model_name_col is None and (nk == 'model_name#1.value' or lbl == 'model name'):
+            vc_model_name_col = c
+        nk_target = VC_TO_SC_KEY_ALIASES.get(nk, nk)
+        occ = 1
+        if lbl:
+            occ = vc_lbl_counts.get(lbl, 0) + 1
+            vc_lbl_counts[lbl] = occ
+        sc_c = None
+        if nk_target and nk_target in sc_key_to_col:
+            sc_c = sc_key_to_col[nk_target]
+        else:
+            lbl_target = VC_TO_SC_LABEL_ALIASES.get(lbl, lbl)
+            if (lbl_target, occ) in sc_lbl_occ_to_col:
+                sc_c = sc_lbl_occ_to_col[(lbl_target, occ)]
+        if sc_c:
+            vc_to_sc_col[c] = sc_c
+
+    if vc_sku_col is None:
+        vc_sku_col = 2
+
+    sc_sku_col = (
+        sc_key_to_col.get('contribution_sku#1.value')
+        or sc_lbl_occ_to_col.get(('sku', 1))
+        or sc_lbl_occ_to_col.get(('seller sku', 1))
+        or 1
+    )
+    sc_parentage_col = (
+        sc_key_to_col.get('parentage_level#1.value')
+        or sc_lbl_occ_to_col.get(('parentage level', 1))
+    )
+    sc_model_name_col = (
+        sc_key_to_col.get('model_name#1.value')
+        or sc_lbl_occ_to_col.get(('model name', 1))
+    )
+    sc_title_col = (
+        sc_key_to_col.get('item_name#1.value')
+        or sc_lbl_occ_to_col.get(('item name', 1))
+    )
+    sc_color_col = (
+        sc_key_to_col.get('color#1.value')
+        or sc_lbl_occ_to_col.get(('color', 1))
+    )
+    sc_size_col = (
+        sc_key_to_col.get('apparel_size#1.size')
+        or sc_lbl_occ_to_col.get(('apparel size value', 1))
+        or sc_lbl_occ_to_col.get(('size', 1))
+    )
+
+    # Find first empty data row in Seller Central 'Template' sheet
+    curr_r = sc_data_r
+    while curr_r <= ws_sc.max_row and ws_sc.cell(curr_r, sc_sku_col).value not in (None, ''):
+        curr_r += 1
+
+    # Read all filled rows from Vendor Central
+    r_vc = vc_data_r
+    guard = 0
+    while r_vc <= ws_vc.max_row and ws_vc.cell(r_vc, vc_sku_col).value in (None, '') and guard < 10:
+        r_vc += 1
+        guard += 1
+
+    vc_rows_data = []
+    while r_vc <= ws_vc.max_row:
+        sku_val = ws_vc.cell(r_vc, vc_sku_col).value
+        if sku_val in (None, ''):
+            r_vc += 1
+            continue
+        mapped_cells = {}
+        for vc_c, sc_c in vc_to_sc_col.items():
+            val = ws_vc.cell(r_vc, vc_c).value
+            if val not in (None, ''):
+                mapped_cells[sc_c] = val
+        model_name_val = ws_vc.cell(r_vc, vc_model_name_col).value if vc_model_name_col else None
+        model_str = str(model_name_val).strip() if model_name_val not in (None, '') else ''
+        vc_rows_data.append((str(sku_val).strip(), model_str, mapped_cells))
+        r_vc += 1
+
+    if not vc_rows_data:
+        return None, [], 0
+
+    parent_val = pick_dropdown_value(ws_sc, sc_parentage_col, "Parent", "Parent") if sc_parentage_col else "Parent"
+    child_val = pick_dropdown_value(ws_sc, sc_parentage_col, "Child", "Child") if sc_parentage_col else "Child"
+
+    parent_position = ctx.get('parent_position', 'before_group')
+    seen_models = set()
+    unique_models_ordered = []
+    for _, m_str, _ in vc_rows_data:
+        if m_str and m_str not in seen_models:
+            seen_models.add(m_str)
+            unique_models_ordered.append(m_str)
+
+    preview = []
+    total_written = 0
+
+    def write_parent_row(model_sku):
+        nonlocal curr_r, total_written
+        ws_sc.cell(curr_r, sc_sku_col).value = model_sku
+        if sc_parentage_col:
+            ws_sc.cell(curr_r, sc_parentage_col).value = parent_val
+        preview.append({
+            'Row': curr_r,
+            'SKU': model_sku,
+            'Parentage Level': parent_val,
+            'Model Name': '',
+            'Item Name': '(Parent SKU Row)',
+            'Color': '',
+            'Size': '',
+        })
+        curr_r += 1
+        total_written += 1
+
+    def write_child_row(child_sku, model_str, mapped_cells):
+        nonlocal curr_r, total_written
+        for sc_c, val in mapped_cells.items():
+            ws_sc.cell(curr_r, sc_c).value = val
+        ws_sc.cell(curr_r, sc_sku_col).value = child_sku
+        if sc_model_name_col and model_str:
+            ws_sc.cell(curr_r, sc_model_name_col).value = model_str
+        if sc_parentage_col:
+            ws_sc.cell(curr_r, sc_parentage_col).value = child_val
+        preview.append({
+            'Row': curr_r,
+            'SKU': child_sku,
+            'Parentage Level': child_val,
+            'Model Name': model_str,
+            'Item Name': mapped_cells.get(sc_title_col, '') if sc_title_col else '',
+            'Color': mapped_cells.get(sc_color_col, '') if sc_color_col else '',
+            'Size': mapped_cells.get(sc_size_col, '') if sc_size_col else '',
+        })
+        curr_r += 1
+        total_written += 1
+
+    if parent_position == 'top':
+        for m_sku in unique_models_ordered:
+            write_parent_row(m_sku)
+        for c_sku, m_str, m_cells in vc_rows_data:
+            write_child_row(c_sku, m_str, m_cells)
+    elif parent_position == 'bottom':
+        for c_sku, m_str, m_cells in vc_rows_data:
+            write_child_row(c_sku, m_str, m_cells)
+        for m_sku in unique_models_ordered:
+            write_parent_row(m_sku)
+    else:
+        # Default ('before_group'): Insert 1 Parent row for each unique Model Name right before its Child SKUs
+        inserted_parents = set()
+        for c_sku, m_str, m_cells in vc_rows_data:
+            if m_str and m_str not in inserted_parents:
+                inserted_parents.add(m_str)
+                write_parent_row(m_str)
+            write_child_row(c_sku, m_str, m_cells)
 
     output = io.BytesIO()
-    wb.save(output)
+    wb_sc.save(output)
     output.seek(0)
-    return output.getvalue(), preview, count
+    return output.getvalue(), preview, total_written
 
 # ======================================================================
 # 2. PRODUCT IMAGES & SKUs INPUT
@@ -2149,7 +2412,7 @@ with col_s2:
     )
 
 if CONVERT_MODE:
-    st.caption("ℹ️ Convert mode me data VC file se aayega — ye fields sirf blank fallback ke liye hain.")
+    st.caption("ℹ️ Convert mode me matching columns ka data seedha Vendor Central file se Seller Central ke `Template` sheet me replicate hoga.")
 st.divider()
 
 sc_quantity, sc_selling_price = 1, ""
@@ -2198,27 +2461,67 @@ def build_ctx():
     }
 
 if CONVERT_MODE:
-    st.subheader("3. Convert: VC File + SC Template Upload")
-    st.info("💡 Filled **Vendor Central file** + khali **Seller Central template** upload karein.")
-    vc_file = st.file_uploader("📥 Filled Vendor Central File (.xlsx/.xlsm):", type=["xlsx", "xlsm"], key="vcfile")
-    sc_template = st.file_uploader("📤 Seller Central Template (.xlsx/.xlsm):", type=["xlsx", "xlsm"], key="sctpl")
+    st.subheader("3. Convert: Vendor Central ➜ Seller Central (Template Replication + Parent/Child)")
+    st.info(
+        "💡 **Kaise kaam karega:**\n"
+        "1. Niche **Filled Vendor Central File** aur **Blank Seller Central File** upload karein.\n"
+        "2. Seller Central ke **`Template`** sheet me Vendor Central ke saare matching columns ka data same-to-same replicate hoga (jaise `Model Name` jitni baar hai utni baar copy hoga).\n"
+        "3. Saath hi har unique **`Model Name`** ko **`SKU`** column me 1 alag row ke roop me add kiya jayega jiske samne **`Parentage Level = Parent`** select hoga, aur Vendor Central se copy kiye gaye sabhi SKUs ke samne **`Parentage Level = Child`** select hoga."
+    )
+    c_up1, c_up2 = st.columns(2)
+    with c_up1:
+        vc_file = st.file_uploader("📥 1. Filled Vendor Central File Upload Karein (.xlsx / .xlsm):", type=["xlsx", "xlsm"], key="vcfile")
+    with c_up2:
+        sc_template = st.file_uploader("📤 2. Blank Seller Central Template Upload Karein (.xlsx / .xlsm):", type=["xlsx", "xlsm"], key="sctpl")
+
+    parent_pos_label = st.radio(
+        "Parent SKU Row Position (Model Name as Parent):",
+        [
+            "Har Model Name Group ke Pehle (Recommended - Parent ke niche uske Child SKUs)",
+            "Sabhi Child SKUs ke Baad (Pehle saare Child SKUs, fir niche Parent SKUs)",
+            "Sabse Upar (Pehle saare Parent SKUs, fir niche saare Child SKUs)",
+        ],
+        index=0,
+        horizontal=True,
+    )
+    parent_pos_map = {
+        "Har Model Name Group ke Pehle (Recommended - Parent ke niche uske Child SKUs)": "before_group",
+        "Sabhi Child SKUs ke Baad (Pehle saare Child SKUs, fir niche Parent SKUs)": "bottom",
+        "Sabse Upar (Pehle saare Parent SKUs, fir niche saare Child SKUs)": "top",
+    }
 
     if st.button("🔁 Convert Vendor Central ➜ Seller Central"):
         if not vc_file or not sc_template:
-            st.error("Dono files upload karein - VC filled file aur SC template!")
+            st.error("Dono files upload karein - Filled Vendor Central file aur Blank Seller Central template!")
         else:
             try:
                 ctx = build_ctx()
-                with st.spinner("VC file read + SC template fill ho raha hai..."):
+                ctx['parent_position'] = parent_pos_map.get(parent_pos_label, "before_group")
+                with st.spinner("VC file se data replicate ho raha hai + Parent/Child SKUs set ho rahe hain..."):
                     out, preview, count = convert_vc_to_sc(vc_file, sc_template, ctx)
                 if out:
-                    st.success(f"🎉 Conversion complete! Total {count} rows fill hui.")
+                    parent_cnt = sum(1 for r in preview if r.get('Parentage Level') == 'Parent')
+                    child_cnt = sum(1 for r in preview if r.get('Parentage Level') == 'Child')
+                    st.success(
+                        f"🎉 Conversion complete! Total **{count}** rows `Template` sheet me fill hui "
+                        f"(**{parent_cnt} Parent** rows + **{child_cnt} Child** rows)."
+                    )
                     if preview:
                         st.dataframe(preview, use_container_width=True)
-                    out_name = f"{os.path.splitext(sc_template.name)[0]}_Converted.xlsx"
-                    st.download_button("📥 Download Converted Seller Central File", data=out,
-                                       file_name=out_name,
-                                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                    base_name, orig_ext = os.path.splitext(sc_template.name)
+                    out_ext = orig_ext if orig_ext.lower() in ['.xlsm', '.xlsx'] else '.xlsx'
+                    out_name = f"{base_name}_Converted{out_ext}"
+                    out_mime = (
+                        "application/vnd.ms-excel.sheet.macroEnabled.12"
+                        if out_ext.lower() == '.xlsm'
+                        else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                    st.download_button(
+                        "📥 Download Converted Seller Central File",
+                        data=out,
+                        file_name=out_name,
+                        mime=out_mime,
+                    )
                 else:
                     st.error("VC file me koi data row nahi mili.")
             except Exception as e:
