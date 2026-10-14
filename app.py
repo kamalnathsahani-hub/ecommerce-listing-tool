@@ -16,19 +16,18 @@ from datetime import datetime
 
 st.set_page_config(page_title="Multi-Marketplace Auto Listing Generator", layout="wide")
 
-st.title("📦 Multi-Marketplace Auto Listing Generator (Universal Pro V17 — AI Vision)")
-st.caption("Ajio | Amazon VC | VC➜SC | Amazon SC | Flipkart | Meesho | Myntra + 🤖 FREE Gemini Vision (Optional Tick)")
+st.title("📦 Multi-Marketplace Auto Listing Generator (Universal Pro V18)")
+st.caption("Ajio | Amazon VC | VC➜SC | Amazon SC | Flipkart | Meesho | Myntra + 🤖 AI Vision (Optional) + Dropdown-Safe Product Type")
 
 # ======================================================================
 #                🔑 API KEYS & AI CONFIG (YAHI EDIT KARNA HOTA HAI)
 # ======================================================================
 IMGBB_PERMANENT_KEY = "137be55d19cf3d6a7ec051e369137041"
 
-# 🤖 GEMINI AI VISION (100% FREE) - Aapki key by default set hai.
-# Nayi key banane ke liye: https://aistudio.google.com/apikey
-# (Key badalni ho to sirf neeche quotes ke andar nayi key paste karo)
+# 🤖 GEMINI AI VISION (100% FREE) - Key by default set hai.
+# Nayi key: https://aistudio.google.com/apikey
 DEFAULT_GEMINI_API_KEY = "AQ.Ab8RN6Iir4BoBSujYsKLtoZZkKzzSMlxIWT9LakOoiwawdVlpg"
-DEFAULT_VISION_MODEL = "gemini-2.0-flash"   # Free tier ka sabse fast model
+DEFAULT_VISION_MODEL = "gemini-2.0-flash"
 
 # ======================================================================
 # 1. MARKETPLACE SELECTION
@@ -89,7 +88,6 @@ def _norm_h(s):
     return re.sub(r'[\s_\-*]+', '', str(s or '')).strip().lower()
 
 def detect_product_category(folder_name, user_keywords="", sheet_name=""):
-    """Python intelligence: folder-name se category detect karta hai."""
     combined = f"{folder_name} {user_keywords} {sheet_name}".lower()
     if any(k in combined for k in ["hoodie", "hoody", "hooded"]):
         return "hoodie"
@@ -136,7 +134,7 @@ def resolve_category(clean_style, ctx, sheet_name=""):
     return cat
 
 # ======================================================================
-# COLOR DETECTION (PYTHON INTELLIGENCE - typo fixes ke saath)
+# COLOR DETECTION (PYTHON INTELLIGENCE)
 # ======================================================================
 COMMON_COLORS = [
     "Beige", "LightGrey", "Grey", "DarkGrey", "Black", "Navy", "Blue", "LightBlue", "DarkBlue",
@@ -165,7 +163,6 @@ COLOR_MISSPELLINGS = {
 }
 
 def detect_color(text):
-    """Folder-name se color: exact -> joined -> misspelling -> fuzzy -> Black"""
     text_clean = str(text).replace('-', ' ').replace('_', ' ').lower()
     words = [w for w in text_clean.split() if w]
     joined = ''.join(words)
@@ -188,7 +185,7 @@ def detect_color(text):
     return "Black"
 
 def resolve_color(raw_fld, clean_style, ctx):
-    """Priority: AI Vision (image me jo dikh raha) > Folder Name"""
+    """Priority: AI Vision > Folder Name"""
     vr = ctx.get('vision_results') or {}
     if (vr.get(clean_style) or {}).get('color'):
         return vr[clean_style]['color']
@@ -233,7 +230,6 @@ def _canonicalize_color(name):
     return name
 
 def map_to_standard_color_map(det_col):
-    """Relevant Color Map: Maroon -> Red | Navy -> Blue | Khaki -> Beige"""
     if not det_col:
         return "Black"
     det_col = _canonicalize_color(det_col)
@@ -249,7 +245,7 @@ def map_to_standard_color_map(det_col):
     return "Multicolor"
 
 # ======================================================================
-# POCKET DETECTION
+# POCKET + PRODUCT TYPE MAPPINGS
 # ======================================================================
 POCKET_BY_CATEGORY = {
     'hoodie': 'Kangaroo Pocket', 'sweatshirt': 'Kangaroo Pocket',
@@ -264,11 +260,29 @@ def get_pocket_for_cat(cat):
     return POCKET_BY_CATEGORY.get(cat, 'Side Pocket')
 
 def resolve_pocket(clean_style, cat, ctx):
-    """Priority: AI Vision > Category-based"""
     vr = ctx.get('vision_results') or {}
     if (vr.get(clean_style) or {}).get('pocket'):
         return vr[clean_style]['pocket']
     return get_pocket_for_cat(cat)
+
+# 🆕 V18: Product Type ke liye har category ke possible dropdown names (priority order)
+# Aapke template ke dropdown me jo bhi naam hai, isi list me match hoga.
+# Agar aapka dropdown koi alag naam rakhta hai to usse yahan list me add kar dein.
+PRODUCT_TYPE_CANDIDATES = {
+    'hoodie': ['SWEATSHIRT', 'HOODIE', 'SWEATSHIRTS', 'HOODIES', 'PULLOVER', 'FLEECE', 'SWEATSHIRT/PULLOVER'],
+    'sweatshirt': ['SWEATSHIRT', 'SWEATSHIRTS', 'PULLOVER', 'FLEECE', 'SWEATER'],
+    'jeans': ['JEANS', 'PANTS', 'DENIM', 'DENIM PANTS'],
+    'cargo': ['CARGO PANTS', 'CARGO', 'CARGO_PANTS', 'PANTS', 'UTILITY PANTS'],
+    'trousers': ['PANTS', 'TROUSERS', 'CHINOS', 'CASUAL PANTS'],
+    'pants': ['PANTS', 'CASUAL PANTS', 'TROUSERS'],
+    'joggers': ['SWEATPANTS', 'JOGGERS', 'PANTS', 'TRACK PANTS'],
+    'shorts': ['SHORTS', 'PANTS'],
+    'tshirt': ['T-SHIRT', 'TSHIRT', 'T SHIRT', 'TEE', 'SHIRT', 'TOPS'],
+    'shirt': ['SHIRT', 'CASUAL SHIRT', 'BUTTON-DOWN SHIRT', 'SHIRTS'],
+    'jacket': ['JACKET', 'COAT', 'OUTERWEAR', 'BLAZER'],
+    'kurta': ['KURTA', 'ETHNIC WEAR', 'SHIRT'],
+    'apparel': ['PANTS', 'SHIRT', 'SWEATSHIRT'],
+}
 
 CATEGORY_LABELS = {
     'hoodie': 'Hoodie', 'sweatshirt': 'Sweatshirt', 'cargo': 'Cargo Pants',
@@ -410,8 +424,7 @@ def get_dropdown_options_for_column(ws, col_idx):
     return None
 
 def pick_dropdown_value(ws, col_idx, desired, fallback=None):
-    """VALUE SIRF DROPDOWN SE: exact -> partial -> fuzzy -> dropdown ka pehla option.
-    Dropdown na mile to aapki di hui value hi likhi jaati hai."""
+    """VALUE SIRF DROPDOWN SE: exact -> partial -> fuzzy -> dropdown ka pehla option."""
     options = get_dropdown_options_for_column(ws, col_idx)
     if not options:
         return desired if desired is not None else fallback
@@ -432,6 +445,89 @@ def pick_dropdown_value(ws, col_idx, desired, fallback=None):
     if close:
         return close[0]
     return options[0]
+
+# ======================================================================
+# 🆕 V18: PRODUCT TYPE — SMART DROPDOWN-ONLY PICKER
+# ======================================================================
+def pick_product_type_from_dropdown(ws, col_idx, cat, sheet_name=""):
+    """
+    Product Type SIRF dropdown options se pick hoga — random value kabhi nahi.
+    Returns: (value ya None, matched?, options_preview_str)
+    - 5-level matching: Exact -> StartsWith -> Word -> Contains -> Strict Fuzzy
+    - Kuch match nahi hua to (category-safe generic bhi na mile to) None -> cell BLANK
+      aur report me dropdown ke available options dikhte hain.
+    """
+    options = get_dropdown_options_for_column(ws, col_idx)
+    opts_preview = "(dropdown detect nahi hua)"
+    if options:
+        opts_preview = ", ".join(str(o) for o in options[:12])
+        if len(options) > 12:
+            opts_preview += f" ... (+{len(options) - 12} more)"
+
+    if not options:
+        # Dropdown hi nahi mila -> koi restriction nahi, category-based best value
+        cands = list(PRODUCT_TYPE_CANDIDATES.get(cat, ['PANTS', 'SHIRT']))
+        sl = (sheet_name or '').lower()
+        if "pant" in sl:
+            cands = ['PANTS'] + [c for c in cands if c != 'PANTS']
+        elif "shirt" in sl:
+            cands = ['SHIRT'] + [c for c in cands if c != 'SHIRT']
+        return cands[0], True, opts_preview
+
+    opts_lower = {str(o).strip().lower(): o for o in options}
+
+    # Category-based candidate list (priority order) + sheet-title hint
+    candidates = list(PRODUCT_TYPE_CANDIDATES.get(cat, ['PANTS', 'SHIRT']))
+    sl = (sheet_name or '').lower()
+    if "pant" in sl:
+        candidates = ['PANTS'] + [c for c in candidates if c != 'PANTS']
+    elif "shirt" in sl:
+        candidates = ['SHIRT'] + [c for c in candidates if c != 'SHIRT']
+
+    # Pass 1: EXACT match (case-insensitive)
+    for cand in candidates:
+        if cand.lower() in opts_lower:
+            return opts_lower[cand.lower()], True, opts_preview
+
+    # Pass 2: STARTSWITH dono taraf (min length 4 guard ke saath)
+    for cand in candidates:
+        cl = cand.lower()
+        for ol, orig in opts_lower.items():
+            if (len(ol) >= 4 and ol.startswith(cl)) or (len(cl) >= 4 and cl.startswith(ol)):
+                return orig, True, opts_preview
+
+    # Pass 3: WORD-level match ("PANTS" word "CARGO PANTS" option ke andar)
+    for cand in candidates:
+        cl_words = cand.lower().replace('-', ' ').split()
+        for ol, orig in opts_lower.items():
+            ol_words = ol.replace('-', ' ').split()
+            if cl_words and all(w in ol_words for w in cl_words):
+                return orig, True, opts_preview
+
+    # Pass 4: CONTAINS
+    for cand in candidates:
+        cl = cand.lower()
+        for ol, orig in opts_lower.items():
+            if cl in ol:
+                return orig, True, opts_preview
+
+    # Pass 5: STRICT fuzzy (cutoff 0.6 — random match se bachav)
+    for cand in candidates:
+        close = difflib.get_close_matches(cand.lower(), list(opts_lower.keys()), n=1, cutoff=0.6)
+        if close:
+            return opts_lower[close[0]], True, opts_preview
+
+    # Kuch match nahi hua -> RANDOM KABHI NAHI. Category-safe generic fallback:
+    tops = cat in ['hoodie', 'sweatshirt', 'tshirt', 'shirt', 'jacket', 'kurta']
+    generic_order = ['sweatshirt', 'hoodie', 'shirt', 'sweater', 'top'] if tops \
+        else ['pants', 'jeans', 'shorts', 'bottom']
+    for g in generic_order:
+        for ol, orig in opts_lower.items():
+            if g in ol:
+                return orig, False, opts_preview  # mila but confident nahi -> report me aayega
+
+    # Bilkul kuch nahi mila -> BLANK chhodo (random value likhne se better)
+    return None, False, opts_preview
 
 # ======================================================================
 # 🤖 AI VISION ENGINE (FREE - GOOGLE GEMINI)
@@ -460,7 +556,6 @@ def guess_mime(filename):
     return 'image/jpeg'
 
 def gemini_vision_detect(image_bytes, img_name, api_key, model="gemini-2.0-flash"):
-    """Folder ki pehli image Gemini ko bhej kar Category+Color+Pocket JSON me leta hai."""
     if not api_key or not image_bytes:
         return None
     cats = ", ".join([c for c in CATEGORY_OPTIONS if c != 'apparel'])
@@ -529,7 +624,6 @@ def canonicalize_ai_pocket(p_str):
     return close[0] if close else p.title()
 
 def run_vision_detection(zip_images_data, api_key, model):
-    """Har folder ki PEHLI image analyze karta hai. Returns (results, failed_folders)."""
     results, failed = {}, []
     folders = [f for f in zip_images_data.keys() if zip_images_data.get(f)]
     if not folders:
@@ -1044,6 +1138,7 @@ def run_vendor_central(uploaded_file, ctx):
     mrp_font = Font(bold=True)
     material_fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")
     added, preview = 0, []
+    pt_report = []  # 🆕 V18: Product Type match report
 
     def vset(col, value, dropdown=False, highlight=None, bold=False):
         if not col:
@@ -1071,9 +1166,27 @@ def run_vendor_central(uploaded_file, ctx):
         pocket_val = resolve_pocket(clean_style, cat, ctx)
         mat_val = "Cotton" if cat in ['cargo', 'hoodie', 'sweatshirt'] else "Cotton Blend"
 
+        # 🆕 V18: Product Type SIRF dropdown se (har SKU ke liye ek baar decide)
+        c_pt = get_vc_col(['product type'], ['product_type#1.value'])
+        pt_val, pt_matched, pt_opts = None, False, "(column nahi mila)"
+        if c_pt:
+            pt_val, pt_matched, pt_opts = pick_product_type_from_dropdown(ws, c_pt, cat, ws.title)
+
+        pt_report.append({
+            'SKU': clean_style,
+            'Category': cat,
+            'Sheet': ws.title,
+            'Product Type (Likha)': pt_val if pt_val else '(BLANK - dropdown me match nahi mila)',
+            'Status': '✅ Dropdown se match' if (pt_matched and pt_val) else
+                      ('⚠️ Generic fallback - check karein' if pt_val else
+                       '❌ Match nahi mila - BLANK chhoda gaya'),
+            'Dropdown Options (kuch)': pt_opts,
+        })
+
         preview.append({'SKU': clean_style, 'Category': cat, 'Color': det_col,
-                        'Color Map': color_map_val, 'Item Type': item_type_val,
-                        'Style': style_val, 'Pocket': pocket_val, 'Material': mat_val})
+                        'Color Map': color_map_val, 'Product Type': pt_val or '(blank)',
+                        'Item Type': item_type_val, 'Style': style_val,
+                        'Pocket': pocket_val, 'Material': mat_val})
 
         for sz in ctx['sizes']:
             clean_sz = clean_sku_name(sz)
@@ -1089,14 +1202,9 @@ def run_vendor_central(uploaded_file, ctx):
             if c_sku:
                 ws.cell(curr_r, c_sku).value = full_sku
 
-            c_pt = get_vc_col(['product type'], ['product_type#1.value'])
-            if c_pt:
-                if "pant" in ws.title.lower():
-                    vset(c_pt, "PANTS", dropdown=True)
-                elif "shirt" in ws.title.lower():
-                    vset(c_pt, "SHIRT", dropdown=True)
-                else:
-                    vset(c_pt, "PANTS" if cat in ['jeans', 'cargo', 'trousers', 'pants'] else "SWEATSHIRT", dropdown=True)
+            # 🆕 V18: Product Type likho (sirf dropdown se mila hua value; blank agar kuch nahi mila)
+            if c_pt and pt_val:
+                ws.cell(curr_r, c_pt).value = pt_val
 
             for p_lbl, p_key in [
                 (['parentage level'], ['parentage_level#1.value']),
@@ -1369,7 +1477,7 @@ def run_vendor_central(uploaded_file, ctx):
     output = io.BytesIO()
     wb.save(output)
     output.seek(0)
-    return output.getvalue(), preview, added
+    return output.getvalue(), preview, added, pt_report
 
 # ======================================================================
 #        AMAZON SELLER CENTRAL ENGINE
@@ -2042,7 +2150,6 @@ if not CONVERT_MODE:
                 if detected_size_chart_info:
                     st.info(f"📐 **Size Chart Detect Hua:** `{detected_size_chart_info['filename']}`")
 
-                # Naya ZIP aane par stale AI results clear karo
                 valid_keys = {clean_sku_name(f) for f in detected_folders}
                 st.session_state['vision_results'] = {
                     k: v for k, v in st.session_state['vision_results'].items() if k in valid_keys
@@ -2077,17 +2184,14 @@ default_category = None
 if not CONVERT_MODE and detected_folders:
     st.subheader("1a. 🤖 AI Vision (Optional) + SKU-wise Category / Color Check")
     st.caption(
-        "✅ **Tick ON** = Generate dabane par har folder ki pehli image **FREE Gemini AI** se analyze hogi "
-        "(Category + Color + Pocket image dekh kar set honge). "
-        "⬜ **Tick OFF** = 100% Python intelligence (folder-name detection, typo-fixes ke saath) — koi API use nahi hogi. "
-        "Agar AI fail ho jaye (limit khatam/Network), to automatic Python intelligence par fall back hoga. "
-        "Priority: **Override > AI > Folder Name**."
+        "✅ **Tick ON** = Generate par images FREE Gemini AI se analyze hongi (Category + Color + Pocket). "
+        "⬜ **Tick OFF** = 100% Python intelligence — koi API nahi. "
+        "AI fail ho to automatic Python fallback. Priority: **Override > AI > Folder Name**."
     )
 
     vr_all = st.session_state.get('vision_results', {})
     kw_now = st.session_state.get('kw_input', '')
 
-    # LIVE PREVIEW (abhi ke available sources ke saath)
     _ctx_tmp = {'vision_results': vr_all, 'keywords': kw_now, 'default_category': None}
     prev_rows = []
     for fld in detected_folders:
@@ -2103,6 +2207,9 @@ if not CONVERT_MODE and detected_folders:
         prev_rows.append({
             'Folder/SKU': cs, 'Category': p_cat, 'Color': p_col,
             'Color Map/Family': map_to_standard_color_map(p_col),
+            'Product Type (VC)': ('PANTS' if p_cat in ['jeans', 'cargo', 'trousers', 'pants', 'joggers', 'shorts']
+                                  else 'SWEATSHIRT' if p_cat in ['hoodie', 'sweatshirt']
+                                  else 'SHIRT'),
             'Item Type': get_item_type_name_from_dropdown(p_cat),
             'Style': get_style_from_dropdown(p_cat),
             'Pocket': resolve_pocket(cs, p_cat, _ctx_tmp),
@@ -2110,11 +2217,10 @@ if not CONVERT_MODE and detected_folders:
         })
     st.dataframe(prev_rows, use_container_width=True)
 
-    # ⬜ OPTION TICK — uncheck karte hi 100% Python intelligence chalega
     vision_enabled = st.checkbox(
         "🤖 AI Vision Enable Karein (FREE Gemini) — OFF karo to sirf Python intelligence chalega",
         value=True, key="vision_enabled",
-        help="Tick OFF karne par koi API call nahi hogi — chahe limit poori ho ya na ho, file banane me koi dikkat nahi aayegi."
+        help="Tick OFF karne par koi API call nahi hogi — chahe limit poori ho ya na ho."
     )
 
     vision_api_key, vision_model = "", DEFAULT_VISION_MODEL
@@ -2126,7 +2232,7 @@ if not CONVERT_MODE and detected_folders:
                     "Gemini API Key (FREE):", type="password",
                     value=DEFAULT_GEMINI_API_KEY, placeholder="AIza... ya AQ...",
                     key="vision_key",
-                    help="Free key: aistudio.google.com/apikey — key code me already set hai, yahan se badal bhi sakte hain."
+                    help="Free key: aistudio.google.com/apikey"
                 )
             with cv2:
                 vision_model = st.selectbox(
@@ -2134,25 +2240,20 @@ if not CONVERT_MODE and detected_folders:
                     index=0, key="vision_model"
                 )
 
-            c_run1, c_run2 = st.columns(2)
-            with c_run1:
-                if st.button("🔍 Abhi AI Detect Karo (Manual)"):
-                    if not vision_api_key.strip():
-                        st.error("Gemini API key khaali hai — upar daalein.")
+            if st.button("🔍 Abhi AI Detect Karo (Manual)"):
+                if not vision_api_key.strip():
+                    st.error("Gemini API key khaali hai — upar daalein.")
+                else:
+                    results, failed = run_vision_detection(zip_images_data, vision_api_key.strip(), vision_model)
+                    st.session_state['vision_results'] = results
+                    if results:
+                        st.success(f"✅ {len(results)} folders AI se detect ho gaye!")
+                        st.rerun()
                     else:
-                        results, failed = run_vision_detection(zip_images_data, vision_api_key.strip(), vision_model)
-                        st.session_state['vision_results'] = results
-                        if results:
-                            st.success(f"✅ {len(results)} folders AI se detect ho gaye! Preview update ho gaya.")
-                            st.rerun()
-                        else:
-                            st.warning("AI se result nahi mila — folder-name detection use hoga.")
-            with c_run2:
-                st.caption("ℹ️ **Generate dabane par bhi AI automatic chalega** (agar tick ON hai aur results abhi tak nahi bane).")
+                        st.warning("AI se result nahi mila — folder-name detection use hoga.")
         else:
-            st.caption("ℹ️ AI Vision sirf ZIP mode me chalta hai (images locally hone chahiye). Dropbox/Manual mode me Python intelligence use hogi.")
+            st.caption("ℹ️ AI Vision sirf ZIP mode me chalta hai. Dropbox/Manual mode me Python intelligence use hogi.")
 
-    # Default Category + Per-SKU Override
     with st.expander("⚙️ Default Category & Per-SKU Override (galat detect ho to yahan badlein)"):
         c_o1, c_o2 = st.columns([1, 2])
         with c_o1:
@@ -2291,11 +2392,7 @@ else:
         else:
             ctx = build_ctx()
 
-            # ==========================================================
-            # 🤖 AUTO AI VISION — SIRF TAB JAB TICK ON HO
-            # Tick OFF = 100% Python intelligence (koi API call nahi)
-            # Tick ON but API fail = automatic Python fallback
-            # ==========================================================
+            # 🤖 AUTO AI VISION — sirf tab jab tick ON ho
             v_enabled = st.session_state.get('vision_enabled', True)
             v_key = (st.session_state.get('vision_key', '') or DEFAULT_GEMINI_API_KEY).strip()
             v_model = st.session_state.get('vision_model', DEFAULT_VISION_MODEL)
@@ -2307,18 +2404,16 @@ else:
                     st.session_state['vision_results'] = auto_results
                 if auto_results:
                     st.success(f"🤖 AI Vision: {len(auto_results)} SKUs auto-detect ho gaye!" +
-                               (f" | Fail (Python fallback hoga): {', '.join(auto_failed)}" if auto_failed else ""))
+                               (f" | Fail (Python fallback): {', '.join(auto_failed)}" if auto_failed else ""))
                     st.dataframe([
                         {'SKU': k, 'Category': v.get('category'), 'Color': v.get('color'), 'Pocket': v.get('pocket')}
                         for k, v in auto_results.items()
                     ], use_container_width=True)
                 else:
-                    st.warning("🤖 AI se result nahi mila — Python intelligence (folder-name detection) use hoga. "
-                               "(Tip: Tick OFF karke bhi file ban sakti hai.)")
+                    st.warning("🤖 AI se result nahi mila — Python intelligence use hoga.")
             elif not v_enabled and zip_images_data:
                 st.info("⬜ AI Vision OFF hai — 100% Python intelligence se file ban rahi hai.")
 
-            # CDN Upload (cached + progress bar)
             if auto_cdn_upload:
                 with st.spinner("Images ko live CDN par upload kiya ja raha hai..."):
                     progress = st.progress(0.0)
@@ -2350,9 +2445,20 @@ else:
                     out_name = f"AJIO_MULTI_CATEGORY_LISTED.{'xlsm' if uploaded_file.name.lower().endswith('.xlsm') else 'xlsx'}"
 
                 elif marketplace == "Amazon - Vendor Central":
-                    out, preview, added = run_vendor_central(uploaded_file, ctx)
+                    out, preview, added, pt_report = run_vendor_central(uploaded_file, ctx)
                     st.success(f"🎉 Amazon Vendor Central template filled! Total {added} variants.")
                     out_name = uploaded_file.name
+
+                    # 🆕 V18: Product Type match report
+                    pt_problems = [r for r in pt_report if '✅' not in r['Status']]
+                    if pt_problems:
+                        st.warning(f"⚠️ Product Type: {len(pt_problems)} SKU(s) dropdown se 100% match nahi hue — "
+                                   f"neeche dropdown ke available options dekh kar code ke PRODUCT_TYPE_CANDIDATES list me add kar sakte hain "
+                                   f"(ya file me manually set karein).")
+                        with st.expander("📋 Product Type Report (details)"):
+                            st.dataframe(pt_report, use_container_width=True)
+                    else:
+                        st.info("✅ Product Type: sabhi SKUs template ke dropdown se match hue.")
 
                 elif marketplace == "Amazon - Seller Central":
                     out, preview, added = run_seller_central(uploaded_file, ctx)
