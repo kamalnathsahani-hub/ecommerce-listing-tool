@@ -16,6 +16,8 @@ from datetime import datetime
 
 st.set_page_config(page_title="Multi-Marketplace Auto Listing Generator", layout="wide")
 
+if st.button("⬅️ Back to Home"):
+    st.switch_page("app.py")
 st.title("📦 Multi-Marketplace Auto Listing Generator (Universal Pro V19)")
 st.caption("Ajio | Amazon VC | VC➜SC | Amazon SC | Flipkart | Meesho | Myntra + 🤖 AI Vision (Optional) | Product Type = Manual")
 
