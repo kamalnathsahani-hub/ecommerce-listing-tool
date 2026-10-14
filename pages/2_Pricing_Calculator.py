@@ -11,7 +11,6 @@ st.set_page_config(page_title="Pricing & TP Calculator", page_icon="💰", layou
 # ==========================================
 # 🔒 SECURITY CHECK START
 # ==========================================
-# Yahan "MYSECRET123" ki jagah aap apna manpasand password likh sakte hain
 SECRET_PASSWORD = "MYSECRET123"
 
 if not st.session_state.get("pricing_access", False):
@@ -30,7 +29,7 @@ if not st.session_state.get("pricing_access", False):
         if st.button("⬅️ Back to Home"):
             st.switch_page("app.py")
             
-    st.stop()  # Jab tak password sahi nahi hoga, iske niche ka code run nahi hoga
+    st.stop()
 # ==========================================
 # 🔒 SECURITY CHECK END
 # ==========================================
@@ -49,43 +48,53 @@ st.title("💰 Multi-Brand Pricing & Amazon TP Calculator")
 st.caption("Auto-calculate ASP for ~10% Goal Margin | Live Formula Calculator Sheet + Vendor Cost & DF Attributes Master")
 
 # ==========================================
-# 1. BRAND PRESET CONFIGURATIONS
+# 1. BRAND PRESET CONFIGURATIONS (Updated with Image Mapping)
 # ==========================================
 BRAND_CONFIGS = {
     "FABNEX": {
         "tax_pct": 5.0, "margin_type": "fixed", "margin_pct": 26.0,
         "ams_pct": 4.0, "office_exp": 40.0, "consult_pct": 5.0,
-        "deduct_consult": True, "vendor_suffix": "Fabnex"
+        "deduct_consult": True, "vendor_code": "FP9UO", "sc_code": "FOHK"
     },
     "QNIM": {
         "tax_pct": 5.0, "margin_type": "fixed", "margin_pct": 30.0,
         "ams_pct": 4.0, "office_exp": 40.0, "consult_pct": 5.0,
-        "deduct_consult": True, "vendor_suffix": "Qnim"
+        "deduct_consult": True, "vendor_code": "", "sc_code": "QNIM"
     },
     "WEREFLEX": {
         "tax_pct": 5.0, "margin_type": "fixed", "margin_pct": 30.0,
         "ams_pct": 5.0, "office_exp": 45.0, "consult_pct": 5.0,
-        "deduct_consult": False, "vendor_suffix": "Wereflex"
+        "deduct_consult": False, "vendor_code": "YHUBT", "sc_code": "GGHB"
     },
     "ZURITY": {
         "tax_pct": 5.0, "margin_type": "fixed", "margin_pct": 31.0,
         "ams_pct": 6.0, "office_exp": 40.0, "consult_pct": 5.0,
-        "deduct_consult": True, "vendor_suffix": "Zurity"
+        "deduct_consult": True, "vendor_code": "PC9NG", "sc_code": "GZEZ"
     },
     "URBAN": {
         "tax_pct": 5.0, "margin_type": "fixed", "margin_pct": 31.0,
         "ams_pct": 6.0, "office_exp": 40.0, "consult_pct": 5.0,
-        "deduct_consult": True, "vendor_suffix": "Urban"
+        "deduct_consult": True, "vendor_code": "URHY6", "sc_code": "GPGJ"
     },
     "LITZO": {
         "tax_pct": 5.0, "margin_type": "fixed", "margin_pct": 31.0,
         "ams_pct": 6.0, "office_exp": 40.0, "consult_pct": 5.0,
-        "deduct_consult": True, "vendor_suffix": "Litzo"
+        "deduct_consult": True, "vendor_code": "", "sc_code": "LITZO"
     },
     "ASMERIYO": {
         "tax_pct": 5.0, "margin_type": "fixed", "margin_pct": 31.0,
         "ams_pct": 6.0, "office_exp": 40.0, "consult_pct": 5.0,
-        "deduct_consult": True, "vendor_suffix": "Asmeriyo"
+        "deduct_consult": True, "vendor_code": "RCCLU", "sc_code": "GSTK"
+    },
+    "LERIYA": {
+        "tax_pct": 5.0, "margin_type": "fixed", "margin_pct": 31.0,
+        "ams_pct": 6.0, "office_exp": 40.0, "consult_pct": 5.0,
+        "deduct_consult": True, "vendor_code": "9S98W", "sc_code": "HGQE"
+    },
+    "SS GLOBAL": {
+        "tax_pct": 5.0, "margin_type": "fixed", "margin_pct": 31.0,
+        "ams_pct": 6.0, "office_exp": 40.0, "consult_pct": 5.0,
+        "deduct_consult": True, "vendor_code": "SSGNJ", "sc_code": "HCLK"
     },
     "LYMIO": {
         "tax_pct": 5.0, "margin_type": "slab_3",
@@ -93,14 +102,14 @@ BRAND_CONFIGS = {
         "slab2_min": 499, "slab2_max": 749, "slab2_margin": 31.0,
         "slab3_min": 749, "slab3_margin": 28.0,
         "ams_pct": 7.0, "office_exp": 40.0, "consult_pct": 5.0,
-        "deduct_consult": True, "vendor_suffix": "Lymio"
+        "deduct_consult": True, "vendor_code": "JBZ54", "sc_code": "GFUK"
     },
     "LYMIO PREMIUM": {
         "tax_pct": 5.0, "margin_type": "slab_2",
         "slab1_max": 749, "slab1_margin": 31.0,
         "slab2_min": 749, "slab2_margin": 28.0,
         "ams_pct": 8.0, "office_exp": 60.0, "consult_pct": 5.0,
-        "deduct_consult": False, "vendor_suffix": "Lymio"
+        "deduct_consult": False, "vendor_code": "JBZ54", "sc_code": "GFUK"
     }
 }
 
@@ -114,24 +123,20 @@ with col_b1:
     selected_brand = st.selectbox(
         "🏷️ Brand Name Select Karein:",
         options=list(BRAND_CONFIGS.keys()),
-        index=3 # Default ZURITY
+        index=3  # Default ZURITY
     )
 
 cfg = BRAND_CONFIGS[selected_brand]
+target_vendor_code = cfg.get("vendor_code", "")
+target_sc_vendor_str = f"AmazonIn/{cfg.get('sc_code', '')}" if cfg.get("sc_code") else "AmazonIn/"
 
 with col_b2:
-    vendor_name_mode = st.selectbox(
-        "🏢 DF Sheet `sc_vendor_name` Format:",
-        options=["AmazonIn/ (Sirf itna)", f"AmazonIn/{cfg['vendor_suffix']}"],
-        index=0,
-        help="3rd sheet (DF Attributes) me sc_vendor_name column me kya fill karna hai"
-    )
-    sc_vendor_val = "AmazonIn/" if vendor_name_mode.startswith("AmazonIn/ (") else f"AmazonIn/{cfg['vendor_suffix']}"
+    st.info(f"🏢 **Codes Auto-Selected:**\n- `vendor_code`: **{target_vendor_code or 'N/A'}**\n- `sc_vendor_name`: **{target_sc_vendor_str}**")
 
 with col_b3:
     target_goal_pct = st.number_input("🎯 Target Goal Margin %", value=10.0, step=0.5, format="%.2f")
 
-st.markdown("##### ⚙️ Brand Parameters (Aap zaroorat ke hisaab se inhe change kar sakte hain):")
+st.markdown("##### ⚙️ Brand Parameters:")
 p_col1, p_col2, p_col3, p_col4, p_col5, p_col6 = st.columns(6)
 
 with p_col1:
@@ -148,7 +153,7 @@ with p_col4:
 
 with p_col5:
     deduct_consult = st.checkbox(
-        "Deduct Consulting Charge in Final Margin?",
+        "Deduct Consulting in Final Margin?",
         value=cfg["deduct_consult"],
         help="Agar tick hai to Margin % = (Final Profit - Consulting Charge) / Amazon TP hoga."
     )
@@ -381,7 +386,7 @@ def generate_calculator_workbook(df_results, brand_name, tax_r, slab_info, ams_r
         ws.cell(r, 13, f'=IF(OR($B{r}="",$C{r}=""),"",ROUND(H{r}*$B$8,2))')
         ws.cell(r, 14, f'=IF(OR($B{r}="",$C{r}=""),"",L{r}-M{r})')
         
-        if deduct_c:
+        if deduct_consult:
             ws.cell(r, 15, f'=IF(OR($B{r}="",$C{r}=""),"",N{r}/H{r}*100)')
         else:
             ws.cell(r, 15, f'=IF(OR($B{r}="",$C{r}=""),"",L{r}/H{r}*100)')
@@ -410,7 +415,7 @@ def generate_calculator_workbook(df_results, brand_name, tax_r, slab_info, ams_r
     return out
 
 
-def generate_vendor_master_workbook(df_results, sc_vendor_str):
+def generate_vendor_master_workbook(df_results, vendor_code_val, sc_vendor_str):
     wb = openpyxl.Workbook()
     
     yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
@@ -440,7 +445,8 @@ def generate_vendor_master_workbook(df_results, sc_vendor_str):
         c1.fill = grey_fill
         c2.fill = grey_fill
 
-        ws_cost.cell(r_num, 3, None)
+        # vendor_code column (Column 3)
+        ws_cost.cell(r_num, 3, vendor_code_val if vendor_code_val else None)
         ws_cost.cell(r_num, 4, "INR")
         
         c5 = ws_cost.cell(r_num, 5, tp_val)
@@ -491,6 +497,7 @@ def generate_vendor_master_workbook(df_results, sc_vendor_str):
         c_asin = ws_df.cell(r_num, 1, str(row["ASIN"]))
         c_asin.fill = grey_fill
         
+        # sc_vendor_name column (Column 2) - format AmazonIn/{code}
         ws_df.cell(r_num, 2, sc_vendor_str)
         ws_df.cell(r_num, 3, "enabled_no_auto_pricing")
         ws_df.cell(r_num, 4, True)
@@ -726,7 +733,9 @@ with tab1:
                 calc_excel_bytes = generate_calculator_workbook(
                     final_df, selected_brand, tax_pct, slab_params, ams_pct, office_exp, consult_pct, deduct_consult
                 )
-                vendor_excel_bytes = generate_vendor_master_workbook(final_df, sc_vendor_val)
+                
+                # Pass vendor_code and sc_vendor_name string to vendor workbook generator
+                vendor_excel_bytes = generate_vendor_master_workbook(final_df, target_vendor_code, target_sc_vendor_str)
 
                 with dl_col1:
                     st.download_button(
