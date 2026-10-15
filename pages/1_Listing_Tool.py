@@ -19,16 +19,24 @@ st.set_page_config(page_title="Multi-Marketplace Auto Listing Generator", layout
 if st.button("⬅️ Back to Home"):
     st.switch_page("app.py")
 st.title("📦 Multi-Marketplace Auto Listing Generator (Universal Pro V22 - AI Vision Enhanced)")
-st.caption("Ajio | Amazon VC | VC➜SC | Amazon SC | Flipkart | Meesho | Myntra + 🤖 AI Vision Auto-Detect (Fabric, Sleeves, Color, Pattern)")
+st.caption("Ajio | Amazon VC | VC➜SC | Amazon SC | Flipkart | Meesho | Myntra + 🤖 AI Vision (Gemini ➜ NVIDIA ➜ Groq Fallback)")
 
 # ======================================================================
-#                🔑 API KEYS & AI CONFIG
+#                🔑 API KEYS & MULTI-AI VISION CONFIG
 # ======================================================================
 IMGBB_PERMANENT_KEY = "137be55d19cf3d6a7ec051e369137041"
 
-# 🤖 GEMINI AI VISION KEY
-GEMINI_API_KEY = "AQ.Ab8RN6Lb4kCeCRQtjVtw5MYcz7Wl0x4dBRvNxsYCAD9TYoUk2Q-E9A"
-VISION_MODEL = "gemini-2.0-flash"
+# 1️⃣ Primary AI: Google Gemini Vision
+GEMINI_API_KEY = "AQ.Ab8RN6Lb4kCeCRQtjVtw5MYcz7Wl0x4dBRvNxsYCAD9TYoUk2Q"
+GEMINI_VISION_MODEL = "gemini-2.0-flash"
+
+# 2️⃣ Secondary AI: NVIDIA Vision
+NVIDIA_API_KEY = "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"
+NVIDIA_MODEL = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+
+# 3️⃣ Tertiary AI: Groq Vision
+GROQ_API_KEY = "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"
+GROQ_VISION_MODEL = "llama-3.2-11b-vision-preview"
 
 # ======================================================================
 # 1. MARKETPLACE SELECTION
@@ -190,7 +198,7 @@ DEFAULT_CATEGORY_FABRICS = {
 def resolve_fabric(clean_style, cat, ctx):
     vr = ctx.get('vision_results') or {}
     ai_mat = (vr.get(clean_style) or {}).get('material')
-    if ai_mat and ai_mat.strip() and ai_mat.strip().lower() != 'denim' or cat == 'jeans':
+    if ai_mat and ai_mat.strip() and (ai_mat.strip().lower() != 'denim' or cat == 'jeans'):
         return ai_mat.strip().title()
     if cat == 'jeans':
         return "Denim"
@@ -528,7 +536,7 @@ def pick_dropdown_value(ws, col_idx, desired, fallback=None):
     return options[0]
 
 # ======================================================================
-# 🤖 UPGRADED AI VISION ENGINE
+# 🤖 MULTI-AI VISION ENGINE (Gemini ➜ NVIDIA ➜ Groq)
 # ======================================================================
 KNOWN_POCKETS = [
     'Kangaroo Pocket', 'Cargo Pocket', 'Five Pocket', 'Side Pocket', 'No Pocket',
@@ -554,11 +562,20 @@ def guess_mime(filename):
         return 'image/webp'
     return 'image/jpeg'
 
-def gemini_vision_detect(image_bytes, img_name, api_key, model):
-    if not api_key or not image_bytes:
+def extract_json_from_text(text):
+    if not text:
         return None
+    try:
+        m = re.search(r'\{[\s\S]*\}', text)
+        if m:
+            return json.loads(m.group(0))
+    except Exception:
+        pass
+    return None
+
+def get_vision_prompt():
     cats = ", ".join(CATEGORY_OPTIONS)
-    prompt = (
+    return (
         "You are an expert e-commerce fashion cataloger. Visually inspect this garment image very carefully and output ONLY a valid JSON object without markdown or code formatting.\n"
         "Return this exact schema:\n"
         "{\n"
@@ -573,32 +590,126 @@ def gemini_vision_detect(image_bytes, img_name, api_key, model):
         "}\n"
         "Crucial Rules: Do NOT output Denim unless it is clearly denim material. If it is a 2-piece set or co-ord for women, gender is Women and category is co-ord set."
     )
-    try:
-        b64 = base64.b64encode(image_bytes).decode('utf-8')
-        payload = {
-            "contents": [{"parts": [
-                {"text": prompt},
-                {"inline_data": {"mime_type": guess_mime(img_name), "data": b64}}
-            ]}],
-            "generationConfig": {"temperature": 0.0, "maxOutputTokens": 400},
-        }
-        res = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
-            json=payload, timeout=60
-        )
-        if res.status_code != 200:
-            return None
-        cands = res.json().get('candidates') or []
-        if not cands:
-            return None
-        parts = (cands[0].get('content') or {}).get('parts') or []
-        text = ''.join(str(p.get('text', '')) for p in parts)
-        m = re.search(r'\{.*\}', text, re.DOTALL)
-        if not m:
-            return None
-        return json.loads(m.group(0))
-    except Exception:
+
+# 1. Gemini Vision Call
+def call_gemini_vision(image_bytes, img_name, api_key, model):
+    if not api_key or not image_bytes:
         return None
+    b64 = base64.b64encode(image_bytes).decode('utf-8')
+    payload = {
+        "contents": [{"parts": [
+            {"text": get_vision_prompt()},
+            {"inline_data": {"mime_type": guess_mime(img_name), "data": b64}}
+        ]}],
+        "generationConfig": {
+            "temperature": 0.0,
+            "maxOutputTokens": 1500  # Token limit updated to 1500 as requested
+        },
+    }
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        res = requests.post(url, json=payload, timeout=40)
+        if res.status_code == 200:
+            cands = res.json().get('candidates') or []
+            if cands:
+                parts = (cands[0].get('content') or {}).get('parts') or []
+                text = ''.join(str(p.get('text', '')) for p in parts)
+                return extract_json_from_text(text)
+    except Exception:
+        pass
+    return None
+
+# 2. NVIDIA Vision Call
+def call_nvidia_vision(image_bytes, img_name, api_key, model):
+    if not api_key or not image_bytes:
+        return None
+    mime = guess_mime(img_name)
+    b64 = base64.b64encode(image_bytes).decode('utf-8')
+    data_url = f"data:{mime};base64,{b64}"
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": get_vision_prompt()},
+                    {"type": "image_url", "image_url": {"url": data_url}}
+                ]
+            }
+        ],
+        "temperature": 0.2,
+        "max_tokens": 1500
+    }
+    try:
+        invoke_url = "https://integrate.api.nvidia.com/v1/chat/completions"
+        res = requests.post(invoke_url, headers=headers, json=payload, timeout=50)
+        if res.status_code == 200:
+            content = res.json()['choices'][0]['message']['content']
+            return extract_json_from_text(content)
+    except Exception:
+        pass
+    return None
+
+# 3. Groq Vision Call
+def call_groq_vision(image_bytes, img_name, api_key, model):
+    if not api_key or not image_bytes:
+        return None
+    mime = guess_mime(img_name)
+    b64 = base64.b64encode(image_bytes).decode('utf-8')
+    data_url = f"data:{mime};base64,{b64}"
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": get_vision_prompt()},
+                    {"type": "image_url", "image_url": {"url": data_url}}
+                ]
+            }
+        ],
+        "temperature": 0.1,
+        "max_tokens": 1500
+    }
+    try:
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        res = requests.post(url, headers=headers, json=payload, timeout=40)
+        if res.status_code == 200:
+            content = res.json()['choices'][0]['message']['content']
+            return extract_json_from_text(content)
+    except Exception:
+        pass
+    return None
+
+# Unified Detection with Step-by-Step Fallback (Gemini ➜ NVIDIA ➜ Groq)
+def multi_ai_vision_detect(image_bytes, img_name):
+    # Step 1: Try Gemini
+    res = call_gemini_vision(image_bytes, img_name, GEMINI_API_KEY.strip(), GEMINI_VISION_MODEL)
+    if res and isinstance(res, dict) and res.get('category'):
+        return res, "Gemini"
+
+    # Step 2: Try NVIDIA Fallback
+    res = call_nvidia_vision(image_bytes, img_name, NVIDIA_API_KEY.strip(), NVIDIA_MODEL)
+    if res and isinstance(res, dict) and res.get('category'):
+        return res, "NVIDIA"
+
+    # Step 3: Try Groq Fallback
+    res = call_groq_vision(image_bytes, img_name, GROQ_API_KEY.strip(), GROQ_VISION_MODEL)
+    if res and isinstance(res, dict) and res.get('category'):
+        return res, "Groq"
+
+    return None, "None"
 
 def canonicalize_ai_category(cat_str):
     cat = str(cat_str or '').strip().lower().replace('-', ' ').strip()
@@ -631,7 +742,7 @@ def canonicalize_ai_pocket(p_str):
     close = difflib.get_close_matches(p, KNOWN_POCKETS, n=1, cutoff=0.5)
     return close[0] if close else p.title()
 
-def run_vision_detection(zip_images_data, api_key, model):
+def run_vision_detection(zip_images_data):
     results, failed = {}, []
     folders = [f for f in zip_images_data.keys() if zip_images_data.get(f)]
     if not folders:
@@ -642,20 +753,20 @@ def run_vision_detection(zip_images_data, api_key, model):
         cs = clean_sku_name(fld)
         img_name, img_bytes = zip_images_data[fld][0]
         status.info(f"🤖 AI analyzing garment image: **{cs}** ({i+1}/{len(folders)})...")
-        data = gemini_vision_detect(img_bytes, img_name, api_key, model)
+        
+        data, provider = multi_ai_vision_detect(img_bytes, img_name)
         if data:
             cat = canonicalize_ai_category(data.get('category'))
             col = canonicalize_ai_color(data.get('color'))
             poc = canonicalize_ai_pocket(data.get('pocket'))
             gen = "Women" if str(data.get('gender')).lower().startswith('w') else "Men"
             
-            # Smart material handling
             mat = str(data.get('material') or '').strip().title()
             if not mat or (mat.lower() == 'denim' and cat != 'jeans'):
                 mat = DEFAULT_CATEGORY_FABRICS.get(cat, 'Cotton Blend')
                 
             fab_det = str(data.get('fabric_detail') or f"100% {mat}").title()
-            sleeve = str(data.get('sleeve_length') or 'Long Sleeve' if cat in ['hoodie', 'sweatshirt'] else 'Short Sleeve').title()
+            sleeve = str(data.get('sleeve_length') or ('Long Sleeve' if cat in ['hoodie', 'sweatshirt'] else 'Short Sleeve')).title()
             pattern = str(data.get('pattern') or 'Solid').title()
 
             results[cs] = {
@@ -666,11 +777,12 @@ def run_vision_detection(zip_images_data, api_key, model):
                 'material': mat,
                 'fabric_detail': fab_det,
                 'sleeve_length': sleeve,
-                'pattern': pattern
+                'pattern': pattern,
+                'ai_source': provider
             }
         else:
             failed.append(cs)
-        time.sleep(0.5)
+        time.sleep(0.3)
         progress.progress(min((i + 1) / len(folders), 1.0))
     progress.empty()
     status.empty()
@@ -1051,7 +1163,6 @@ def run_ajio(uploaded_file, ctx):
             desc_text, high_text, add_text = build_ajio_seo_content(cat, ctx['keywords'], det_gen, fab_type_val)
             sku_img_urls = get_sku_img_urls(raw_fld, ctx, clean_style)
 
-            # Style type mapping for Ajio dropdowns
             if cat == 'co-ord set':
                 style_type_val = "2-Piece Sets"
             elif cat in ['cargo', 'trousers']:
@@ -1068,8 +1179,6 @@ def run_ajio(uploaded_file, ctx):
             for sz in size_list:
                 clean_sz = clean_sku_name(sz)
                 full_sku = f"{clean_style}-{clean_sz}"
-
-                # ⚠️ AJIO *EAN 18 CHARACTERS MAX LIMIT
                 ean_val = clean_sku_name(full_sku)[:18]
 
                 try:
@@ -1516,7 +1625,7 @@ def run_vendor_central(uploaded_file, ctx):
     return output.getvalue(), preview, added
 
 # ======================================================================
-#             AMAZON SELLER CENTRAL ENGINE
+#              AMAZON SELLER CENTRAL ENGINE
 # ======================================================================
 SC_FIELDS = {
     'sku': ['sku', 'seller sku', 'sellersku', 'sku id'],
@@ -2581,7 +2690,7 @@ if not CONVERT_MODE and detected_folders:
     st.subheader("1a. 🤖 AI Vision Auto-Detect & SKU Attributes Check")
     st.caption(
         "✅ **Tick ON** = Images AI se visually scan hokar Fabric, Sleeves, Pattern, Gender aur Color exact pick honge.\n"
-        "Bina dropdown ke templates me smart string likhega, aur dropdown wale me exact dropdown match karega."
+        "⚡ 3-Tier Reliability: Pehle Gemini Vision, agar fail ho toh NVIDIA, aur phir Groq se backup generate hoga."
     )
 
     vr_all = st.session_state.get('vision_results', {})
@@ -2596,7 +2705,9 @@ if not CONVERT_MODE and detected_folders:
         p_gen = resolve_gender(cs, _ctx_tmp)
         p_fab = resolve_fabric(cs, p_cat, _ctx_tmp)
         p_slv = resolve_sleeve_length(cs, p_cat, _ctx_tmp)
-        source = '🤖 AI' if cs in vr_all else ('✍️ Override' if cs in st.session_state.get('category_overrides', {}) else '📄 Python')
+        
+        ai_src = (vr_all.get(cs) or {}).get('ai_source', '')
+        source = f'🤖 AI ({ai_src})' if ai_src else ('✍️ Override' if cs in st.session_state.get('category_overrides', {}) else '📄 Python')
 
         prev_rows.append({
             'Folder/SKU': cs, 'Gender': p_gen, 'Category': p_cat, 'Fabric': p_fab, 'Sleeve': p_slv,
@@ -2606,7 +2717,7 @@ if not CONVERT_MODE and detected_folders:
     st.dataframe(prev_rows, use_container_width=True)
 
     vision_enabled = st.checkbox(
-        "🤖 AI Vision Enable Karein — (Uncheck karne par Python intelligent fallbacks use honge)",
+        "🤖 AI Vision Enable Karein (Gemini ➜ NVIDIA ➜ Groq Fallback)",
         value=True, key="vision_enabled"
     )
 
@@ -2628,7 +2739,7 @@ if not CONVERT_MODE and detected_folders:
         for i, fld in enumerate(detected_folders):
             cs = clean_sku_name(fld)
             ai_data = st.session_state['vision_results'].get(cs) or {}
-            tag = "🤖" if ai_data else ""
+            tag = f"🤖 ({ai_data.get('ai_source')})" if ai_data else ""
             with ov_cols[i % 3]:
                 st.write(f"**{cs}** {tag}")
                 g_choice = st.selectbox(f"Gender ({cs})", ["(auto)", "Women", "Men"], key=f"ov_g_{cs}")
@@ -2823,17 +2934,25 @@ else:
             ctx = build_ctx()
             v_enabled = st.session_state.get('vision_enabled', True)
 
-            if v_enabled and GEMINI_API_KEY.strip() and zip_images_data and not ctx['vision_results']:
-                with st.spinner("🤖 AI Vision: Har image ka Fabric, Sleeves, Pattern aur Color scan ho raha hai..."):
-                    auto_results, auto_failed = run_vision_detection(zip_images_data, GEMINI_API_KEY.strip(), VISION_MODEL)
+            if v_enabled and zip_images_data and not ctx['vision_results']:
+                with st.spinner("🤖 AI Vision: Fabric, Sleeves, Pattern aur Color scan ho raha hai (Gemini ➜ NVIDIA ➜ Groq)..."):
+                    auto_results, auto_failed = run_vision_detection(zip_images_data)
                     ctx['vision_results'] = auto_results
                     st.session_state['vision_results'] = auto_results
                 if auto_results:
                     st.success(f"🤖 AI Vision: {len(auto_results)} SKUs accurately auto-detected!" +
                                (f" | Fallback used for: {', '.join(auto_failed)}" if auto_failed else ""))
                     st.dataframe([
-                        {'SKU': k, 'Gender': v.get('gender'), 'Category': v.get('category'), 'Color': v.get('color'),
-                         'Fabric': v.get('material'), 'Sleeve': v.get('sleeve_length'), 'Pattern': v.get('pattern')}
+                        {
+                            'SKU': k, 
+                            'Engine': v.get('ai_source'),
+                            'Gender': v.get('gender'), 
+                            'Category': v.get('category'), 
+                            'Color': v.get('color'),
+                            'Fabric': v.get('material'), 
+                            'Sleeve': v.get('sleeve_length'), 
+                            'Pattern': v.get('pattern')
+                        }
                         for k, v in auto_results.items()
                     ], use_container_width=True)
                 else:
