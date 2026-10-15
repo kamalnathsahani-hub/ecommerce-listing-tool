@@ -18,17 +18,17 @@ st.set_page_config(page_title="Multi-Marketplace Auto Listing Generator", layout
 
 if st.button("⬅️ Back to Home"):
     st.switch_page("app.py")
-st.title("📦 Multi-Marketplace Auto Listing Generator (Universal Pro V21)")
-st.caption("Ajio | Amazon VC | VC➜SC | Amazon SC | Flipkart | Meesho | Myntra + 🤖 AI Vision (Optional) | Product Type = Manual")
+st.title("📦 Multi-Marketplace Auto Listing Generator (Universal Pro V22 - AI Vision Enhanced)")
+st.caption("Ajio | Amazon VC | VC➜SC | Amazon SC | Flipkart | Meesho | Myntra + 🤖 AI Vision Auto-Detect (Fabric, Sleeves, Color, Pattern)")
 
 # ======================================================================
-#                🔑 API KEYS & AI CONFIG (YAHAN SIRF KEY HOTI HAI)
+#                🔑 API KEYS & AI CONFIG
 # ======================================================================
 IMGBB_PERMANENT_KEY = "137be55d19cf3d6a7ec051e369137041"
 
-# 🤖 GEMINI AI VISION KEY — UI me KAHIN NAHI DIKHEGI (sirf checkbox dikhega)
+# 🤖 GEMINI AI VISION KEY
 GEMINI_API_KEY = "AQ.Ab8RN6Lb4kCeCRQtjVtw5MYcz7Wl0x4dBRvNxsYCAD9TYoUk2Q-E9A"
-VISION_MODEL = "gemini-2.0-flash"   # Fixed model (UI me nahi dikhega)
+VISION_MODEL = "gemini-2.0-flash"
 
 # ======================================================================
 # 1. MARKETPLACE SELECTION
@@ -164,6 +164,48 @@ def resolve_gender(clean_style, ctx):
     if (vr.get(clean_style) or {}).get('gender'):
         return vr[clean_style]['gender']
     return detect_gender(f"{clean_style} {ctx.get('keywords', '')}")
+
+# ======================================================================
+# SMART FABRIC & SLEEVE RESOLVERS
+# ======================================================================
+DEFAULT_CATEGORY_FABRICS = {
+    'jeans': 'Denim',
+    'hoodie': 'Fleece',
+    'sweatshirt': 'Fleece',
+    'tshirt': 'Cotton',
+    'shirt': 'Cotton',
+    'cargo': 'Cotton',
+    'trousers': 'Cotton Blend',
+    'joggers': 'Cotton Blend',
+    'shorts': 'Cotton',
+    'co-ord set': 'Cotton Blend',
+    'kurti': 'Rayon',
+    'kurta': 'Cotton',
+    'dress': 'Crepe',
+    'top': 'Cotton Blend',
+    'jacket': 'Polyester',
+    'apparel': 'Cotton Blend'
+}
+
+def resolve_fabric(clean_style, cat, ctx):
+    vr = ctx.get('vision_results') or {}
+    ai_mat = (vr.get(clean_style) or {}).get('material')
+    if ai_mat and ai_mat.strip() and ai_mat.strip().lower() != 'denim' or cat == 'jeans':
+        return ai_mat.strip().title()
+    if cat == 'jeans':
+        return "Denim"
+    return DEFAULT_CATEGORY_FABRICS.get(cat, "Cotton Blend")
+
+def resolve_sleeve_length(clean_style, cat, ctx):
+    vr = ctx.get('vision_results') or {}
+    ai_sleeve = (vr.get(clean_style) or {}).get('sleeve_length')
+    if ai_sleeve and ai_sleeve.strip():
+        return ai_sleeve.strip().title()
+    if cat in ['hoodie', 'sweatshirt', 'jacket']:
+        return "Long Sleeve"
+    elif cat in ['tshirt', 'shirt', 'kurti', 'dress', 'top']:
+        return "Short Sleeve"
+    return "Sleeveless"
 
 # ======================================================================
 # COLOR DETECTION
@@ -369,7 +411,7 @@ def upload_to_imgbb_cached(image_bytes, api_key, cache):
     return url
 
 # ======================================================================
-# DROPDOWN-SAFETY ENGINE
+# DROPDOWN-SAFETY ENGINE (FUZZY DROPDOWN MATCHER)
 # ======================================================================
 def _resolve_validation_formula(ws, f1):
     f1 = str(f1).strip()
@@ -416,7 +458,7 @@ def get_dropdown_options_for_column(ws, col_idx):
     try:
         dvs = ws.data_validations.dataValidation
     except Exception:
-        return None
+        dvs = []
     options = None
     for dv in dvs:
         hit = False
@@ -441,7 +483,7 @@ def get_dropdown_options_for_column(ws, col_idx):
             ws_dd = ws.parent['Dropdown Lists']
             col_keys = {
                 str(ws.cell(r, col_idx).value or '').strip()
-                for r in (4, 5)
+                for r in (3, 4, 5)
                 if ws.cell(r, col_idx).value not in (None, '')
             }
             for dd_c in range(1, ws_dd.max_column + 1):
@@ -486,7 +528,7 @@ def pick_dropdown_value(ws, col_idx, desired, fallback=None):
     return options[0]
 
 # ======================================================================
-# 🤖 AI VISION ENGINE (DYNAMIC GENDER & GARMENT RECOGNITION)
+# 🤖 UPGRADED AI VISION ENGINE
 # ======================================================================
 KNOWN_POCKETS = [
     'Kangaroo Pocket', 'Cargo Pocket', 'Five Pocket', 'Side Pocket', 'No Pocket',
@@ -517,13 +559,19 @@ def gemini_vision_detect(image_bytes, img_name, api_key, model):
         return None
     cats = ", ".join(CATEGORY_OPTIONS)
     prompt = (
-        "You are an expert fashion product cataloger. Analyze this garment photo and reply with ONLY valid JSON, no markdown, no code block.\n"
-        'Format: {"category": "<one of: ' + cats + '>", "gender": "<Women or Men>", '
-        '"color": "<dominant visible color of the garment in simple English e.g. Pink, Maroon, Black, Navy, Grey, Beige, Olive, Khaki, Mustard, Off White>", '
-        '"pocket": "<pocket style: Kangaroo Pocket / Cargo Pocket / Five Pocket / Side Pocket / Welt Pocket / Chest Pocket / No Pocket>", '
-        '"material": "<Cotton / Denim / Fleece / Rayon / Silk / Cotton Blend>"}\n'
-        "Rules: Visually observe the image. If it is a matching top and bottom / two-piece set for women, category is 'co-ord set' and gender is 'Women'. "
-        "Do not default to Men unless clearly a male product."
+        "You are an expert e-commerce fashion cataloger. Visually inspect this garment image very carefully and output ONLY a valid JSON object without markdown or code formatting.\n"
+        "Return this exact schema:\n"
+        "{\n"
+        '  "category": "<One of: ' + cats + '>",\n'
+        '  "gender": "<Women or Men>",\n'
+        '  "color": "<Visible dominant garment color: Pink, Maroon, Black, Navy, Grey, Beige, Olive, Khaki, White, Off White, Lavender, Blue, Green, etc.>",\n'
+        '  "pocket": "<Kangaroo Pocket / Cargo Pocket / Five Pocket / Side Pocket / Welt Pocket / Chest Pocket / Slash Pocket / No Pocket>",\n'
+        '  "material": "<Visually detected actual fabric/fabric type: Cotton, Cotton Blend, Fleece, Rayon, Polyester, Denim, Crepe, Georgette, Silk, Linen, Knit, etc. Only use Denim if it is real denim jeans/jacket. For women co-ord sets or casual sets, detect Cotton, Rayon, or Cotton Blend accurately>",\n'
+        '  "fabric_detail": "<Specific fabric description e.g. 100% Cotton, Pure Cotton, Cotton Blend, Soft Fleece, Poly Cotton, Rayon>",\n'
+        '  "sleeve_length": "<Full Sleeve / Long Sleeve / Short Sleeve / 3/4 Sleeve / Half Sleeve / Sleeveless>",\n'
+        '  "pattern": "<Solid / Printed / Washed / Striped / Checked / Floral / Self Design>"\n'
+        "}\n"
+        "Crucial Rules: Do NOT output Denim unless it is clearly denim material. If it is a 2-piece set or co-ord for women, gender is Women and category is co-ord set."
     )
     try:
         b64 = base64.b64encode(image_bytes).decode('utf-8')
@@ -532,7 +580,7 @@ def gemini_vision_detect(image_bytes, img_name, api_key, model):
                 {"text": prompt},
                 {"inline_data": {"mime_type": guess_mime(img_name), "data": b64}}
             ]}],
-            "generationConfig": {"temperature": 0.0, "maxOutputTokens": 300},
+            "generationConfig": {"temperature": 0.0, "maxOutputTokens": 400},
         }
         res = requests.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
@@ -593,15 +641,33 @@ def run_vision_detection(zip_images_data, api_key, model):
     for i, fld in enumerate(folders):
         cs = clean_sku_name(fld)
         img_name, img_bytes = zip_images_data[fld][0]
-        status.info(f"🤖 AI analyzing: **{cs}** ({i+1}/{len(folders)})...")
+        status.info(f"🤖 AI analyzing garment image: **{cs}** ({i+1}/{len(folders)})...")
         data = gemini_vision_detect(img_bytes, img_name, api_key, model)
         if data:
             cat = canonicalize_ai_category(data.get('category'))
             col = canonicalize_ai_color(data.get('color'))
             poc = canonicalize_ai_pocket(data.get('pocket'))
             gen = "Women" if str(data.get('gender')).lower().startswith('w') else "Men"
-            mat = str(data.get('material') or 'Cotton Blend').title()
-            results[cs] = {'category': cat, 'color': col, 'pocket': poc, 'gender': gen, 'material': mat}
+            
+            # Smart material handling
+            mat = str(data.get('material') or '').strip().title()
+            if not mat or (mat.lower() == 'denim' and cat != 'jeans'):
+                mat = DEFAULT_CATEGORY_FABRICS.get(cat, 'Cotton Blend')
+                
+            fab_det = str(data.get('fabric_detail') or f"100% {mat}").title()
+            sleeve = str(data.get('sleeve_length') or 'Long Sleeve' if cat in ['hoodie', 'sweatshirt'] else 'Short Sleeve').title()
+            pattern = str(data.get('pattern') or 'Solid').title()
+
+            results[cs] = {
+                'category': cat,
+                'color': col,
+                'pocket': poc,
+                'gender': gen,
+                'material': mat,
+                'fabric_detail': fab_det,
+                'sleeve_length': sleeve,
+                'pattern': pattern
+            }
         else:
             failed.append(cs)
         time.sleep(0.5)
@@ -686,10 +752,10 @@ def build_freehand_bullets_and_desc(cat, brand, gender="Women", det_mat="Cotton 
             "WASH & CARE: Easy machine wash cold with similar colors inside out. Do not bleach. Warm iron if required."
         ]
         desc = (f"Upgrade your wardrobe with this stylish {b_prefix}{g_str} {cat_label}. "
-                f"Crafted from premium quality fleece, it delivers an ideal mix of modern style and snug comfort for daily wear.")
+                f"Crafted from premium quality {det_mat}, it delivers an ideal mix of modern style and snug comfort for daily wear.")
     elif cat == 'cargo':
         bullets = [
-            f"DURABLE COTTON UTILITY FABRIC: Tailored from rugged, breathable {det_mat} designed for active mobility and long-lasting durability.",
+            f"DURABLE UTILITY FABRIC: Tailored from rugged, breathable {det_mat} designed for active mobility and long-lasting durability.",
             "MULTI-POCKET FUNCTIONALITY: Equipped with deep tactical flap cargo pockets and side pockets for maximum utility.",
             "COMFORTABLE RELAXED FIT: Features an ergonomic waistband and relaxed leg cut for easy everyday movement.",
             "IDEAL FOR CASUAL & OUTDOOR WEAR: Perfect for travel, hangouts, and pairing with oversized tees, hoodies, or boots.",
@@ -719,24 +785,24 @@ def build_freehand_bullets_and_desc(cat, brand, gender="Women", det_mat="Cotton 
                 f"Engineered with premium fabric, it delivers the perfect balance of everyday durability and contemporary comfort.")
     return bullets, desc
 
-def build_ajio_seo_content(cat, user_keywords="", gender="Women"):
+def build_ajio_seo_content(cat, user_keywords="", gender="Women", mat_val="Cotton Blend"):
     kw_str = user_keywords if user_keywords else "casual streetwear, relaxed fit, durable quality, all-day comfort"
     cat_label = CATEGORY_LABELS.get(cat, 'Apparel')
     g_title = "Women's" if gender == "Women" else "Men's"
     
     if cat == 'co-ord set':
         desc = (f"{g_title} Co-ord Set - Designed for effortless chic look and supreme comfort, this {g_title} Co-ord Set "
-                f"is crafted from premium breathable fabric. Engineered with {kw_str}. "
+                f"is crafted from premium breathable {mat_val} fabric. Engineered with {kw_str}. "
                 "Features matching top and bottom silhouette with comfortable flexi waist and neat seam finish. "
                 "Perfect for daily casuals, travel, vacations, and relaxed outings.")
-        highlight = f"Premium breathable fabric | Comfortable {g_title.lower()} fit | Elegant matching 2-piece set | Relaxed styling | Easy machine wash"
+        highlight = f"Premium {mat_val} fabric | Comfortable {g_title.lower()} fit | Elegant matching 2-piece set | Relaxed styling | Easy machine wash"
         add_info = "Styling Tip: Pair with minimal jewelry and slip-ons. Wash Care: Machine wash cold with similar colors."
     elif cat == 'cargo':
         desc = (f"CARGO FOR {gender.upper()} - Designed for unmatched utility and streetwear style, this {g_title} Cargo Pants "
-                f"is crafted from premium breathable cotton fabric. Engineered with {kw_str}. "
+                f"is crafted from premium breathable {mat_val} fabric. Engineered with {kw_str}. "
                 "Features multiple spacious flap cargo pockets, a comfortable flexi waist with sturdy button closure, "
                 "and durable reinforced stitching throughout. Perfect for everyday wear, outdoor adventures, and travel.")
-        highlight = "Premium breathable cotton fabric | Comfortable flexi waist | Multi-pocket functional cargo utility styling | Relaxed fit | Easy machine wash"
+        highlight = f"Premium breathable {mat_val} fabric | Comfortable flexi waist | Multi-pocket functional cargo utility styling | Relaxed fit | Easy machine wash"
         add_info = "Styling Tip: Pair with oversized t-shirts, hoodies, and chunky sneakers. Wash Care: Machine wash cold with similar colors."
     elif cat == 'jeans':
         desc = (f"Upgrade your everyday denim rotation with this trendy {g_title} Jeans. "
@@ -746,15 +812,15 @@ def build_ajio_seo_content(cat, user_keywords="", gender="Women"):
         highlight = "Premium stretch denim | Relaxed mid-rise silhouette | Authentic clean washed finish | Multi-pocket utility styling | All-season wear"
         add_info = "Styling Tip: Pair with casual shirts or boxy tees. Wash Care: Machine wash cold inside out."
     elif cat in ['hoodie', 'sweatshirt']:
-        desc = (f"Stay warm and stylish with this {g_title} Hoodie/Sweatshirt crafted from premium soft fleece fabric. "
+        desc = (f"Stay warm and stylish with this {g_title} Hoodie/Sweatshirt crafted from premium soft {mat_val} fabric. "
                 f"Engineered with {kw_str}. Features a functional hood with durable drawstrings, spacious kangaroo pocket, "
                 "and ribbed cuffs for a snug fit. Perfect for winter layering, travel, and everyday streetwear.")
-        highlight = "Premium soft fleece fabric | Functional hood with drawstrings | Spacious kangaroo pocket | Ribbed cuffs | Machine washable"
+        highlight = f"Premium soft {mat_val} fabric | Functional hood with drawstrings | Spacious kangaroo pocket | Ribbed cuffs | Machine washable"
         add_info = "Styling Tip: Layer over tees with jeans or joggers. Wash Care: Machine wash cold inside out."
     else:
-        desc = (f"{g_title} {cat_label} crafted from premium quality fabric featuring {kw_str}. "
+        desc = (f"{g_title} {cat_label} crafted from premium quality {mat_val} fabric featuring {kw_str}. "
                 "Designed for maximum comfort, durability, and everyday style. Easy to pair and easy to care.")
-        highlight = f"Premium quality fabric | Comfortable {g_title.lower()} fit | Durable stitching | Easy machine wash"
+        highlight = f"Premium {mat_val} fabric | Comfortable {g_title.lower()} fit | Durable stitching | Easy machine wash"
         add_info = "Wash Care: Machine wash cold with like colors. Do not bleach."
     return desc[:950], highlight[:500], add_info[:500]
 
@@ -808,7 +874,7 @@ def get_sku_img_urls(raw_fld, ctx, clean_style):
     return urls
 
 # ======================================================================
-#                                AJIO ENGINE (ALL DATA RESTORED)
+#                                AJIO ENGINE
 # ======================================================================
 def find_sheet_for_category(wb, category):
     ignore = ['instruction', 'guideline', 'extra', 'rejection', 'seller info']
@@ -954,6 +1020,7 @@ def run_ajio(uploaded_file, ctx):
         col_to_fit = get_fallback_col(['To Fit Waist'])
         col_waist = get_fallback_col(['Waist'])
         col_inseam = get_fallback_col(['Inseam'])
+        col_sleeve_len = get_fallback_col(['Sleeve Length', 'Sleeve'])
 
         col_highlight = get_fallback_col(['Highlight'])
         col_add_info = get_fallback_col(['Additional Information 1'])
@@ -974,12 +1041,15 @@ def run_ajio(uploaded_file, ctx):
             det_col = resolve_color(raw_fld, clean_style, ctx)
             det_gen = resolve_gender(clean_style, ctx)
             color_family_val = map_to_standard_color_map(det_col)
-            desc_text, high_text, add_text = build_ajio_seo_content(cat, ctx['keywords'], det_gen)
-            sku_img_urls = get_sku_img_urls(raw_fld, ctx, clean_style)
             
             vr_info = (ctx.get('vision_results') or {}).get(clean_style, {})
-            fab_type_val = vr_info.get('material') or ("Cotton" if cat in ['cargo', 'trousers', 'hoodie', 'sweatshirt', 'shirt', 'co-ord set'] else "Denim")
-            pattern_val = "Solid" if cat not in ['jeans'] else "Washed"
+            fab_type_val = resolve_fabric(clean_style, cat, ctx)
+            fab_detail_val = vr_info.get('fabric_detail') or f"100% {fab_type_val}"
+            pattern_val = vr_info.get('pattern') or ("Solid" if cat not in ['jeans'] else "Washed")
+            sleeve_val = resolve_sleeve_length(clean_style, cat, ctx)
+
+            desc_text, high_text, add_text = build_ajio_seo_content(cat, ctx['keywords'], det_gen, fab_type_val)
+            sku_img_urls = get_sku_img_urls(raw_fld, ctx, clean_style)
 
             # Style type mapping for Ajio dropdowns
             if cat == 'co-ord set':
@@ -991,7 +1061,8 @@ def run_ajio(uploaded_file, ctx):
 
             preview.append({
                 'Sheet': target_sheet_name, 'SKU': clean_style, 'Category': cat, 'Gender': det_gen,
-                'Color': det_col, 'Color Family (Map)': color_family_val,
+                'Color': det_col, 'Color Family (Map)': color_family_val, 'Fabric Type': fab_type_val,
+                'Sleeve': sleeve_val
             })
 
             for sz in size_list:
@@ -1039,7 +1110,7 @@ def run_ajio(uploaded_file, ctx):
 
                 aset(ws, curr_r, col_color, color_family_val, dropdown=True)
                 aset(ws, curr_r, col_pri_color, det_col, dropdown=True)
-                aset(ws, curr_r, col_fab_detail, fab_type_val)
+                aset(ws, curr_r, col_fab_detail, fab_detail_val)
                 aset(ws, curr_r, col_fab_type, fab_type_val, dropdown=True)
                 aset(ws, curr_r, col_pattern, pattern_val, dropdown=True)
                 aset(ws, curr_r, col_size_format, "UNI", dropdown=True)
@@ -1057,6 +1128,7 @@ def run_ajio(uploaded_file, ctx):
                 aset(ws, curr_r, col_to_fit, tf_val)
                 aset(ws, curr_r, col_waist, w_val)
                 aset(ws, curr_r, col_inseam, "32")
+                aset(ws, curr_r, col_sleeve_len, sleeve_val, dropdown=True)
 
                 aset(ws, curr_r, col_highlight, high_text)
                 aset(ws, curr_r, col_add_info, add_text)
@@ -1083,7 +1155,7 @@ def run_ajio(uploaded_file, ctx):
     return output.getvalue(), preview, total_variants_added, sheets_modified
 
 # ======================================================================
-#               AMAZON VENDOR CENTRAL ENGINE (RESTORED AS IS)
+#                AMAZON VENDOR CENTRAL ENGINE
 # ======================================================================
 def run_vendor_central(uploaded_file, ctx):
     wb = load_workbook_clean(uploaded_file, uploaded_file.name)
@@ -1139,8 +1211,8 @@ def run_vendor_central(uploaded_file, ctx):
         cat_label = CATEGORY_LABELS.get(cat, cat.title() if cat else "Casual Wear")
 
         sku_img_urls = get_sku_img_urls(raw_fld, ctx, clean_style)
-        vr_info = (ctx.get('vision_results') or {}).get(clean_style, {})
-        mat_val = vr_info.get('material') or ("Cotton" if cat in ['cargo', 'hoodie', 'sweatshirt'] else "Cotton Blend")
+        mat_val = resolve_fabric(clean_style, cat, ctx)
+        sleeve_val = resolve_sleeve_length(clean_style, cat, ctx)
 
         bullets_list, desc_text = build_freehand_bullets_and_desc(cat, ctx['brand'], det_gen, mat_val)
         gen_keywords_200 = generate_generic_keywords_200(cat, det_col, ctx['keywords'], det_gen)
@@ -1348,7 +1420,7 @@ def run_vendor_central(uploaded_file, ctx):
 
             c_sld = get_vc_col(['sleeve length description', 'sleeve length'])
             if c_sld:
-                vset(c_sld, "Long Sleeve" if cat in ['hoodie', 'sweatshirt', 'shirt'] else "Short Sleeve", dropdown=True)
+                vset(c_sld, sleeve_val, dropdown=True)
             c_st = get_vc_col(['sleeve type'])
             if c_st:
                 vset(c_st, "Regular Sleeve", dropdown=True)
@@ -1444,7 +1516,7 @@ def run_vendor_central(uploaded_file, ctx):
     return output.getvalue(), preview, added
 
 # ======================================================================
-#             AMAZON SELLER CENTRAL ENGINE (RESTORED AS IS)
+#             AMAZON SELLER CENTRAL ENGINE
 # ======================================================================
 SC_FIELDS = {
     'sku': ['sku', 'seller sku', 'sellersku', 'sku id'],
@@ -1709,8 +1781,8 @@ def run_seller_central(uploaded_file, ctx):
         model_str = custom_parent_model if custom_parent_model else clean_style
         urls = get_sku_img_urls(raw_fld, ctx, clean_style)
         
-        vr_info = (ctx.get('vision_results') or {}).get(clean_style, {})
-        mat_val = vr_info.get('material') or ("Fleece" if cat in ['hoodie', 'sweatshirt'] else ("Cotton" if cat in ['cargo'] else "Cotton Blend"))
+        mat_val = resolve_fabric(clean_style, cat, ctx)
+        sleeve_val = resolve_sleeve_length(clean_style, cat, ctx)
         
         bullets_list, desc_text = build_freehand_bullets_and_desc(cat, ctx['brand'], det_gen, mat_val)
         gen_kw = generate_generic_keywords_200(cat, det_col, ctx['keywords'], det_gen)
@@ -1784,7 +1856,7 @@ def run_seller_central(uploaded_file, ctx):
             s_col(c_hsn_val, get_hsn_code(cat))
             s_col(c_sea, "All", dropdown=True)
             s_col(c_pkr, ctx['mfg'])
-            s_col(c_sld, "Long Sleeve" if cat in ['hoodie', 'sweatshirt', 'shirt'] else "Short Sleeve", dropdown=True)
+            s_col(c_sld, sleeve_val, dropdown=True)
             s_col(c_st, "Regular Sleeve", dropdown=True)
             s_col(c_iwt, 350)
             s_col(c_iwtu, "Grams", dropdown=True)
@@ -1897,7 +1969,7 @@ def run_seller_central(uploaded_file, ctx):
     return output.getvalue(), preview, total_written
 
 # ======================================================================
-# UNIVERSAL ENGINE (Flipkart / Meesho / Myntra) (RESTORED AS IS)
+# UNIVERSAL ENGINE (Flipkart / Meesho / Myntra)
 # ======================================================================
 MP_FIELD_CANDIDATES = {
     'Flipkart': {
@@ -1917,6 +1989,7 @@ MP_FIELD_CANDIDATES = {
         'generic_kw': ['search keywords', 'keywords', 'search terms'],
         'gender': ['gender', 'ideal for'],
         'care': ['wash care', 'care instructions'],
+        'sleeve': ['sleeve', 'sleeve length'],
         'manufacturer': ['manufactured by', 'manufacturer', 'packer details', 'marketed by'],
         'img1': ['main image url', 'image url 1', 'image 1', 'image1', 'primary image url'],
     },
@@ -1937,6 +2010,7 @@ MP_FIELD_CANDIDATES = {
         'generic_kw': ['keywords', 'search keywords'],
         'gender': ['gender'],
         'care': ['wash care', 'care instructions'],
+        'sleeve': ['sleeve length', 'sleeve'],
         'manufacturer': ['manufactured by', 'manufacturer', 'packer details', 'marketed by'],
         'img1': ['image url 1', 'image 1', 'image1', 'main image url', 'primary image url'],
     },
@@ -1957,6 +2031,7 @@ MP_FIELD_CANDIDATES = {
         'generic_kw': ['keywords', 'search keywords'],
         'gender': ['gender', 'customer gender'],
         'care': ['wash care', 'care instructions'],
+        'sleeve': ['sleeve length', 'sleeve styling'],
         'manufacturer': ['manufactured by', 'manufacturer', 'marketed by', 'packer details'],
         'img1': ['image 1', 'image1', 'images1', 'main image url', 'primary image url'],
     },
@@ -2038,15 +2113,15 @@ def run_generic_marketplace(uploaded_file, ctx, mp):
         det_gen = resolve_gender(clean_style, ctx)
         color_family_val = map_to_standard_color_map(det_col)
         
-        vr_info = (ctx.get('vision_results') or {}).get(clean_style, {})
-        mat_val = vr_info.get('material') or ("Cotton" if cat in ['cargo', 'hoodie', 'sweatshirt'] else "Cotton Blend")
+        mat_val = resolve_fabric(clean_style, cat, ctx)
+        sleeve_val = resolve_sleeve_length(clean_style, cat, ctx)
 
         bullets_list, desc_text = build_freehand_bullets_and_desc(cat, ctx['brand'], det_gen, mat_val)
         gen_kw = re.sub(r'\s+', ' ', str(generate_generic_keywords_200(cat, det_col, ctx['keywords'], det_gen)).replace(';', ' ')).strip()
         urls = get_sku_img_urls(raw_fld, ctx, clean_style)
 
         preview.append({'SKU': clean_style, 'Category': cat, 'Gender': det_gen, 'Color': det_col,
-                        'Color Family': color_family_val, 'Material': mat_val})
+                        'Color Family': color_family_val, 'Material': mat_val, 'Sleeve': sleeve_val})
 
         for sz in ctx['sizes']:
             clean_sz = clean_sku_name(sz)
@@ -2060,13 +2135,14 @@ def run_generic_marketplace(uploaded_file, ctx, mp):
             W(r, 'description', desc_text)
             W(r, 'color', color_family_val, dropdown=True)
             W(r, 'size', clean_sz)
-            W(r, 'fabric', mat_val)
+            W(r, 'fabric', mat_val, dropdown=True)
             W(r, 'pattern', 'Solid', dropdown=True)
             W(r, 'fit', 'Relaxed', dropdown=True)
             W(r, 'country', 'India', dropdown=True)
             W(r, 'generic_kw', gen_kw)
             W(r, 'gender', det_gen, dropdown=True)
             W(r, 'care', 'Machine Wash', dropdown=True)
+            W(r, 'sleeve', sleeve_val, dropdown=True)
             W(r, 'hsn', get_hsn_code(cat))
             W(r, 'manufacturer', ctx['mfg'])
 
@@ -2095,7 +2171,7 @@ def run_generic_marketplace(uploaded_file, ctx, mp):
     return output.getvalue(), preview, count
 
 # ======================================================================
-# VC ➜ SC CONVERT ENGINE (RESTORED AS IS)
+# VC ➜ SC CONVERT ENGINE
 # ======================================================================
 def read_vendor_central_records(vc_bytes):
     wb = openpyxl.load_workbook(io.BytesIO(vc_bytes), data_only=True)
@@ -2498,15 +2574,14 @@ if not CONVERT_MODE:
     st.divider()
 
 # ======================================================================
-# 1a. 🤖 AI VISION (DYNAMIC GENDER + PRODUCT RECOGNITION)
+# 1a. 🤖 AI VISION PREVIEW & OVERRIDES
 # ======================================================================
 default_category = None
 if not CONVERT_MODE and detected_folders:
-    st.subheader("1a. 🤖 AI Vision (Optional) + SKU-wise Category / Color Check")
+    st.subheader("1a. 🤖 AI Vision Auto-Detect & SKU Attributes Check")
     st.caption(
-        "✅ **Tick ON** = Har folder ki image AI se visually analyze hogi "
-        "(Women/Men gender, garment type, color aur pocket image dekh kar set honge). "
-        "⬜ **Tick OFF** = 100% Python intelligence chalega."
+        "✅ **Tick ON** = Images AI se visually scan hokar Fabric, Sleeves, Pattern, Gender aur Color exact pick honge.\n"
+        "Bina dropdown ke templates me smart string likhega, aur dropdown wale me exact dropdown match karega."
     )
 
     vr_all = st.session_state.get('vision_results', {})
@@ -2519,24 +2594,20 @@ if not CONVERT_MODE and detected_folders:
         p_cat = resolve_category(cs, _ctx_tmp, "")
         p_col = resolve_color(fld, cs, _ctx_tmp)
         p_gen = resolve_gender(cs, _ctx_tmp)
-        if cs in vr_all:
-            source = '🤖 AI'
-        elif cs in st.session_state.get('category_overrides', {}):
-            source = '✍️ Override'
-        else:
-            source = '📄 Python'
+        p_fab = resolve_fabric(cs, p_cat, _ctx_tmp)
+        p_slv = resolve_sleeve_length(cs, p_cat, _ctx_tmp)
+        source = '🤖 AI' if cs in vr_all else ('✍️ Override' if cs in st.session_state.get('category_overrides', {}) else '📄 Python')
+
         prev_rows.append({
-            'Folder/SKU': cs, 'Gender': p_gen, 'Category': p_cat, 'Color': p_col,
-            'Color Map/Family': map_to_standard_color_map(p_col),
-            'Pocket': resolve_pocket(cs, p_cat, _ctx_tmp),
-            'Source': source,
+            'Folder/SKU': cs, 'Gender': p_gen, 'Category': p_cat, 'Fabric': p_fab, 'Sleeve': p_slv,
+            'Color': p_col, 'Color Map': map_to_standard_color_map(p_col),
+            'Pocket': resolve_pocket(cs, p_cat, _ctx_tmp), 'Source': source,
         })
     st.dataframe(prev_rows, use_container_width=True)
 
     vision_enabled = st.checkbox(
-        "🤖 AI Vision Enable Karein — OFF karo to sirf Python intelligence chalega",
-        value=True, key="vision_enabled",
-        help="Tick OFF karne par koi API call nahi hogi."
+        "🤖 AI Vision Enable Karein — (Uncheck karne par Python intelligent fallbacks use honge)",
+        value=True, key="vision_enabled"
     )
 
     with st.expander("⚙️ Manual Overrides (Gender / Category badalna ho to yahan badlein)"):
@@ -2557,8 +2628,6 @@ if not CONVERT_MODE and detected_folders:
         for i, fld in enumerate(detected_folders):
             cs = clean_sku_name(fld)
             ai_data = st.session_state['vision_results'].get(cs) or {}
-            auto_cat = ai_data.get('category') or detect_product_category(cs, kw_now, "")
-            auto_gen = ai_data.get('gender') or detect_gender(cs)
             tag = "🤖" if ai_data else ""
             with ov_cols[i % 3]:
                 st.write(f"**{cs}** {tag}")
@@ -2577,7 +2646,7 @@ if not CONVERT_MODE and detected_folders:
     st.divider()
 
 # ======================================================================
-# 3. SIZES (UPGRADED PRESETS), BRAND & LEGAL
+# 3. SIZES, BRAND & LEGAL
 # ======================================================================
 st.subheader("2. Sizes, Brand & Legal Information")
 col_s1, col_s2 = st.columns([1, 2])
@@ -2755,21 +2824,22 @@ else:
             v_enabled = st.session_state.get('vision_enabled', True)
 
             if v_enabled and GEMINI_API_KEY.strip() and zip_images_data and not ctx['vision_results']:
-                with st.spinner("🤖 AI Vision: har folder ki image analyze ho rahi hai (Gender + Category + Color)..."):
+                with st.spinner("🤖 AI Vision: Har image ka Fabric, Sleeves, Pattern aur Color scan ho raha hai..."):
                     auto_results, auto_failed = run_vision_detection(zip_images_data, GEMINI_API_KEY.strip(), VISION_MODEL)
                     ctx['vision_results'] = auto_results
                     st.session_state['vision_results'] = auto_results
                 if auto_results:
-                    st.success(f"🤖 AI Vision: {len(auto_results)} SKUs auto-detect ho gaye!" +
-                               (f" | Fail (Python fallback): {', '.join(auto_failed)}" if auto_failed else ""))
+                    st.success(f"🤖 AI Vision: {len(auto_results)} SKUs accurately auto-detected!" +
+                               (f" | Fallback used for: {', '.join(auto_failed)}" if auto_failed else ""))
                     st.dataframe([
-                        {'SKU': k, 'Gender': v.get('gender'), 'Category': v.get('category'), 'Color': v.get('color'), 'Material': v.get('material')}
+                        {'SKU': k, 'Gender': v.get('gender'), 'Category': v.get('category'), 'Color': v.get('color'),
+                         'Fabric': v.get('material'), 'Sleeve': v.get('sleeve_length'), 'Pattern': v.get('pattern')}
                         for k, v in auto_results.items()
                     ], use_container_width=True)
                 else:
                     st.warning("🤖 AI se result nahi mila — Python intelligence use hoga.")
             elif not v_enabled and zip_images_data:
-                st.info("⬜ AI Vision OFF hai — 100% Python intelligence se file ban rahi hai.")
+                st.info("⬜ AI Vision OFF hai — Python intelligence se file ban rahi hai.")
 
             if auto_cdn_upload:
                 with st.spinner("Images ko live CDN par upload kiya ja raha hai..."):
