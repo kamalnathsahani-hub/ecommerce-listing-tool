@@ -29,7 +29,7 @@ IMGBB_PERMANENT_KEY = "137be55d19cf3d6a7ec051e369137041"
 # 🤖 GEMINI AI VISION KEY — UI me KAHIN NAHI DIKHEGI (sirf checkbox dikhega)
 # Key badalni ho to sirf neeche quotes ke andar nayi key paste karo.
 # Nayi key: https://aistudio.google.com/apikey
-GEMINI_API_KEY = "AQ.Ab8RN6Iir4BoBSujYsKLtoZZkKzzSMlxIWT9LakOoiwawdVlpg"
+GEMINI_API_KEY = "AQ.Ab8RN6LXYHAjTj30jdborSMj96q4mXFb8h7l8d4oraTMDlCCyw"
 VISION_MODEL = "gemini-2.0-flash"   # Fixed model (UI me nahi dikhega)
 
 # ======================================================================
