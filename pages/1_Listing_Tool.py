@@ -27,7 +27,7 @@ st.caption("Ajio | Amazon VC | VC➜SC | Amazon SC | Flipkart | Meesho | Myntra 
 IMGBB_PERMANENT_KEY = "137be55d19cf3d6a7ec051e369137041"
 
 # 🤖 GEMINI AI VISION KEY — UI me KAHIN NAHI DIKHEGI (sirf checkbox dikhega)
-GEMINI_API_KEY = "AQ.Ab8RN6Kg7bXQGlqes-iZQH1sDrPOftdY-wAM67lP6YCyRI-E9A"
+GEMINI_API_KEY = "AQ.Ab8RN6Lb4kCeCRQtjVtw5MYcz7Wl0x4dBRvNxsYCAD9TYoUk2Q-E9A"
 VISION_MODEL = "gemini-2.0-flash"   # Fixed model (UI me nahi dikhega)
 
 # ======================================================================
