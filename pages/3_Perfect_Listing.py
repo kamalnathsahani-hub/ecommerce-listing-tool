@@ -910,7 +910,7 @@ with c_b1:
     brand_name = st.text_input(
         "Brand Name:",
         value="",
-        placeholder="e.g. POSHAX (Khali chhodne par unbranded rahega)"
+        placeholder="e.g. PUMA (Khali chhodne par unbranded rahega)"
     )
     mrp_value = st.text_input(
         "MRP (optional):",
@@ -927,7 +927,7 @@ with c_b2:
     mfg_address = st.text_area(
         "Manufactured By & Marketed By (Complete Address with Pincode):",
         value="",
-        placeholder="e.g. Plot No. 41, Devam Ambro Park, Kosad, Chorasi, Surat, Gujarat - 394107\n(Pura address pincode ke sath daalein)",
+        placeholder="e.g. Surat, Gujarat\n(Pura address pincode ke sath daalein)",
         height=130
     )
     custom_keywords = st.text_area(
