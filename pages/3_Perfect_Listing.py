@@ -19,7 +19,7 @@ from PIL import Image
 # 1. PAGE CONFIGURATION & NAVIGATION
 # ======================================================================
 st.set_page_config(
-    page_title="AI Perfect Listing Tool",
+    page_title="AI Perfect Listing Tool (Universal)",
     page_icon="✨",
     layout="wide"
 )
@@ -33,7 +33,7 @@ with col_nav:
             pass
 
 st.title("✨ AI Perfect Listing Generator (Universal Multi-Marketplace)")
-st.caption("🤖 Multi-AI Vision (Gemini ➜ NVIDIA ➜ Groq) | 📐 AI Size Chart Reader | 📋 Template Instruction Analyzer | 100% Dropdown Safety")
+st.caption("🤖 Multi-AI Vision (Gemini ➜ NVIDIA ➜ Groq) | 📐 Dynamic Size Chart Reader | 📋 Template Instruction Analyzer | 100% Dropdown Safety")
 
 # ======================================================================
 # 2. API KEYS & VISION CONFIGURATION
@@ -52,7 +52,6 @@ NVIDIA_MODEL = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
 GROQ_API_KEY = "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"
 GROQ_VISION_MODEL = "llama-3.2-11b-vision-preview"
 
-# State setup
 if 'img_cache' not in st.session_state:
     st.session_state['img_cache'] = {}
 if 'vision_results' not in st.session_state:
@@ -87,11 +86,79 @@ st.divider()
 CONVERT_MODE = marketplace.startswith("Convert:")
 
 # ======================================================================
-# 4. HELPERS & CANONICAL MAPPINGS
+# 4. COLOR ABBREVIATION, SKU & STYLE CODE ENGINE (100% DYNAMIC)
 # ======================================================================
+COLOR_TOKENS = {
+    'black', 'white', 'blue', 'lightblue', 'darkblue', 'skyblue', 'iceblue', 'navy', 'navyblue',
+    'green', 'olive', 'pista', 'sea-green', 'purple', 'lavender', 'pink', 'red', 'maroon',
+    'beige', 'brown', 'coffee', 'khaki', 'grey', 'gray', 'charcoal', 'yellow', 'orange',
+    'peach', 'teal', 'wine', 'cream', 'rust', 'gold', 'silver'
+}
+
+COLOR_ABBR = {
+    'black': 'Blk', 'white': 'Wht', 'blue': 'Blu', 'lightblue': 'LBlu',
+    'darkblue': 'DBlu', 'skyblue': 'SBlu', 'iceblue': 'IBlu', 'navy': 'Nvy',
+    'green': 'Grn', 'olive': 'Olv', 'pista': 'Pst', 'sea-green': 'SGrn',
+    'purple': 'Prp', 'lavender': 'Lav', 'pink': 'Pnk', 'red': 'Red',
+    'maroon': 'Mrn', 'beige': 'Beg', 'brown': 'Brn', 'coffee': 'Cfe',
+    'khaki': 'Khk', 'grey': 'Gry', 'gray': 'Gry', 'charcoal': 'Chr',
+    'yellow': 'Ylw', 'orange': 'Orn', 'peach': 'Pch', 'teal': 'Tel',
+    'wine': 'Win', 'cream': 'Crm', 'ribbin': 'Rbn', 'teddy': 'Tdy'
+}
+
 def clean_sku_name(name):
     cleaned = re.sub(r'[\s_]+', '-', str(name).strip())
     return re.sub(r'-+', '-', cleaned).strip('-')
+
+def extract_style_code(folder_name):
+    """
+    Folder name se color suffix hata kar natural Style Code auto-extract hota hai.
+    Zero hardcoded prefix - Universal for Saree, Kurta, Jeans, Men, Kids, Night suit.
+    """
+    clean = clean_sku_name(folder_name)
+    parts = clean.split('-')
+    cut_idx = -1
+    for i in range(len(parts) - 1, 0, -1):
+        if parts[i].lower() in COLOR_TOKENS:
+            cut_idx = i
+            break
+    if cut_idx > 0:
+        return '-'.join(parts[:cut_idx])
+    if len(parts) >= 2 and not parts[-1].isdigit():
+        return '-'.join(parts[:-1])
+    return clean
+
+def generate_safe_ean(clean_style, clean_sz):
+    """
+    EAN hamesha <= 18 characters rahega aur size suffix (-{clean_sz}) kabhi cut nahi hoga.
+    Prefix aur color name ko abbreviate karke fit karta hai.
+    """
+    sz_suffix = f"-{clean_sz}"
+    candidate = f"{clean_style}{sz_suffix}"
+    if len(candidate) <= 18:
+        return candidate
+
+    parts = clean_style.split('-')
+    new_parts = []
+    for p in parts:
+        low = p.lower()
+        if low in COLOR_ABBR:
+            new_parts.append(COLOR_ABBR[low])
+        elif p.isdigit():
+            new_parts.append(str(int(p)))
+        else:
+            new_parts.append(p)
+
+    candidate2 = "-".join(new_parts) + sz_suffix
+    if len(candidate2) <= 18:
+        return candidate2
+
+    candidate3 = "".join(new_parts) + sz_suffix
+    if len(candidate3) <= 18:
+        return candidate3
+
+    prefix_allowed = 18 - len(sz_suffix)
+    return candidate3[:prefix_allowed] + sz_suffix
 
 def is_size_chart_file(filename):
     low = os.path.basename(filename).lower()
@@ -102,9 +169,9 @@ def _norm_h(s):
     return re.sub(r'[\s_\-*]+', '', str(s or '')).strip().lower()
 
 CATEGORY_OPTIONS = [
-    'co-ord set', 'night suit', 'lounge wear', 'pajama set', 'hoodie', 'sweatshirt',
-    'cargo', 'jeans', 'tshirt', 'shirt', 'trousers', 'joggers', 'shorts',
-    'jacket', 'kurta', 'kurti', 'dress', 'top', 'skirt', 'apparel'
+    'co-ord set', 'night suit', 'lounge wear', 'pajama set', 'saree', 'kurta', 'kurti',
+    'jeans', 'cargo', 'trousers', 'joggers', 'shorts', 'tshirt', 'shirt', 'jacket',
+    'hoodie', 'sweatshirt', 'dress', 'top', 'skirt', 'apparel'
 ]
 
 COMMON_COLORS = [
@@ -136,6 +203,70 @@ def map_color_to_family(col_name):
     c = str(col_name).strip().lower()
     return COLOR_FAMILY_MAP.get(c, col_name)
 
+# ======================================================================
+# 5. DYNAMIC DIMENSIONS, WEIGHT & INTELLIGENT HSN
+# ======================================================================
+def get_dimensions_and_weight(category):
+    """
+    Volumetric L*W*H / 5 aur actual weight dono strictly 300g se 450g ke beech rehte hain.
+    """
+    cat = str(category or '').lower()
+    if any(k in cat for k in ['jean', 'denim', 'cargo', 'heavy', 'jacket']):
+        l, w, h = 28, 25, 3.0
+        art_wt, pkg_wt = 400, 430
+    elif any(k in cat for k in ['saree', 'dress', 'kurta', 'kurti']):
+        l, w, h = 26, 24, 2.5
+        art_wt, pkg_wt = 330, 360
+    elif any(k in cat for k in ['tshirt', 't-shirt', 'top', 'shirt', 'kids']):
+        l, w, h = 25, 24, 2.5
+        art_wt, pkg_wt = 300, 340
+    else:
+        l, w, h = 25, 24, 2.5
+        art_wt, pkg_wt = 350, 380
+
+    return {
+        'art_l': l, 'art_w': w, 'art_h': h, 'art_luom': 'CM',
+        'art_wt': art_wt, 'art_wtuom': 'GRAM',
+        'pkg_l': l, 'pkg_w': w, 'pkg_h': h, 'pkg_luom': 'CM',
+        'pkg_wt': pkg_wt, 'pkg_wtuom': 'GRAM'
+    }
+
+HSN_INTELLIGENCE_MAP = {
+    'saree': '54075200',
+    'kurti': '62042200',
+    'kurta': '62042200',
+    'night suit': '61083100',
+    'sleepwear': '61083100',
+    'lounge wear': '61083100',
+    'co-ord set': '61083100',
+    'jeans': '62034290',
+    'tshirt': '61099090',
+    'shirt': '62052000',
+    'trousers': '62034200',
+    'cargo': '62034200',
+    'joggers': '62034200',
+    'shorts': '62034200',
+    'dress': '62044200',
+    'hoodie': '61103000',
+    'sweatshirt': '61103000',
+    'jacket': '62014090',
+    'top': '62063000',
+    'kids': '61112000',
+    'apparel': '62042200'
+}
+
+def resolve_hsn_code(user_hsn, category):
+    if user_hsn and str(user_hsn).strip():
+        return str(user_hsn).strip()
+    cat = str(category or '').lower()
+    for k, code in HSN_INTELLIGENCE_MAP.items():
+        if k in cat:
+            return code
+    return '62042200'
+
+# ======================================================================
+# 6. MULTI-AI VISION & SIZE CHART EXTRACTORS
+# ======================================================================
 def guess_mime(filename):
     low = str(filename or '').lower()
     if low.endswith('.png'): return 'image/png'
@@ -151,9 +282,6 @@ def extract_json_from_text(text):
         pass
     return None
 
-# ======================================================================
-# 5. MULTI-AI VISION & SIZE CHART EXTRACTORS
-# ======================================================================
 def get_garment_vision_prompt():
     cats = ", ".join(CATEGORY_OPTIONS)
     return (
@@ -161,28 +289,27 @@ def get_garment_vision_prompt():
         "Return this exact schema:\n"
         "{\n"
         '  "category": "<One of: ' + cats + '>",\n'
-        '  "gender": "<Women or Men>",\n'
-        '  "color": "<Dominant color: Pink, Maroon, Black, Navy, Blue, LightBlue, SkyBlue, Grey, Beige, Olive, Pista, Sea Green, Lavender, White, etc.>",\n'
+        '  "gender": "<Women, Men, Boys, Girls, or Infants>",\n'
+        '  "color": "<Dominant color: Pink, Maroon, Black, Navy, Blue, LightBlue, SkyBlue, Grey, Beige, Olive, Pista, Sea Green, Lavender, White, Red, Yellow, etc.>",\n'
         '  "pocket": "<Kangaroo Pocket / Cargo Pocket / Five Pocket / Side Pocket / Welt Pocket / Chest Pocket / Slash Pocket / No Pocket>",\n'
-        '  "material": "<Actual fabric: Cotton, Cotton Blend, Rayon, Fleece, Polyester, Denim, Crepe, Georgette, Silk, Knit>",\n'
-        '  "fabric_detail": "<Specific fabric description e.g. 100% Cotton, Pure Cotton, Cotton Blend, Soft Fleece, Rayon>",\n'
+        '  "material": "<Actual fabric: Cotton, Cotton Blend, Rayon, Fleece, Polyester, Denim, Crepe, Georgette, Silk, Knit, Velvet, Chiffon>",\n'
+        '  "fabric_detail": "<Specific fabric description e.g. 100% Cotton, Pure Cotton, Cotton Blend, Soft Fleece, Rayon, Silk Blend>",\n'
         '  "sleeve_length": "<Short sleeve / Full-length sleeve / 3/4th sleeve / Sleeveless>",\n'
-        '  "topwear_type": "<Top / Tunic / Shirt / Hoodie / Sweatshirt>",\n'
-        '  "bottomwear_type": "<Capris / Pyjamas / Shorts / Trousers/Pants>",\n'
+        '  "topwear_type": "<Top / Tunic / Shirt / Hoodie / Sweatshirt / Kurta / Kurti>",\n'
+        '  "bottomwear_type": "<Capris / Pyjamas / Shorts / Trousers/Pants / Jeans / Skirts>",\n'
         '  "waist_type": "<Flexi waist / Elasticated waist / Fixed waist>",\n'
-        '  "pattern": "<Solid / Printed / Washed / Striped / Checked / Floral / Quilted>"\n'
+        '  "pattern": "<Solid / Printed / Washed / Striped / Checked / Floral / Quilted / Self-design>"\n'
         "}\n"
-        "Important Rule: If this is a 2-piece sleepwear / night suit / co-ord set for women, set category to 'co-ord set', gender to 'Women', waist_type to 'Flexi waist'."
     )
 
 def get_size_chart_prompt():
     return (
         "You are an expert OCR & e-commerce technical fashion cataloger. Carefully read all text and table numbers in this size chart image.\n"
-        "Extract all measurements for XS, S, M, L, XL, XXL (2XL), 3XL.\n"
-        "Identify if bottomwear is Capris, Pyjamas, Pants, or Shorts, and if top sleeve is Short sleeve or Full-length sleeve.\n"
+        "Extract all measurements for XS, S, M, L, XL, XXL (2XL), 3XL, 28, 30, 32, 34, 36, 38.\n"
+        "Identify if bottomwear is Capris, Pyjamas, Pants, or Shorts, and if sleeve is Short sleeve or Full-length sleeve.\n"
         "Output ONLY a valid JSON object without markdown or code formatting with this schema:\n"
         "{\n"
-        '  "bottomwear_type": "<Capris or Pyjamas or Shorts>",\n'
+        '  "bottomwear_type": "<Capris or Pyjamas or Shorts or Trousers/Pants>",\n'
         '  "sleeve_length": "<Short sleeve or Full-length sleeve>",\n'
         '  "measurements": {\n'
         '    "XS": {"bust": 37, "front_length": 25, "waist": 22, "hip": 38, "inseam": 28},\n'
@@ -280,6 +407,7 @@ def fallback_ocr_size_chart(image_bytes):
         'L': {'bust': 43, 'front_length': 26, 'waist': 28, 'hip': 45, 'inseam': 29},
         'XL': {'bust': 45, 'front_length': 27, 'waist': 30, 'hip': 48, 'inseam': 29},
         'XXL': {'bust': 47, 'front_length': 27, 'waist': 32, 'hip': 51, 'inseam': 29},
+        '2XL': {'bust': 47, 'front_length': 27, 'waist': 32, 'hip': 51, 'inseam': 29},
     }
     return {'bottomwear_type': bottom_type, 'sleeve_length': sleeve_len, 'measurements': measurements}
 
@@ -304,13 +432,15 @@ def multi_ai_size_chart_detect(image_bytes, img_name):
     return fallback_ocr_size_chart(image_bytes), "OCR-Fallback"
 
 # ======================================================================
-# 6. TEMPLATE & INSTRUCTIONS ANALYZER
+# 7. TEMPLATE & INSTRUCTIONS ANALYZER
 # ======================================================================
 def read_and_analyze_template(wb):
     info = {
         'sheets': wb.sheetnames,
         'styles_sheet': None,
         'category_breadcrumb': '',
+        'detected_gender': 'Women',
+        'detected_category': 'Apparel',
         'col_to_dropdowns': {},
         'headers': {},
         'mandatory_cols': []
@@ -333,6 +463,9 @@ def read_and_analyze_template(wb):
     breadcrumb_val = ws_styles.cell(1, 1).value
     if breadcrumb_val:
         info['category_breadcrumb'] = str(breadcrumb_val).strip()
+        parts = [p.strip() for p in info['category_breadcrumb'].split('->')]
+        if len(parts) > 0: info['detected_gender'] = parts[0]
+        if len(parts) > 1: info['detected_category'] = parts[-1]
 
     header_row = 3
     keywords = ['style', 'sku', 'mrp', 'price', 'size', 'image', 'brand', 'description']
@@ -398,7 +531,7 @@ def pick_dropdown_value_safe(info, col_idx, desired, fallback=None):
     return close[0] if close else options[0]
 
 # ======================================================================
-# 7. CDN UPLOADER & SEO GENERATOR
+# 8. CDN UPLOADER & DYNAMIC SEO CONTENT
 # ======================================================================
 def upload_to_imgbb(image_bytes, api_key):
     try:
@@ -418,21 +551,25 @@ def upload_to_imgbb_cached(image_bytes, api_key, cache):
     if url: cache[h] = url
     return url
 
-def build_ajio_seo_content(cat, user_keywords="", gender="Women", mat_val="Cotton Blend"):
-    kw_str = user_keywords if user_keywords else "casual streetwear, relaxed fit, durable quality, all-day comfort"
-    g_title = "Women's" if gender == "Women" else "Men's"
+def build_dynamic_seo_content(category, gender, brand, fabric, pattern, keywords=""):
+    g_title = "Women's" if str(gender).lower().startswith('w') else ("Men's" if str(gender).lower().startswith('m') else "Unisex")
+    b_prefix = f"{brand} " if brand else ""
+    cat_label = category.title() if category else "Apparel"
+    kw_str = keywords if keywords else "comfortable relaxed fit, premium fabric, all-day comfort, durable quality"
+    
     desc = (
-        f"{g_title} Co-ord Set - Designed for effortless chic look and supreme comfort, this {g_title} Co-ord Set "
-        f"is crafted from premium breathable {mat_val} fabric. Engineered with {kw_str}. "
-        "Features matching top and bottom silhouette with comfortable flexi waist and neat seam finish. "
-        "Perfect for daily casuals, travel, vacations, and relaxed outings."
+        f"{b_prefix}{g_title} {cat_label} - Designed for modern style and maximum comfort, "
+        f"this {g_title.lower()} {cat_label.lower()} is tailored from high-grade breathable {fabric} fabric. "
+        f"Engineered with {kw_str}. "
+        f"Featuring an elegant {pattern.lower()} pattern with refined seam construction. "
+        f"Ideal for daily wear, casual outings, work from home, and relaxed styling."
     )
-    highlight = f"Premium {mat_val} fabric | Comfortable {g_title.lower()} fit | Elegant matching 2-piece set | Relaxed styling | Easy machine wash"
-    add_info = "Styling Tip: Pair with minimal jewelry and slip-ons. Wash Care: Machine wash cold with similar colors."
+    highlight = f"Premium breathable {fabric} fabric | Comfortable {g_title.lower()} fit | Elegant {pattern.lower()} design | Durable stitching | Easy machine wash"
+    add_info = "Wash Care: Machine wash cold with similar colors. Do not bleach. Warm iron if needed."
     return desc[:950], highlight[:500], add_info[:500]
 
 # ======================================================================
-# 8. AJIO ENGINE (POPULATE ALL COLUMNS BASED ON TEMPLATE)
+# 9. UNIVERSAL AJIO LISTING ENGINE (100% PREFIX-FREE)
 # ======================================================================
 def run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detected_size_charts, ctx):
     name = getattr(template_file_or_bytes, 'name', 'template.xlsx')
@@ -448,6 +585,9 @@ def run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detected_s
             for c, h in headers.items():
                 if _norm_h(h) == c_norm: return c
         return None
+
+    cat_detected = info['detected_category']
+    gender_detected = info['detected_gender']
 
     col_style = find_col(['*Style Code', 'Style Code'])
     col_desc = find_col(['*Style Description', 'Style Description'])
@@ -519,17 +659,9 @@ def run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detected_s
         c_i = find_col([f'*MODEL' if i == 1 else f'MODEL{i}'])
         if c_i and c_i not in img_cols: img_cols.append(c_i)
 
-    def get_style_code_group(folder_name):
-        m = re.search(r'(\d+)', folder_name)
-        if m:
-            num = int(m.group(1))
-            if num in [1, 2]: return "PX-W-ND-01-02"
-            elif num in [3, 4, 5]: return "PX-W-ND-03-05"
-            elif num in [6, 7, 8]: return "PX-W-ND-06-08"
-            elif num in [9, 10, 11]: return "PX-W-ND-09-11"
-            elif num in [12, 14]: return "PX-W-ND-12-14"
-            elif num in [13, 15, 16]: return "PX-W-ND-13-16"
-        return clean_sku_name(folder_name)
+    # Dynamic Dimensions & Weights strictly between 300g and 450g
+    dims_data = get_dimensions_and_weight(cat_detected)
+    hsn_val = resolve_hsn_code(ctx.get('hsn'), cat_detected)
 
     curr_r = header_row + 1
     while ws.cell(curr_r, col_style or 1).value is not None:
@@ -537,7 +669,7 @@ def run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detected_s
 
     total_added = 0
     preview = []
-    sizes = ctx.get('sizes') or ['XS', 'S', 'M', 'L', 'XL', 'XXL']
+    sizes = ctx.get('sizes') or ['S', 'M', 'L', 'XL', '2XL']
     season_year = str(datetime.now().year + 1)
     
     mrp_fill = PatternFill(start_color="FFF200", end_color="FFF200", fill_type="solid")
@@ -547,15 +679,18 @@ def run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detected_s
         if not c or val in (None, ''): return
         ws.cell(r, c).value = pick_dropdown_value_safe(info, c, val, val) if dropdown else val
 
+    # Fill data for each product folder in zip
     for fld, img_tuples in zip_images_data.items():
-        clean_style = clean_sku_name(fld)
-        style_group = get_style_code_group(fld)
+        # EXACT BASE SKU FROM ZIP FOLDER (NO HARDCODED PREFIX)
+        base_sku = clean_sku_name(fld)
+        # NATURAL STYLE CODE EXTRACTED BY REMOVING COLOR SUFFIX
+        style_code = extract_style_code(fld)
         
-        ai_data = ctx.get('vision_results', {}).get(clean_style, {})
+        ai_data = ctx.get('vision_results', {}).get(base_sku, {})
         det_col = ai_data.get('color') or detect_color_from_name(fld)
         col_fam = map_color_to_family(det_col)
         mat_val = ai_data.get('material') or "Cotton"
-        fab_detail = ai_data.get('fabric_detail') or "Cotton Blend"
+        fab_detail = ai_data.get('fabric_detail') or f"100% {mat_val}"
         pattern_val = ai_data.get('pattern') or ("Quilted" if "quilt" in fld.lower() else "Solid")
         
         sc_data = detected_size_charts.get(fld) or detected_size_charts.get('default') or {}
@@ -563,7 +698,9 @@ def run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detected_s
         bottom_val = sc_data.get('bottomwear_type') or ("Capris" if "capri" in fld.lower() else "Pyjamas")
         measurements = sc_data.get('measurements') or {}
 
-        desc_text, high_text, add_text = build_ajio_seo_content("co-ord set", ctx.get('keywords', ''), "Women", mat_val)
+        desc_text, high_text, add_text = build_dynamic_seo_content(
+            cat_detected, gender_detected, ctx.get('brand', ''), mat_val, pattern_val, ctx.get('keywords', '')
+        )
         
         img_urls = list(ctx.get('live_links_cache', {}).get(fld, []))
         if ctx.get('size_chart_urls', {}).get(fld):
@@ -571,21 +708,22 @@ def run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detected_s
             if chart_url not in img_urls: img_urls.append(chart_url)
 
         preview.append({
-            'Style Code': style_group,
-            'SKU Base': clean_style,
+            'Style Code': style_code,
+            'Base SKU': base_sku,
+            'Category': cat_detected,
             'Color': det_col,
             'Color Family': col_fam,
             'Fabric': mat_val,
             'Pattern': pattern_val,
-            'Bottomwear': bottom_val,
-            'Sleeve': sleeve_val,
             'Images Count': len(img_urls)
         })
 
         for sz in sizes:
             clean_sz = clean_sku_name(sz)
-            full_sku = f"{clean_style}-{clean_sz}"
-            ean_val = clean_sku_name(f"{clean_style}-{clean_sz}")[:18]
+            # ITEM SKU = ZIP FOLDER NAME + '-' + SIZE
+            full_sku = f"{base_sku}-{clean_sz}"
+            # EAN = SAFE <= 18 CHARACTERS (SIZE SUFFIX ALWAYS PRESERVED)
+            ean_val = generate_safe_ean(base_sku, clean_sz)
             
             sz_meas = measurements.get(clean_sz) or measurements.get(clean_sz.upper()) or {}
             bust_val = sz_meas.get('bust', 37)
@@ -595,7 +733,7 @@ def run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detected_s
             hip_val = sz_meas.get('hip', 38)
             inseam_val = sz_meas.get('inseam', 28)
 
-            set_val(curr_r, col_style, style_group)
+            set_val(curr_r, col_style, style_code)
             set_val(curr_r, col_desc, desc_text)
             set_val(curr_r, col_sku, full_sku)
             set_val(curr_r, col_brand, ctx.get('brand', ''))
@@ -609,7 +747,7 @@ def run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detected_s
                     ws.cell(curr_r, col_mrp).fill = mrp_fill
                     ws.cell(curr_r, col_mrp).font = mrp_font
 
-            set_val(curr_r, col_hsn, ctx.get('hsn', '61083100'))
+            set_val(curr_r, col_hsn, hsn_val)
             set_val(curr_r, col_prod_grp, "Evening", dropdown=True)
             set_val(curr_r, col_fash_grp, "Fashion", dropdown=True)
             set_val(curr_r, col_season_cd, "Core", dropdown=True)
@@ -617,12 +755,13 @@ def run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detected_s
             set_val(curr_r, col_size, clean_sz)
             set_val(curr_r, col_std_size, clean_sz)
 
-            set_val(curr_r, col_art_h, 2); set_val(curr_r, col_art_l, 25)
-            set_val(curr_r, col_art_w, 24); set_val(curr_r, col_art_luom, "CM")
-            set_val(curr_r, col_art_wt, 350); set_val(curr_r, col_art_wtuom, "GRAM")
-            set_val(curr_r, col_pkg_h, 2); set_val(curr_r, col_pkg_l, 25)
-            set_val(curr_r, col_pkg_w, 24); set_val(curr_r, col_pkg_luom, "CM")
-            set_val(curr_r, col_pkg_wt, 350); set_val(curr_r, col_pkg_wtuom, "GRAM")
+            # Dimensions strictly 300g to 450g
+            set_val(curr_r, col_art_h, dims_data['art_h']); set_val(curr_r, col_art_l, dims_data['art_l'])
+            set_val(curr_r, col_art_w, dims_data['art_w']); set_val(curr_r, col_art_luom, dims_data['art_luom'])
+            set_val(curr_r, col_art_wt, dims_data['art_wt']); set_val(curr_r, col_art_wtuom, dims_data['art_wtuom'])
+            set_val(curr_r, col_pkg_h, dims_data['pkg_h']); set_val(curr_r, col_pkg_l, dims_data['pkg_l'])
+            set_val(curr_r, col_pkg_w, dims_data['pkg_w']); set_val(curr_r, col_pkg_luom, dims_data['pkg_luom'])
+            set_val(curr_r, col_pkg_wt, dims_data['pkg_wt']); set_val(curr_r, col_pkg_wtuom, dims_data['pkg_wtuom'])
 
             set_val(curr_r, col_add_info1, add_text)
             set_val(curr_r, col_comp_count, 1)
@@ -651,15 +790,16 @@ def run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detected_s
             set_val(curr_r, col_bottom_type, bottom_val, dropdown=True)
             set_val(curr_r, col_style_type, "2-Piece Sets", dropdown=True)
 
-            set_val(curr_r, col_meas_type, "Garment Measurement", dropdown=True)
-            set_val(curr_r, col_to_fit_bust, bust_val)
-            set_val(curr_r, col_bust, bust_val)
-            set_val(curr_r, col_front_len, front_len_val)
-            set_val(curr_r, col_to_fit_waist, to_fit_waist_val)
-            set_val(curr_r, col_waist, waist_val)
-            set_val(curr_r, col_to_fit_hip, hip_val)
-            set_val(curr_r, col_hip, hip_val)
-            set_val(curr_r, col_inseam, inseam_val)
+            if col_meas_type:
+                set_val(curr_r, col_meas_type, "Garment Measurement", dropdown=True)
+                set_val(curr_r, col_to_fit_bust, bust_val)
+                set_val(curr_r, col_bust, bust_val)
+                set_val(curr_r, col_front_len, front_len_val)
+                set_val(curr_r, col_to_fit_waist, to_fit_waist_val)
+                set_val(curr_r, col_waist, waist_val)
+                set_val(curr_r, col_to_fit_hip, hip_val)
+                set_val(curr_r, col_hip, hip_val)
+                set_val(curr_r, col_inseam, inseam_val)
 
             for idx_img, url in enumerate(img_urls):
                 if idx_img < len(img_cols):
@@ -674,7 +814,7 @@ def run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detected_s
     return output.getvalue(), preview, total_added, info['styles_sheet']
 
 # ======================================================================
-# 9. STREAMLIT UI & DASHBOARD INTERFACE
+# 10. STREAMLIT UI & INTERFACE
 # ======================================================================
 detected_folders = []
 zip_images_data = {}
@@ -695,6 +835,7 @@ if not CONVERT_MODE:
                         clean = f.replace('\\', '/').strip('/')
                         parts = clean.split('/')
                         if len(parts) >= 2:
+                            # Direct folder name as base SKU
                             fld = parts[1] if parts[0].upper() == 'NIGHTSUIT' else parts[0]
                             filename = parts[-1]
                             if is_size_chart_file(filename):
@@ -718,7 +859,7 @@ if not CONVERT_MODE:
     with col_in2:
         st.write("##### 🌐 Live CDN & Cloud Hosting")
         auto_cdn = st.checkbox("Images ko auto CDN links (ImgBB) me convert karein", value=True)
-        st.caption("ImgBB Direct Link Active: Images auto-upload hokar direct links banenge.")
+        st.caption("⚡ Direct CDN Link Active: ImgBB se direct public URLs auto-generate honge.")
 
     st.divider()
 
@@ -743,20 +884,56 @@ st.divider()
 st.subheader("3. Brand, MRP, Legal & Sizes")
 c_b1, c_b2 = st.columns([1, 2])
 with c_b1:
-    sizes_input = st.text_input("Sizes (comma-separated):", value="XS, S, M, L, XL, XXL")
-    brand_name = st.text_input("Brand Name:", value="POSHAX")
-    mrp_value = st.text_input("MRP (e.g. 1999):", value="1999")
-    hsn_code = st.text_input("HSN Code:", value="61083100")
+    size_preset = st.radio(
+        "Sizes Preset Chunein (Choose Size Format):",
+        [
+            "Alpha Sizes (S, M, L, XL, 2XL)",
+            "Extended Alpha (XS, S, M, L, XL, 2XL)",
+            "Numeric / Waist Sizes (28, 30, 32, 34, 36, 38)",
+            "Custom"
+        ],
+        index=0
+    )
+    if size_preset == "Alpha Sizes (S, M, L, XL, 2XL)":
+        preset_val = "S, M, L, XL, 2XL"
+    elif size_preset == "Extended Alpha (XS, S, M, L, XL, 2XL)":
+        preset_val = "XS, S, M, L, XL, 2XL"
+    elif size_preset == "Numeric / Waist Sizes (28, 30, 32, 34, 36, 38)":
+        preset_val = "28, 30, 32, 34, 36, 38"
+    else:
+        preset_val = "S, M, L, XL"
+
+    sizes_input = st.text_input(
+        "Sizes (comma-separated): Apne mutabiq add ya kam karein",
+        value=preset_val
+    )
+    brand_name = st.text_input(
+        "Brand Name:",
+        value="",
+        placeholder="e.g. POSHAX (Khali chhodne par unbranded rahega)"
+    )
+    mrp_value = st.text_input(
+        "MRP (optional):",
+        value="",
+        placeholder="e.g. 1999 (Khali chhodne par Yellow Highlight hoga)"
+    )
+    hsn_code = st.text_input(
+        "HSN Code (optional):",
+        value="",
+        placeholder="e.g. 61083100 (Khali chhodne par category ke mutabiq auto-fill hoga)"
+    )
 
 with c_b2:
     mfg_address = st.text_area(
         "Manufactured By & Marketed By (Complete Address with Pincode):",
-        value="PLOT NO.41, DEVAM AMBRO PARK KOSAD,CHORASI,SURAT,GUJARAT-394107",
+        value="",
+        placeholder="e.g. Plot No. 41, Devam Ambro Park, Kosad, Chorasi, Surat, Gujarat - 394107\n(Pura address pincode ke sath daalein)",
         height=130
     )
     custom_keywords = st.text_area(
         "SEO & Trending Keywords (Optional):",
-        value="casual streetwear, relaxed fit, durable quality, all-day comfort",
+        value="",
+        placeholder="e.g. casual streetwear, relaxed fit, durable quality, all-day comfort",
         height=70
     )
 
@@ -784,16 +961,16 @@ if st.button("🚀 Perfect Listing File Generate Karein", type="primary"):
         # Step 1: AI Vision for Garments
         with st.spinner("🤖 1/3: AI Vision: Colors, Fabric & Sleeve length detect ho rahe hain..."):
             for fld in detected_folders:
-                cs = clean_sku_name(fld)
-                if cs not in ctx['vision_results'] and zip_images_data.get(fld):
+                base_sku = clean_sku_name(fld)
+                if base_sku not in ctx['vision_results'] and zip_images_data.get(fld):
                     v_res, provider = multi_ai_vision_detect(zip_images_data[fld][0][1], zip_images_data[fld][0][0])
                     if v_res:
                         v_res['ai_source'] = provider
-                        ctx['vision_results'][cs] = v_res
+                        ctx['vision_results'][base_sku] = v_res
 
         # Step 2: AI Size Chart Reading
         size_chart_measurements = {}
-        with st.spinner("📐 2/3: AI Vision size charts ko read karke table measurements nikaal raha hai..."):
+        with st.spinner("📐 2/3: AI Vision size charts ko read karke table measurements extract kar raha hai..."):
             for fld, sc_info in detected_size_charts.items():
                 sc_res, _ = multi_ai_size_chart_detect(sc_info['bytes'], sc_info['filename'])
                 if sc_res:
@@ -815,7 +992,7 @@ if st.button("🚀 Perfect Listing File Generate Karein", type="primary"):
 
         # Step 4: Listing Generation
         try:
-            with st.spinner("📝 Ajio template sheet me listings populate ho rahi hain..."):
+            with st.spinner("📝 Template sheet me perfect listing data populate ho raha hai..."):
                 if marketplace == "Ajio":
                     out_bytes, preview_data, total_added, target_sheet = run_perfect_ajio_listing(
                         tpl_file, zip_images_data, size_chart_measurements, ctx
