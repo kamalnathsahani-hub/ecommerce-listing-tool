@@ -2542,4 +2542,852 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
 
     sc_sku_col = (
         sc_key_to_col.get('contribution_sku#1.value')
-        or
+        or sc_lbl_occ_to_col.get(('sku', 1))
+        or sc_lbl_occ_to_col.get(('seller sku', 1))
+        or 1
+    )
+    sc_prod_type_col = (
+        sc_key_to_col.get('product_type#1.value')
+        or sc_lbl_occ_to_col.get(('product type', 1))
+        or sc_lbl_occ_to_col.get(('feed product type', 1))
+    )
+    sc_action_col = (
+        sc_key_to_col.get('::record_action')
+        or sc_lbl_occ_to_col.get(('listing action', 1))
+    )
+    sc_parentage_col = (
+        sc_key_to_col.get('parentage_level#1.value')
+        or sc_lbl_occ_to_col.get(('parentage level', 1))
+    )
+    sc_parent_sku_col = (
+        sc_key_to_col.get('child_parent_sku_relationship#1.parent_sku')
+        or sc_lbl_occ_to_col.get(('parent sku', 1))
+    )
+    sc_var_theme_col = (
+        sc_key_to_col.get('variation_theme#1.name')
+        or sc_lbl_occ_to_col.get(('variation theme name', 1))
+    )
+    sc_title_col = (
+        sc_key_to_col.get('item_name#1.value')
+        or sc_lbl_occ_to_col.get(('item name', 1))
+    )
+    sc_prod_id_type_col = (
+        sc_key_to_col.get('amzn1.volt.ca.product_id_type')
+        or sc_lbl_occ_to_col.get(('product id type', 1))
+    )
+    sc_prod_id_val_col = (
+        sc_key_to_col.get('amzn1.volt.ca.product_id_value')
+        or sc_lbl_occ_to_col.get(('product id', 1))
+    )
+    sc_model_name_col = (
+        sc_key_to_col.get('model_name#1.value')
+        or sc_lbl_occ_to_col.get(('model name', 1))
+    )
+    sc_condition_col = (
+        sc_key_to_col.get('condition_type#1.value')
+        or sc_lbl_occ_to_col.get(('item condition', 1))
+    )
+    sc_fulfillment_col = (
+        sc_key_to_col.get('fulfillment_availability#1.fulfillment_channel_code')
+        or sc_lbl_occ_to_col.get(('fulfillment channel code (in)', 1))
+    )
+    sc_quantity_col = (
+        sc_key_to_col.get('fulfillment_availability#1.quantity')
+        or sc_lbl_occ_to_col.get(('quantity (in)', 1))
+        or sc_lbl_occ_to_col.get(('quantity', 1))
+    )
+    sc_shipping_tpl_col = (
+        sc_key_to_col.get('merchant_shipping_group#1.value')
+        or sc_lbl_occ_to_col.get(('shipping template (in)', 1))
+    )
+    sc_price_col = (
+        sc_key_to_col.get('purchasable_offer#1.our_price#1.schedule#1.value_with_tax')
+        or sc_lbl_occ_to_col.get(('your price inr (sell on amazon, in)', 1))
+        or sc_lbl_occ_to_col.get(('standard price', 1))
+    )
+    sc_mrp_col = (
+        sc_key_to_col.get('purchasable_offer#1.maximum_retail_price#1.schedule#1.value_with_tax')
+        or sc_lbl_occ_to_col.get(('maximum retail price (sell on amazon, in)', 1))
+        or sc_lbl_occ_to_col.get(('list price', 1))
+    )
+
+    parent_inherited_sc_cols = {
+        c for c, lbl in sc_col_to_lbl.items() if lbl in PARENT_INHERITED_LABELS
+    }
+
+    curr_r = sc_data_r
+    while curr_r <= ws_sc.max_row and ws_sc.cell(curr_r, sc_sku_col).value not in (None, ''):
+        curr_r += 1
+
+    # Discover all valid VC listing sheets (supports 1, 2, 4, 5, or N category sheets)
+    vc_listing_sheets = [wb_vc[s] for s in wb_vc.sheetnames if _is_valid_vc_listing_sheet(wb_vc[s])]
+    if not vc_listing_sheets:
+        vc_listing_sheets = [pick_template_sheet(wb_vc)]
+
+    # Deduplication & Smart Merge store across all VC rows:
+    # If the same SKU appears twice (one blank/partial row + one filled row), merge them into 1 complete row.
+    deduped_sku_order = []
+    deduped_sku_store = {}
+    sheets_summary = []
+    custom_parent_override = (ctx.get('sc_parent_model') or '').strip()
+
+    for ws_vc in vc_listing_sheets:
+        vc_lbl_r, vc_key_r, vc_data_r = _detect_amz_sheet_rows(ws_vc, 3, 4, 7)
+
+        vc_to_sc_col = {}
+        vc_lbl_counts = {}
+        vc_sku_col = None
+        vc_model_name_col = None
+        vc_asin_col = None
+        vc_prod_type_col = None
+        vc_item_type_col = None
+        vc_title_col = None
+
+        for c in range(1, ws_vc.max_column + 1):
+            lbl = str(ws_vc.cell(vc_lbl_r, c).value or '').strip().lower()
+            key = str(ws_vc.cell(vc_key_r, c).value or '').strip() if vc_key_r else ''
+            nk = _norm_amazon_key(key)
+
+            if vc_sku_col is None and (nk in ('vendor_sku#1.value', 'contribution_sku#1.value') or lbl in ('vendor sku', 'sku', 'seller sku')):
+                vc_sku_col = c
+            if vc_model_name_col is None and (nk == 'model_name#1.value' or lbl == 'model name'):
+                vc_model_name_col = c
+            if vc_asin_col is None and (nk in ('merchant_suggested_asin#1.value', 'external_product_id#1.value') or lbl in ('merchant suggested asin', 'external product id')):
+                vc_asin_col = c
+            if vc_prod_type_col is None and (nk == 'product_type#1.value' or lbl in ('product type', 'feed product type')):
+                vc_prod_type_col = c
+            if vc_item_type_col is None and (nk == 'item_type_name#1.value' or lbl in ('item type name', 'item type keyword')):
+                vc_item_type_col = c
+            if vc_title_col is None and (nk == 'item_name#1.value' or lbl in ('item name', 'title', 'product name')):
+                vc_title_col = c
+
+            nk_target = VC_TO_SC_KEY_ALIASES.get(nk, nk)
+            occ = 1
+            if lbl:
+                occ = vc_lbl_counts.get(lbl, 0) + 1
+                vc_lbl_counts[lbl] = occ
+            sc_c = None
+            if nk_target and nk_target in sc_key_to_col:
+                sc_c = sc_key_to_col[nk_target]
+            else:
+                for grp in VC_TO_SC_KEY_FALLBACK_GROUPS:
+                    if nk_target in grp:
+                        for alt_k in grp:
+                            if alt_k in sc_key_to_col:
+                                sc_c = sc_key_to_col[alt_k]
+                                break
+                        if sc_c:
+                            break
+                if not sc_c:
+                    lbl_target = VC_TO_SC_LABEL_ALIASES.get(lbl, lbl)
+                    if (lbl_target, occ) in sc_lbl_occ_to_col:
+                        sc_c = sc_lbl_occ_to_col[(lbl_target, occ)]
+                    elif (lbl_target, 1) in sc_lbl_occ_to_col and occ == 1:
+                        sc_c = sc_lbl_occ_to_col[(lbl_target, 1)]
+            if sc_c:
+                vc_to_sc_col.setdefault(c, []).append(sc_c)
+
+        if vc_sku_col is None:
+            vc_sku_col = 2
+
+        sheet_raw_rows = 0
+        sheet_unique_skus = set()
+        sheet_duplicates_merged = 0
+        sheet_detected_pts = set()
+
+        for r_vc in range(vc_data_r, ws_vc.max_row + 1):
+            sku_val = ws_vc.cell(r_vc, vc_sku_col).value
+            if sku_val in (None, ''):
+                continue
+            sku_str = str(sku_val).strip()
+            if sku_str.lower() in ('vendor sku', 'sku', 'seller sku', 'example'):
+                continue
+
+            sheet_raw_rows += 1
+            sku_norm_key = sku_str.lower()
+
+            # Count how many actual non-empty cells this VC row has (to identify blank vs filled row)
+            non_empty_vc_cells = 0
+            for c_chk in range(1, ws_vc.max_column + 1):
+                if ws_vc.cell(r_vc, c_chk).value not in (None, ''):
+                    non_empty_vc_cells += 1
+
+            mapped_cells = {}
+            for vc_c, sc_cols_list in vc_to_sc_col.items():
+                val = ws_vc.cell(r_vc, vc_c).value
+                if val not in (None, ''):
+                    for sc_c in (sc_cols_list if isinstance(sc_cols_list, list) else [sc_cols_list]):
+                        mapped_cells[sc_c] = val
+
+            if vc_asin_col and sc_prod_id_val_col:
+                asin_val = ws_vc.cell(r_vc, vc_asin_col).value
+                if asin_val not in (None, ''):
+                    mapped_cells[sc_prod_id_val_col] = str(asin_val).strip()
+
+            raw_pt_val = ws_vc.cell(r_vc, vc_prod_type_col).value if vc_prod_type_col else ''
+            raw_itn_val = ws_vc.cell(r_vc, vc_item_type_col).value if vc_item_type_col else ''
+            raw_title_val = ws_vc.cell(r_vc, vc_title_col).value if vc_title_col else ''
+            model_name_val = ws_vc.cell(r_vc, vc_model_name_col).value if vc_model_name_col else None
+            has_explicit_model = model_name_val not in (None, '') and str(model_name_val).strip() != ''
+
+            if custom_parent_override:
+                model_str = custom_parent_override
+            elif has_explicit_model:
+                model_str = str(model_name_val).strip()
+            else:
+                model_str = _derive_parent_model_from_sku(sku_str, ws_vc.title)
+
+            if sku_norm_key not in deduped_sku_store:
+                deduped_sku_order.append(sku_norm_key)
+                sheet_unique_skus.add(sku_norm_key)
+                deduped_sku_store[sku_norm_key] = {
+                    'sku_str': sku_str,
+                    'model_str': model_str,
+                    'has_explicit_model': has_explicit_model,
+                    'mapped_cells': mapped_cells,
+                    'sheet_title': ws_vc.title,
+                    'raw_pt_val': raw_pt_val if raw_pt_val not in (None, '') else '',
+                    'raw_itn_val': raw_itn_val if raw_itn_val not in (None, '') else '',
+                    'raw_title_val': raw_title_val if raw_title_val not in (None, '') else '',
+                    'fill_score': non_empty_vc_cells,
+                }
+            else:
+                # Duplicate SKU found! Ignore blank fields and merge filled data into a single record
+                sheet_duplicates_merged += 1
+                existing = deduped_sku_store[sku_norm_key]
+                existing['mapped_cells'] = _merge_vc_duplicate_cell_maps(
+                    existing['mapped_cells'],
+                    mapped_cells,
+                    existing['fill_score'],
+                    non_empty_vc_cells
+                )
+                # If the previous row was blank/missing Model Name and this row has Model Name, adopt it
+                if not custom_parent_override:
+                    if has_explicit_model and (not existing['has_explicit_model'] or non_empty_vc_cells > existing['fill_score']):
+                        existing['model_str'] = model_str
+                        existing['has_explicit_model'] = True
+
+                # Merge raw metadata for accurate Product Type detection
+                if raw_pt_val not in (None, '') and (not existing['raw_pt_val'] or non_empty_vc_cells > existing['fill_score']):
+                    existing['raw_pt_val'] = raw_pt_val
+                if raw_itn_val not in (None, '') and (not existing['raw_itn_val'] or non_empty_vc_cells > existing['fill_score']):
+                    existing['raw_itn_val'] = raw_itn_val
+                if raw_title_val not in (None, '') and (not existing['raw_title_val'] or non_empty_vc_cells > existing['fill_score']):
+                    existing['raw_title_val'] = raw_title_val
+
+                if non_empty_vc_cells > existing['fill_score']:
+                    existing['fill_score'] = non_empty_vc_cells
+                    existing['sheet_title'] = ws_vc.title
+                    existing['sku_str'] = sku_str
+
+        if sheet_raw_rows > 0:
+            sheets_summary.append({
+                'VC Sheet': ws_vc.title,
+                'Total Rows Scanned': sheet_raw_rows,
+                'Unique SKUs Kept': len(sheet_unique_skus),
+                'Duplicate/Blank Rows Merged': sheet_duplicates_merged,
+                'SC Product Type(s)': "Auto",
+            })
+
+    # Finalize deduplicated rows, apply optional price/MRP overrides, and resolve SC Product Type
+    vc_rows_data = []
+    model_first_child_cells = {}
+    sheet_pts_map = {}
+
+    for sku_norm_key in deduped_sku_order:
+        entry = deduped_sku_store[sku_norm_key]
+        sku_str = entry['sku_str']
+        model_str = entry['model_str']
+        mapped_cells = entry['mapped_cells']
+        sh_title = entry['sheet_title']
+
+        # Optional UI overrides for Selling Price / MRP if still blank after merging
+        if sc_price_col and ctx.get('selling_price') and sc_price_col not in mapped_cells:
+            mapped_cells[sc_price_col] = ctx['selling_price']
+        if sc_mrp_col and ctx.get('mrp') and sc_mrp_col not in mapped_cells:
+            mv = ctx['mrp']
+            mapped_cells[sc_mrp_col] = int(mv) if str(mv).isdigit() else mv
+
+        resolved_pt = resolve_sc_product_type_for_row(
+            ws_sc,
+            sc_prod_type_col,
+            raw_prod_type=entry['raw_pt_val'],
+            sheet_name=sh_title,
+            item_type=entry['raw_itn_val'],
+            model_name=model_str,
+            item_name=entry['raw_title_val'] or sku_str
+        )
+        if sc_prod_type_col and resolved_pt:
+            mapped_cells[sc_prod_type_col] = resolved_pt
+            sheet_pts_map.setdefault(sh_title, set()).add(str(resolved_pt))
+
+        if model_str:
+            # Ensure the parent row inherits from the richest child row in its Model Name group
+            if model_str not in model_first_child_cells or len(mapped_cells) > len(model_first_child_cells[model_str]):
+                model_first_child_cells[model_str] = mapped_cells
+
+        vc_rows_data.append((sku_str, model_str, mapped_cells, sh_title))
+
+    for s_item in sheets_summary:
+        pts = sheet_pts_map.get(s_item['VC Sheet'])
+        if pts:
+            s_item['SC Product Type(s)'] = ", ".join(sorted(pts))
+
+    if not vc_rows_data:
+        return None, [], 0, []
+
+    action_val = "Create or Replace (Full Update)"
+    parent_val = pick_dropdown_value(ws_sc, sc_parentage_col, "Parent", "Parent") if sc_parentage_col else "Parent"
+    child_val = pick_dropdown_value(ws_sc, sc_parentage_col, "Child", "Child") if sc_parentage_col else "Child"
+    var_theme_val = "SIZE/COLOR"
+    asin_type_val = "ASIN"
+    cond_new_val = "New"
+    fulfillment_default_val = "Fulfillment by Merchant (Default)"
+    qty_zero_val = int(ctx.get('quantity', 0))
+    shipping_tpl_val = "Migrated Template"
+
+    parent_position = ctx.get('parent_position', 'before_group')
+    seen_models = set()
+    unique_models_ordered = []
+    model_to_sheet = {}
+    for _, m_str, _, sh_title in vc_rows_data:
+        if m_str and m_str not in seen_models:
+            seen_models.add(m_str)
+            unique_models_ordered.append(m_str)
+            model_to_sheet[m_str] = sh_title
+
+    preview = []
+    total_written = 0
+
+    def apply_common_fixed_fields(row_idx):
+        if sc_action_col:
+            ws_sc.cell(row_idx, sc_action_col).value = action_val
+        if sc_var_theme_col:
+            ws_sc.cell(row_idx, sc_var_theme_col).value = var_theme_val
+        if sc_condition_col:
+            ws_sc.cell(row_idx, sc_condition_col).value = cond_new_val
+        if sc_fulfillment_col:
+            ws_sc.cell(row_idx, sc_fulfillment_col).value = fulfillment_default_val
+        if sc_quantity_col:
+            ws_sc.cell(row_idx, sc_quantity_col).value = qty_zero_val
+
+    def write_parent_row(model_sku):
+        nonlocal curr_r, total_written
+        ref_cells = model_first_child_cells.get(model_sku) or (vc_rows_data[0][2] if vc_rows_data else {})
+
+        for sc_c in parent_inherited_sc_cols:
+            if sc_c in ref_cells and ref_cells[sc_c] not in (None, ''):
+                ws_sc.cell(curr_r, sc_c).value = ref_cells[sc_c]
+
+        ws_sc.cell(curr_r, sc_sku_col).value = model_sku
+        if sc_prod_type_col and sc_prod_type_col in ref_cells:
+            ws_sc.cell(curr_r, sc_prod_type_col).value = ref_cells[sc_prod_type_col]
+        if sc_parentage_col:
+            ws_sc.cell(curr_r, sc_parentage_col).value = parent_val
+
+        parent_title = ""
+        if sc_title_col:
+            child_title = ref_cells.get(sc_title_col, '')
+            parent_title = _build_parent_title_from_child(child_title, model_sku)
+            ws_sc.cell(curr_r, sc_title_col).value = parent_title
+
+        apply_common_fixed_fields(curr_r)
+
+        preview.append({
+            'Row': curr_r,
+            'Source VC Sheet': model_to_sheet.get(model_sku, ''),
+            'SKU': model_sku,
+            'Product Type': ref_cells.get(sc_prod_type_col, '') if sc_prod_type_col else '',
+            'Listing Action': action_val,
+            'Parentage Level': parent_val,
+            'Parent SKU': '',
+            'Variation Theme': var_theme_val,
+            'Product Id Type': '',
+            'Product Id': '',
+            'Shipping Template': '',
+            'Model Name': '',
+            'Item Name': parent_title,
+        })
+        curr_r += 1
+        total_written += 1
+
+    def write_child_row(child_sku, model_str, mapped_cells, src_sheet_name=""):
+        nonlocal curr_r, total_written
+        for sc_c, val in mapped_cells.items():
+            ws_sc.cell(curr_r, sc_c).value = val
+
+        ws_sc.cell(curr_r, sc_sku_col).value = child_sku
+        if sc_parentage_col:
+            ws_sc.cell(curr_r, sc_parentage_col).value = child_val
+        if sc_parent_sku_col and model_str:
+            ws_sc.cell(curr_r, sc_parent_sku_col).value = model_str
+        if sc_model_name_col and model_str:
+            ws_sc.cell(curr_r, sc_model_name_col).value = model_str
+        if sc_prod_id_type_col:
+            ws_sc.cell(curr_r, sc_prod_id_type_col).value = asin_type_val
+        if sc_shipping_tpl_col:
+            ws_sc.cell(curr_r, sc_shipping_tpl_col).value = shipping_tpl_val
+
+        apply_common_fixed_fields(curr_r)
+
+        preview.append({
+            'Row': curr_r,
+            'Source VC Sheet': src_sheet_name,
+            'SKU': child_sku,
+            'Product Type': mapped_cells.get(sc_prod_type_col, '') if sc_prod_type_col else '',
+            'Listing Action': action_val,
+            'Parentage Level': child_val,
+            'Parent SKU': model_str,
+            'Variation Theme': var_theme_val,
+            'Product Id Type': asin_type_val,
+            'Product Id': mapped_cells.get(sc_prod_id_val_col, '') if sc_prod_id_val_col else '',
+            'Shipping Template': shipping_tpl_val,
+            'Model Name': model_str,
+            'Item Name': mapped_cells.get(sc_title_col, '') if sc_title_col else '',
+        })
+        curr_r += 1
+        total_written += 1
+
+    if parent_position == 'top':
+        for m_sku in unique_models_ordered:
+            write_parent_row(m_sku)
+        for c_sku, m_str, m_cells, sh_title in vc_rows_data:
+            write_child_row(c_sku, m_str, m_cells, sh_title)
+    elif parent_position == 'bottom':
+        for c_sku, m_str, m_cells, sh_title in vc_rows_data:
+            write_child_row(c_sku, m_str, m_cells, sh_title)
+        for m_sku in unique_models_ordered:
+            write_parent_row(m_sku)
+    else:
+        inserted_parents = set()
+        for c_sku, m_str, m_cells, sh_title in vc_rows_data:
+            if m_str and m_str not in inserted_parents:
+                inserted_parents.add(m_str)
+                write_parent_row(m_str)
+            write_child_row(c_sku, m_str, m_cells, sh_title)
+
+    output = io.BytesIO()
+    wb_sc.save(output)
+    output.seek(0)
+    return output.getvalue(), preview, total_written, sheets_summary
+
+# ======================================================================
+# 2. PRODUCT IMAGES & SKUs INPUT
+# ======================================================================
+dropbox_base_url = ""
+if not CONVERT_MODE:
+    st.subheader("1. Product Images & SKUs Input (ZIP Folder ya Dropbox Link)")
+    st.info(f"💡 **{marketplace}** engine active hai — template is marketplace ke format ke according fill hoga.")
+
+    col_in1, col_in2 = st.columns(2)
+
+    with col_in1:
+        st.write("##### Option A: Product Folders Ka ZIP Upload")
+        zip_file = st.file_uploader("Product Folders Ka ZIP (.zip):", type=["zip"])
+        if zip_file:
+            try:
+                with zipfile.ZipFile(zip_file, 'r') as z:
+                    file_list = z.namelist()
+                    for f in file_list:
+                        if is_size_chart_file(f):
+                            detected_size_chart_info['filename'] = os.path.basename(f)
+                            detected_size_chart_info['bytes'] = z.read(f)
+                            break
+
+                    img_exts = ('.jpg', '.jpeg', '.png', '.webp')
+                    folder_to_imgs = {}
+                    for f in file_list:
+                        f_clean = f.replace('\\', '/')
+                        if f_clean.lower().endswith(img_exts) and not is_size_chart_file(f_clean):
+                            sub_folder_name = os.path.basename(os.path.dirname(f_clean))
+                            if sub_folder_name and sub_folder_name not in ['.', '']:
+                                folder_to_imgs.setdefault(sub_folder_name, []).append(f)
+
+                    detected_folders = sorted(list(folder_to_imgs.keys()))
+                    for fld, imgs in folder_to_imgs.items():
+                        def sort_key(p):
+                            nums = re.findall(r'\d+', os.path.basename(p))
+                            return int(nums[0]) if nums else 999
+                        imgs.sort(key=sort_key)
+                        folder_images_count[fld] = len(imgs)
+                        zip_images_data[fld] = [(os.path.basename(p), z.read(p)) for p in imgs]
+
+                st.success(f"✅ ZIP Se Total {len(detected_folders)} Product Folders (SKUs) Detect Hue:")
+                st.code(", ".join([clean_sku_name(f) for f in detected_folders]))
+
+                if detected_size_chart_info:
+                    st.info(f"📐 **Size Chart Detect Hua:** `{detected_size_chart_info['filename']}`")
+
+                valid_keys = {clean_sku_name(f) for f in detected_folders}
+                st.session_state['vision_results'] = {
+                    k: v for k, v in st.session_state['vision_results'].items() if k in valid_keys
+                }
+            except Exception as e:
+                st.error(f"ZIP read karne me error: {e}")
+
+        auto_cdn_upload = st.checkbox("🌐 ZIP images se automatic Live CDN Links banayein", value=True)
+        st.success("⚡ Live Workable CDN Active: 100% working direct links banenge.")
+
+    with col_in2:
+        st.write("##### Option B: Dropbox Link / Manual SKUs")
+        dropbox_base_url = st.text_input(
+            "Dropbox Shared Folder Link (Optional):",
+            placeholder="https://www.dropbox.com/scl/fo/xyz/..."
+        )
+        manual_skus_input = st.text_area(
+            "Manual SKUs List (Agar ZIP nahi hai):",
+            placeholder="SKU-1\nSKU-2\nSKU-4", height=100
+        )
+        if not detected_folders and manual_skus_input.strip():
+            detected_folders = [s.strip() for s in manual_skus_input.split('\n') if s.strip()]
+            for fld in detected_folders:
+                folder_images_count[fld] = 5
+
+    st.divider()
+
+# ======================================================================
+# 1a. 🤖 AI VISION PREVIEW & OVERRIDES
+# ======================================================================
+default_category = None
+if not CONVERT_MODE and detected_folders:
+    st.subheader("1a. 🤖 AI Vision Auto-Detect & SKU Attributes Check")
+    st.caption(
+        "✅ **Tick ON** = Images AI se visually scan hokar Fabric, Sleeves, Pattern, Gender aur Color exact pick honge.\n"
+        "⚡ 3-Tier Reliability: Pehle Gemini Vision, agar fail ho toh NVIDIA, aur phir Groq se backup generate hoga."
+    )
+
+    vr_all = st.session_state.get('vision_results', {})
+    kw_now = st.session_state.get('kw_input', '')
+
+    _ctx_tmp = {'vision_results': vr_all, 'keywords': kw_now, 'default_category': None}
+    prev_rows = []
+    for fld in detected_folders:
+        cs = clean_sku_name(fld)
+        p_cat = resolve_category(cs, _ctx_tmp, "")
+        p_col = resolve_color(fld, cs, _ctx_tmp)
+        p_gen = resolve_gender(cs, _ctx_tmp)
+        p_fab = resolve_fabric(cs, p_cat, _ctx_tmp)
+        p_slv = resolve_sleeve_length(cs, p_cat, _ctx_tmp)
+        
+        ai_src = (vr_all.get(cs) or {}).get('ai_source', '')
+        source = f'🤖 AI ({ai_src})' if ai_src else ('✍️ Override' if cs in st.session_state.get('category_overrides', {}) else '📄 Python')
+
+        prev_rows.append({
+            'Folder/SKU': cs, 'Gender': p_gen, 'Category': p_cat, 'Fabric': p_fab, 'Sleeve': p_slv,
+            'Color': p_col, 'Color Map': map_to_standard_color_map(p_col),
+            'Pocket': resolve_pocket(cs, p_cat, _ctx_tmp), 'Source': source,
+        })
+    st.dataframe(prev_rows, use_container_width=True)
+
+    vision_enabled = st.checkbox(
+        "🤖 AI Vision Enable Karein (Gemini ➜ NVIDIA ➜ Groq Fallback)",
+        value=True, key="vision_enabled"
+    )
+
+    with st.expander("⚙️ Manual Overrides (Gender / Category badalna ho to yahan badlein)"):
+        c_o1, c_o2 = st.columns([1, 2])
+        with c_o1:
+            defcat_sel = st.selectbox("Default Category (jinme kuch detect nahi hua):",
+                                      ["(auto)"] + CATEGORY_OPTIONS, key="defcat_sel")
+            default_category = None if defcat_sel == "(auto)" else defcat_sel
+
+        valid_keys = {clean_sku_name(f) for f in detected_folders}
+        st.session_state['category_overrides'] = {
+            k: v for k, v in st.session_state['category_overrides'].items() if k in valid_keys
+        }
+        st.session_state['gender_overrides'] = {
+            k: v for k, v in st.session_state['gender_overrides'].items() if k in valid_keys
+        }
+        ov_cols = st.columns(3)
+        for i, fld in enumerate(detected_folders):
+            cs = clean_sku_name(fld)
+            ai_data = st.session_state['vision_results'].get(cs) or {}
+            tag = f"🤖 ({ai_data.get('ai_source')})" if ai_data else ""
+            with ov_cols[i % 3]:
+                st.write(f"**{cs}** {tag}")
+                g_choice = st.selectbox(f"Gender ({cs})", ["(auto)", "Women", "Men"], key=f"ov_g_{cs}")
+                if g_choice != "(auto)":
+                    st.session_state['gender_overrides'][cs] = g_choice
+                else:
+                    st.session_state['gender_overrides'].pop(cs, None)
+
+                choice = st.selectbox(f"Category ({cs})", ["(auto)"] + CATEGORY_OPTIONS, key=f"ov_c_{cs}")
+                if choice != "(auto)":
+                    st.session_state['category_overrides'][cs] = choice
+                else:
+                    st.session_state['category_overrides'].pop(cs, None)
+
+    st.divider()
+
+# ======================================================================
+# 3. SIZES, BRAND & LEGAL
+# ======================================================================
+st.subheader("2. Sizes, Brand & Legal Information")
+col_s1, col_s2 = st.columns([1, 2])
+
+with col_s1:
+    size_preset = st.radio(
+        "Sizes Preset Chunein:",
+        ["Alpha Sizes (S, M, L, XL, 2XL, 3XL)", "Numeric Sizes (30, 32, 34, 36, 38)", "Custom (Apne hisab se likhein)"],
+        index=0,
+        horizontal=True
+    )
+    if size_preset == "Alpha Sizes (S, M, L, XL, 2XL, 3XL)":
+        preset_val = "S, M, L, XL, 2XL, 3XL"
+    elif size_preset == "Numeric Sizes (30, 32, 34, 36, 38)":
+        preset_val = "30, 32, 34, 36, 38"
+    else:
+        preset_val = "S, M, L, XL"
+
+    sizes_input = st.text_input(
+        "Sizes (comma-separated): Jo chahiye rakhein, baaki delete karein",
+        value=preset_val
+    )
+    brand_name = st.text_input(
+        "Brand Name:", value="",
+        placeholder="Enter Brand Name (blank = not applicable)"
+    )
+    mrp_value = st.text_input("MRP (Khali chhodne par Yellow Highlight hoga):", value="", placeholder="e.g. 1999")
+
+with col_s2:
+    mfg_address = st.text_area(
+        "Manufactured By (Address with Pincode):", value="",
+        placeholder="Enter complete address with Pincode...\n(Yahi address Manufactured By, Marketed By aur Packer Details — sab jagah use hoga)",
+        height=120
+    )
+
+if CONVERT_MODE:
+    st.caption("ℹ️ Convert mode me Vendor Central file ki sabhi category sheets scan hongi, duplicate SKUs ki blank rows ignore karke filled data merge hoga, aur Seller Central ke `Template` sheet me replicate hongi.")
+st.divider()
+
+sc_quantity, sc_selling_price, sc_parent_model = 0, "", ""
+if marketplace in ["Amazon - Seller Central", "Convert: Vendor Central ➜ Seller Central"]:
+    st.subheader("Seller Central Extra Fields")
+    c_sc1, c_sc2, c_sc3 = st.columns(3)
+    with c_sc1:
+        sc_quantity = st.number_input("Default Stock Quantity (0 Fixed):", min_value=0, value=0)
+    with c_sc2:
+        sc_selling_price = st.text_input("Selling Price (optional):", placeholder="e.g. 899")
+    with c_sc3:
+        sc_parent_model = st.text_input(
+            "Common Parent SKU / Model Name (Optional):",
+            value="",
+            placeholder="e.g. H-63-66 (Blank = Model Name from VC / folder)"
+        )
+    st.divider()
+
+# ======================================================================
+# 4. SEO KEYWORDS
+# ======================================================================
+custom_keywords = ""
+if not CONVERT_MODE:
+    st.subheader("3. SEO & Trending Keywords")
+    custom_keywords = st.text_area(
+        "Custom Trending Keywords (Optional):",
+        placeholder="e.g. printed co-ord set, casual wear, partywear, cotton blend",
+        key="kw_input"
+    )
+    st.divider()
+
+# ======================================================================
+# 5. TEMPLATE & GENERATE
+# ======================================================================
+def build_ctx():
+    return {
+        'folders': detected_folders,
+        'sizes': [sz.strip() for sz in sizes_input.split(",") if sz.strip()],
+        'brand': brand_name.strip(),
+        'mrp': mrp_value.strip(),
+        'mfg': mfg_address,
+        'keywords': custom_keywords,
+        'dropbox': dropbox_base_url if not CONVERT_MODE else "",
+        'live_links_cache': {},
+        'folder_images_count': folder_images_count,
+        'size_chart_cdn_url': None,
+        'quantity': int(sc_quantity),
+        'selling_price': sc_selling_price.strip(),
+        'sc_parent_model': sc_parent_model.strip(),
+        'td': int(default_td),
+        'default_category': default_category,
+        'vision_results': st.session_state.get('vision_results', {}),
+    }
+
+if CONVERT_MODE:
+    st.subheader("3. Convert: Vendor Central ➜ Seller Central (Multi-Sheet + Smart Dedupe & Product Type)")
+    st.info(
+        "💡 **Kaise kaam karega:**\n"
+        "1. Niche **Filled Vendor Central File** (1, 2, 4, 5 ya kitni bhi category sheets wali) aur **Blank Seller Central File** upload karein.\n"
+        "2. **Smart Duplicate & Blank Row Merge:** Agar VC file me same SKU/ASIN 2 baar hai (ek row me details blank hain aur doosri row me details bhari hain), toh system **us SKU ko sirf 1 baar lega** aur blank row ko ignore karke filled row ka poora data fetch kar lega.\n"
+        "3. Vendor Central file ki **sabhi listing sheets** automatically read hongi aur har sheet/category ke hisab se Blank Seller Central template ke **`Product Type`** dropdown se exact matching Product Type (`SHIRT`, `PANTS`, `SWEATSHIRT`, `KURTA`, `SUIT`, `DRESS`, `COAT`, etc.) select hoga.\n"
+        "4. Har unique **`Model Name`** ko **`SKU`** column me **`Parent`** row ke roop me add kiya jayega.\n"
+        "5. Sabhi Child SKUs me **`Parentage Level = Child`**, **`Parent SKU = Model Name`**, **`Product Id Type = ASIN`**, **`Product Id = Merchant Suggested ASIN`**, aur **`Shipping Template (IN) = Migrated Template`** set hoga.\n"
+        "6. Sabhi rows me **`Listing Action = Create or Replace (Full Update)`**, **`Variation Theme Name = SIZE/COLOR`**, **`Item Condition = New`**, **`Fulfillment Channel Code (IN) = Fulfillment by Merchant (Default)`**, aur **`Quantity (IN) = 0`** rahega."
+    )
+    c_up1, c_up2 = st.columns(2)
+    with c_up1:
+        vc_file = st.file_uploader("📥 1. Filled Vendor Central File Upload Karein (.xlsx / .xlsm):", type=["xlsx", "xlsm"], key="vcfile")
+    with c_up2:
+        sc_template = st.file_uploader("📤 2. Blank Seller Central Template Upload Karein (.xlsx / .xlsm):", type=["xlsx", "xlsm"], key="sctpl")
+
+    parent_pos_label = st.radio(
+        "Parent SKU Row Position (Model Name as Parent):",
+        [
+            "Har Model Name Group ke Pehle (Recommended - Parent ke niche uske Child SKUs)",
+            "Sabhi Child SKUs ke Baad (Pehle saare Child SKUs, fir niche Parent SKUs)",
+            "Sabse Upar (Pehle saare Parent SKUs, fir niche saare Child SKUs)",
+        ],
+        index=0,
+        horizontal=True,
+    )
+    parent_pos_map = {
+        "Har Model Name Group ke Pehle (Recommended - Parent ke niche uske Child SKUs)": "before_group",
+        "Sabhi Child SKUs ke Baad (Pehle saare Child SKUs, fir niche Parent SKUs)": "bottom",
+        "Sabse Upar (Pehle saare Parent SKUs, fir niche saare Child SKUs)": "top",
+    }
+
+    if st.button("🔁 Convert Vendor Central ➜ Seller Central"):
+        if not vc_file or not sc_template:
+            st.error("Dono files upload karein - Filled Vendor Central file aur Blank Seller Central template!")
+        else:
+            try:
+                ctx = build_ctx()
+                ctx['parent_position'] = parent_pos_map.get(parent_pos_label, "before_group")
+                with st.spinner("VC file ki sabhi sheets se data replicate ho raha hai + Duplicate/Blank SKUs merge ho rahe hain..."):
+                    out, preview, count, sheets_summary = convert_vc_to_sc(vc_file, sc_template, ctx)
+                if out:
+                    parent_cnt = sum(1 for r in preview if r.get('Parentage Level') == 'Parent')
+                    child_cnt = sum(1 for r in preview if r.get('Parentage Level') == 'Child')
+                    merged_dups = sum(s.get('Duplicate/Blank Rows Merged', 0) for s in sheets_summary)
+                    st.success(
+                        f"🎉 Conversion complete! Total **{len(sheets_summary)} VC Sheets** se **{count}** rows `Template` sheet me fill hui "
+                        f"(**{parent_cnt} Parent** rows + **{child_cnt} Unique Child** rows | **{merged_dups} Duplicate/Blank rows** automatically merge & clean ki gayi)."
+                    )
+                    if sheets_summary:
+                        st.markdown("##### 📊 Scanned Vendor Central Sheets, Deduplication & Assigned Product Types")
+                        st.dataframe(sheets_summary, use_container_width=True)
+                    if preview:
+                        st.markdown("##### 📋 Converted Seller Central Rows Preview")
+                        st.dataframe(preview, use_container_width=True)
+                    base_name, orig_ext = os.path.splitext(sc_template.name)
+                    out_ext = orig_ext if orig_ext.lower() in ['.xlsm', '.xlsx'] else '.xlsx'
+                    out_name = f"{base_name}_Converted{out_ext}"
+                    out_mime = (
+                        "application/vnd.ms-excel.sheet.macroEnabled.12"
+                        if out_ext.lower() == '.xlsm'
+                        else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                    st.download_button(
+                        "📥 Download Converted Seller Central File",
+                        data=out,
+                        file_name=out_name,
+                        mime=out_mime,
+                    )
+                else:
+                    st.error("VC file ki kisi bhi sheet me koi data row nahi mili.")
+            except Exception as e:
+                st.error(f"Conversion error: {e}")
+                with st.expander("🔍 Technical details"):
+                    st.code(traceback.format_exc())
+
+else:
+    st.subheader(f"4. {marketplace} Template Upload & Generate")
+    uploaded_file = st.file_uploader(
+        f"Apni {marketplace} Excel Template (.xlsx ya .xlsm) Upload Karein:",
+        type=["xlsx", "xlsm"]
+    )
+
+    if uploaded_file and st.button("🚀 Generate Listing File"):
+        if not detected_folders:
+            st.error("Kripya ZIP file upload karein ya SKUs list enter karein!")
+        else:
+            ctx = build_ctx()
+            v_enabled = st.session_state.get('vision_enabled', True)
+
+            if v_enabled and zip_images_data and not ctx['vision_results']:
+                with st.spinner("🤖 AI Vision: Fabric, Sleeves, Pattern aur Color scan ho raha hai (Gemini ➜ NVIDIA ➜ Groq)..."):
+                    auto_results, auto_failed = run_vision_detection(zip_images_data)
+                    ctx['vision_results'] = auto_results
+                    st.session_state['vision_results'] = auto_results
+                if auto_results:
+                    st.success(f"🤖 AI Vision: {len(auto_results)} SKUs accurately auto-detected!" +
+                               (f" | Fallback used for: {', '.join(auto_failed)}" if auto_failed else ""))
+                    st.dataframe([
+                        {
+                            'SKU': k, 
+                            'Engine': v.get('ai_source'),
+                            'Gender': v.get('gender'), 
+                            'Category': v.get('category'), 
+                            'Color': v.get('color'),
+                            'Fabric': v.get('material'), 
+                            'Sleeve': v.get('sleeve_length'), 
+                            'Pattern': v.get('pattern')
+                        }
+                        for k, v in auto_results.items()
+                    ], use_container_width=True)
+                else:
+                    st.warning("🤖 AI se result nahi mila — Python intelligence use hoga.")
+            elif not v_enabled and zip_images_data:
+                st.info("⬜ AI Vision OFF hai — Python intelligence se file ban rahi hai.")
+
+            if auto_cdn_upload:
+                with st.spinner("Images ko live CDN par upload kiya ja raha hai..."):
+                    progress = st.progress(0.0)
+                    total = sum(len(v) for v in zip_images_data.values())
+                    if 'bytes' in detected_size_chart_info:
+                        total += 1
+                    done = 0
+                    if 'bytes' in detected_size_chart_info:
+                        ctx['size_chart_cdn_url'] = upload_to_imgbb_cached(
+                            detected_size_chart_info['bytes'], IMGBB_PERMANENT_KEY, img_cache)
+                        done += 1
+                        progress.progress(min(done / max(total, 1), 1.0))
+                    for fld, img_tuples in zip_images_data.items():
+                        ctx['live_links_cache'][fld] = []
+                        for img_name, img_bytes in img_tuples:
+                            cdn_url = upload_to_imgbb_cached(img_bytes, IMGBB_PERMANENT_KEY, img_cache)
+                            if cdn_url:
+                                ctx['live_links_cache'][fld].append(cdn_url)
+                            done += 1
+                            progress.progress(min(done / max(total, 1), 1.0))
+                    progress.empty()
+
+            try:
+                out, preview, added, extra = None, [], 0, None
+
+                if marketplace == "Ajio":
+                    out, preview, added, extra = run_ajio(uploaded_file, ctx)
+                    st.success(f"🎉 Ajio template filled! Total {added} variants | Sheets: {', '.join(extra)}")
+                    out_name = f"AJIO_MULTI_CATEGORY_LISTED.{'xlsm' if uploaded_file.name.lower().endswith('.xlsm') else 'xlsx'}"
+
+                elif marketplace == "Amazon - Vendor Central":
+                    out, preview, added = run_vendor_central(uploaded_file, ctx)
+                    st.success(f"🎉 Amazon Vendor Central template filled! Total {added} variants.")
+                    st.info("ℹ️ **Product Type column blank rakha gaya hai** — aap template me dropdown se manually select kar lena.")
+                    out_name = uploaded_file.name
+
+                elif marketplace == "Amazon - Seller Central":
+                    out, preview, added = run_seller_central(uploaded_file, ctx)
+                    st.success(f"🎉 Amazon Seller Central template (`Template` sheet) filled! Total {added} rows (Parent + Child).")
+                    out_name = uploaded_file.name
+
+                elif marketplace in ["Flipkart", "Meesho", "Myntra"]:
+                    out, preview, added = run_generic_marketplace(uploaded_file, ctx, marketplace)
+                    st.success(f"🎉 {marketplace} template filled! Total {added} variants.")
+                    out_name = uploaded_file.name
+
+                if out:
+                    if preview:
+                        st.dataframe(preview, use_container_width=True)
+                    out_mime = (
+                        "application/vnd.ms-excel.sheet.macroEnabled.12"
+                        if str(out_name).lower().endswith('.xlsm')
+                        else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                    st.download_button("📥 Download Filled File", data=out, file_name=out_name,
+                                       mime=out_mime)
+            except ValueError as ve:
+                st.error(str(ve))
+            except Exception as e:
+                st.error(f"Processing error: {e}")
+                with st.expander("🔍 Technical details"):
+                    st.code(traceback.format_exc())
