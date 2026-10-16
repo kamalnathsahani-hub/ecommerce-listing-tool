@@ -888,9 +888,7 @@ with c_b1:
         "Sizes Preset Chunein (Choose Size Format):",
         [
             "Alpha Sizes (S, M, L, XL, 2XL)",
-            "Extended Alpha (XS, S, M, L, XL, 2XL)",
             "Numeric / Waist Sizes (28, 30, 32, 34, 36, 38)",
-            "Custom"
         ],
         index=0
     )
