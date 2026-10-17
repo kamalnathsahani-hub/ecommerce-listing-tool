@@ -12,6 +12,7 @@ import hashlib
 import difflib
 import traceback
 import requests
+import colorsys
 from datetime import datetime
 from PIL import Image
 
@@ -19,7 +20,7 @@ st.set_page_config(page_title="Multi-Marketplace Auto Listing Generator", layout
 
 if st.button("⬅️ Back to Home"):
     st.switch_page("app.py")
-st.title("📦 Multi-Marketplace Auto Listing Generator (Universal Pro V24 - Unified Dashboard)")
+st.title("📦 Multi-Marketplace Auto Listing Generator (Universal Pro V25 - Unified Dashboard)")
 st.caption("Ajio | Amazon VC | VC➜SC | Amazon SC | Flipkart | Meesho | Myntra + 🤖 AI Vision (Gemini ➜ NVIDIA ➜ Groq Fallback)")
 
 # ======================================================================
@@ -85,8 +86,12 @@ st.divider()
 CONVERT_MODE = marketplace.startswith("Convert:")
 
 # ======================================================================
-# GLOBAL STATE
+# GLOBAL STATE & HIGHLIGHT STYLES
 # ======================================================================
+HIGHLIGHT_FILL = PatternFill(start_color="FFF200", end_color="FFF200", fill_type="solid")
+HIGHLIGHT_FONT = Font(bold=True)
+DESC_MAX_LEN = 200
+
 detected_folders = []
 folder_images_count = {}
 zip_images_data = {}
@@ -309,11 +314,12 @@ def resolve_sleeve_length(clean_style, cat, ctx):
     return "Sleeveless"
 
 # ======================================================================
-# COLOR DETECTION
+# ENHANCED COLOR DETECTION (FOLDER + AI VISION + PIXEL RGB VERIFICATION)
 # ======================================================================
 COMMON_COLORS = [
     "Beige", "LightGrey", "Grey", "DarkGrey", "Black", "Navy", "Blue", "LightBlue", "DarkBlue",
-    "IceBlue", "White", "Off White", "Green", "Olive", "Brown", "Coffee", "Charcoal", "Khaki",
+    "SkyBlue", "IceBlue", "White", "Off White", "Green", "Olive", "Pista", "Sea Green",
+    "Brown", "Coffee", "Charcoal", "Khaki", "Cream", "Tan", "Camel", "Mustard", "Rust",
     "Red", "Maroon", "Yellow", "Orange", "Pink", "Purple", "Lavender", "Wine", "Peach", "Teal"
 ]
 
@@ -325,45 +331,185 @@ STANDARD_COLOR_MAPS = [
 
 COLOR_MISSPELLINGS = {
     'maron': 'Maroon', 'marron': 'Maroon', 'marun': 'Maroon',
-    'mahroon': 'Maroon', 'mehroon': 'Maroon', 'meroon': 'Maroon',
-    'greay': 'Grey', 'gray': 'Grey', 'gery': 'Grey', 'grrey': 'Grey',
-    'begie': 'Beige', 'baige': 'Beige', 'beigh': 'Beige',
-    'blak': 'Black', 'blackk': 'Black',
-    'wite': 'White', 'whit': 'White', 'whiet': 'White',
-    'offwhite': 'Off White', 'ofwhite': 'Off White',
-    'blu': 'Blue', 'bleu': 'Blue', 'navi': 'Navy',
-    'chochlate': 'Brown', 'cofee': 'Coffee',
-    'yello': 'Yellow', 'orenge': 'Orange', 'orang': 'Orange',
-    'pinke': 'Pink', 'gren': 'Green', 'oliv': 'Olive',
+    'mahroon': 'Maroon', 'mehroon': 'Maroon', 'meroon': 'Maroon', 'mrn': 'Maroon',
+    'greay': 'Grey', 'gray': 'Grey', 'gery': 'Grey', 'grrey': 'Grey', 'gry': 'Grey',
+    'begie': 'Beige', 'baige': 'Beige', 'beigh': 'Beige', 'biege': 'Beige',
+    'bieg': 'Beige', 'beig': 'Beige', 'beg': 'Beige', 'badami': 'Beige', 'chiku': 'Beige', 'chikoo': 'Beige',
+    'blak': 'Black', 'blackk': 'Black', 'blk': 'Black', 'blck': 'Black',
+    'wite': 'White', 'whit': 'White', 'whiet': 'White', 'wht': 'White',
+    'offwhite': 'Off White', 'ofwhite': 'Off White', 'crm': 'Cream',
+    'blu': 'Blue', 'bleu': 'Blue', 'bule': 'Blue', 'bluu': 'Blue',
+    'lblu': 'LightBlue', 'dblu': 'DarkBlue', 'sblu': 'SkyBlue', 'iblu': 'IceBlue',
+    'navi': 'Navy', 'nvy': 'Navy', 'navyblue': 'Navy',
+    'chochlate': 'Brown', 'cofee': 'Coffee', 'brn': 'Brown', 'cfe': 'Coffee',
+    'yello': 'Yellow', 'ylw': 'Yellow', 'orenge': 'Orange', 'orang': 'Orange', 'orn': 'Orange',
+    'pinke': 'Pink', 'pnk': 'Pink', 'gren': 'Green', 'grn': 'Green',
+    'oliv': 'Olive', 'olv': 'Olive', 'khakhi': 'Khaki', 'khk': 'Khaki',
+    'lavendar': 'Lavender', 'lav': 'Lavender', 'prp': 'Purple', 'chr': 'Charcoal',
 }
 
-def detect_color(text):
-    text_clean = str(text).replace('-', ' ').replace('_', ' ').lower()
+def extract_explicit_color_from_text(text):
+    """
+    Returns an explicit color name ONLY if the folder/SKU name clearly contains a color word
+    or known color misspelling/abbreviation. Returns None if no color token is present.
+    """
+    if not text:
+        return None
+    text_clean = re.sub(r'[^a-zA-Z\s]', ' ', str(text)).lower()
     words = [w for w in text_clean.split() if w]
     joined = ''.join(words)
+
+    # 1. Exact multi-word or single-word color match on word boundaries
     for col in sorted(COMMON_COLORS, key=len, reverse=True):
         cl = col.lower()
-        if cl in text_clean or cl.replace(' ', '') in joined:
+        if ' ' in cl and cl in text_clean:
+            return col
+        if cl in words or cl.replace(' ', '') in words:
+            return col
+
+    # 2. Known misspellings & abbreviations on word boundaries
+    for key in sorted(COLOR_MISSPELLINGS, key=len, reverse=True):
+        if key in words:
+            return COLOR_MISSPELLINGS[key]
+
+    # 3. Substring check for compound tokens (e.g. "101black", "kurti_beige", "navyblue")
+    for col in sorted(COMMON_COLORS, key=len, reverse=True):
+        cl_nospace = col.lower().replace(' ', '')
+        if len(cl_nospace) >= 4 and cl_nospace in joined:
             return col
     for key in sorted(COLOR_MISSPELLINGS, key=len, reverse=True):
-        if key in words or key == joined:
+        if len(key) >= 4 and key in joined:
             return COLOR_MISSPELLINGS[key]
+
+    # 4. High-confidence fuzzy match on individual words >= 4 chars
     color_lowers = [c.lower() for c in COMMON_COLORS]
     for w in words:
         if len(w) < 4:
             continue
-        close = difflib.get_close_matches(w, color_lowers, n=1, cutoff=0.75)
+        close = difflib.get_close_matches(w, color_lowers, n=1, cutoff=0.82)
         if close:
             for col in COMMON_COLORS:
                 if col.lower() == close[0]:
                     return col
+    return None
+
+def analyze_image_dominant_color(image_bytes):
+    """
+    Inspects center garment pixels (cropping out studio borders/background) to estimate
+    the dominant garment color in RGB/HSV space. Prevents false 'Pink' classification on
+    Blue, Black, Beige, Grey, White, Navy, Olive, or Brown garments.
+    """
+    if not image_bytes:
+        return None
+    try:
+        img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+        w, h = img.size
+        # Focus on the central 50% width x 55% height where the garment torso/body sits
+        crop_box = (int(w * 0.25), int(h * 0.22), int(w * 0.75), int(h * 0.77))
+        cropped = img.crop(crop_box).resize((60, 60))
+        pixels = list(cropped.getdata())
+
+        # Estimate background color from outer corners of original image
+        corners = [
+            img.getpixel((2, 2)), img.getpixel((w - 3, 2)),
+            img.getpixel((2, h - 3)), img.getpixel((w - 3, h - 3))
+        ]
+        bg_r = sum(c[0] for c in corners) / 4.0
+        bg_g = sum(c[1] for c in corners) / 4.0
+        bg_b = sum(c[2] for c in corners) / 4.0
+
+        votes = {}
+        for r, g, b in pixels:
+            # Skip pixels very close to background
+            if abs(r - bg_r) + abs(g - bg_g) + abs(b - bg_b) < 35 and (r > 220 and g > 220 and b > 220):
+                continue
+            rf, gf, bf = r / 255.0, g / 255.0, b / 255.0
+            hue, sat, val = colorsys.rgb_to_hsv(rf, gf, bf)
+            h_deg = hue * 360.0
+
+            # Skip likely skin-tone pixels (warm peach/tan range with moderate saturation)
+            if 12 <= h_deg <= 38 and 0.22 <= sat <= 0.58 and 0.45 <= val <= 0.92 and r > g > b and (r - g) > 18:
+                continue
+
+            if val < 0.20:
+                cname = "Black"
+            elif sat < 0.12:
+                if val > 0.85:
+                    cname = "White"
+                elif val > 0.60:
+                    cname = "LightGrey"
+                elif val > 0.35:
+                    cname = "Grey"
+                else:
+                    cname = "Black"
+            elif 22 <= h_deg <= 52 and sat < 0.42 and val >= 0.62:
+                cname = "Beige"
+            elif 15 <= h_deg <= 45 and val < 0.62:
+                cname = "Brown"
+            elif 185 <= h_deg <= 255:
+                if val < 0.38:
+                    cname = "Navy"
+                elif val > 0.78 and sat < 0.45:
+                    cname = "LightBlue"
+                else:
+                    cname = "Blue"
+            elif 68 <= h_deg < 165:
+                cname = "Olive" if (h_deg < 105 and val < 0.65) else "Green"
+            elif 165 <= h_deg < 185:
+                cname = "Teal"
+            elif 52 < h_deg < 68:
+                cname = "Yellow"
+            elif 15 <= h_deg < 22:
+                cname = "Orange"
+            elif 255 < h_deg <= 295:
+                cname = "Lavender" if val > 0.75 else "Purple"
+            elif h_deg > 295 or h_deg < 15:
+                if val < 0.48:
+                    cname = "Maroon"
+                elif sat > 0.62 and h_deg < 12:
+                    cname = "Red"
+                else:
+                    cname = "Pink"
+            else:
+                cname = "Black"
+
+            votes[cname] = votes.get(cname, 0) + 1
+
+        if not votes:
+            return None
+        return max(votes.items(), key=lambda x: x[1])[0]
+    except Exception:
+        return None
+
+def detect_color(text, image_bytes=None):
+    explicit = extract_explicit_color_from_text(text)
+    if explicit:
+        return explicit
+    if image_bytes:
+        px_col = analyze_image_dominant_color(image_bytes)
+        if px_col:
+            return px_col
     return "Black"
 
-def resolve_color(raw_fld, clean_style, ctx):
+def resolve_color(raw_fld, clean_style, ctx, image_bytes=None):
+    # 1. Explicit color in folder/SKU name always takes highest priority
+    explicit = extract_explicit_color_from_text(raw_fld) or extract_explicit_color_from_text(clean_style)
+    if explicit:
+        return explicit
+
+    # 2. Check AI Vision detected color, cross-checked with pixel analysis if AI says Pink
     vr = ctx.get('vision_results') or {}
-    if (vr.get(clean_style) or {}).get('color'):
-        return vr[clean_style]['color']
-    return detect_color(raw_fld)
+    ai_col = (vr.get(clean_style) or {}).get('color')
+    if ai_col:
+        ai_canon = _canonicalize_color(ai_col)
+        if image_bytes and str(ai_canon).lower() in ('pink', 'lightpink', 'rose', 'peach'):
+            px_col = analyze_image_dominant_color(image_bytes)
+            if px_col and px_col.lower() not in ('pink', 'red', 'maroon', 'peach'):
+                return px_col
+        return ai_canon
+
+    # 3. Fallback to pixel analysis or default
+    return detect_color(raw_fld, image_bytes=image_bytes)
 
 COLOR_FAMILY_MAP = {
     'maroon': 'Red', 'mehroon': 'Red', 'red': 'Red', 'wine': 'Red',
@@ -375,7 +521,7 @@ COLOR_FAMILY_MAP = {
     'lightgrey': 'Grey', 'darkgrey': 'Grey', 'smoke': 'Grey', 'silver': 'Silver',
     'white': 'White', 'offwhite': 'Off White', 'cream': 'White', 'ivory': 'White',
     'green': 'Green', 'olive': 'Green', 'mint': 'Green', 'darkgreen': 'Green',
-    'lightgreen': 'Green', 'parrotgreen': 'Green',
+    'lightgreen': 'Green', 'parrotgreen': 'Green', 'pista': 'Green', 'seagreen': 'Green',
     'brown': 'Brown', 'coffee': 'Brown', 'tan': 'Brown', 'chocolate': 'Brown',
     'camel': 'Brown', 'darkbrown': 'Brown', 'lightbrown': 'Brown',
     'beige': 'Beige', 'khaki': 'Beige', 'sand': 'Beige',
@@ -388,6 +534,9 @@ COLOR_FAMILY_MAP = {
 def _canonicalize_color(name):
     if not name:
         return name
+    explicit = extract_explicit_color_from_text(name)
+    if explicit:
+        return explicit
     raw = str(name).strip().lower().replace('-', ' ').replace('_', ' ')
     words = raw.split()
     joined = ''.join(words)
@@ -396,7 +545,7 @@ def _canonicalize_color(name):
             return COLOR_MISSPELLINGS[key]
     for w in words:
         if len(w) >= 4:
-            close = difflib.get_close_matches(w, [c.lower() for c in COMMON_COLORS], n=1, cutoff=0.75)
+            close = difflib.get_close_matches(w, [c.lower() for c in COMMON_COLORS], n=1, cutoff=0.78)
             if close:
                 for col in COMMON_COLORS:
                     if col.lower() == close[0]:
@@ -486,7 +635,6 @@ SC_PRODUCT_TYPE = {
     'kurta': 'KURTA', 'skirt': 'SKIRT', 'apparel': 'SHIRT',
 }
 
-# Candidate priority lists per category for matching Seller Central Product Type dropdowns
 SC_PRODUCT_TYPE_CANDIDATES = {
     'co-ord set': ['SUIT', 'APPAREL_SET', 'COORDINATED_OUTFIT', 'OUTFIT_SET', 'SALWAR_SUIT_SET', 'TRACK_SUIT', 'DRESS', 'KURTA', 'SHIRT', 'TOP'],
     'kurti': ['KURTA', 'TUNIC', 'SHIRT', 'TOP', 'DRESS', 'SALWAR_SUIT_SET'],
@@ -509,13 +657,6 @@ SC_PRODUCT_TYPE_CANDIDATES = {
 }
 
 def resolve_sc_product_type_for_row(ws_sc, sc_prod_type_col, raw_prod_type="", sheet_name="", item_type="", model_name="", item_name=""):
-    """
-    Resolves the best Seller Central Product Type using:
-    1. Existing VC Product Type (if present in the VC row)
-    2. VC Sheet Name (e.g. Jeans, Shirt, Sweatshirt, Co-ord, Kurti, etc.)
-    3. Row attributes (Item Type Name, Model Name, Item Name)
-    And matches it against the actual dropdown options in the blank Seller Central template.
-    """
     options = get_dropdown_options_for_column(ws_sc, sc_prod_type_col) if sc_prod_type_col else None
     norm_opts = {}
     if options:
@@ -524,7 +665,6 @@ def resolve_sc_product_type_for_row(ws_sc, sc_prod_type_col, raw_prod_type="", s
             if no and no not in norm_opts:
                 norm_opts[no] = o
 
-    # 1. If VC row already had an explicit Product Type, try matching it directly first
     if raw_prod_type and str(raw_prod_type).strip():
         rp = str(raw_prod_type).strip()
         if not options:
@@ -533,7 +673,6 @@ def resolve_sc_product_type_for_row(ws_sc, sc_prod_type_col, raw_prod_type="", s
         if nrp in norm_opts:
             return norm_opts[nrp]
 
-    # 2. Detect category from VC sheet name + item metadata
     cat = detect_product_category(
         folder_name=f"{sheet_name} {item_type} {model_name}",
         user_keywords=str(item_name or ""),
@@ -544,29 +683,24 @@ def resolve_sc_product_type_for_row(ws_sc, sc_prod_type_col, raw_prod_type="", s
     if default_pt not in candidates:
         candidates.insert(0, default_pt)
 
-    # Also check if sheet_name itself directly matches one of the dropdown options
     sheet_clean = re.sub(r'[\s_\-]+', '', str(sheet_name or '').strip().upper())
     if options:
         if sheet_clean:
             if sheet_clean in norm_opts:
                 return norm_opts[sheet_clean]
-            # Singular/plural check on sheet name
             if sheet_clean.rstrip('S') in norm_opts:
                 return norm_opts[sheet_clean.rstrip('S')]
             if (sheet_clean + 'S') in norm_opts:
                 return norm_opts[sheet_clean + 'S']
 
-        # Check candidate list in priority order against available dropdown options
         for cand in candidates:
             nc = re.sub(r'[\s_\-]+', '', cand.upper())
             if nc in norm_opts:
                 return norm_opts[nc]
-            # Partial substring match against dropdown options
             for no, orig_o in norm_opts.items():
                 if nc in no or no in nc:
                     return orig_o
 
-        # Fuzzy fallback via pick_dropdown_value
         return pick_dropdown_value(ws_sc, sc_prod_type_col, default_pt, options[0])
 
     return default_pt
@@ -759,32 +893,39 @@ def extract_json_from_text(text):
         pass
     return None
 
-def get_vision_prompt():
+def get_vision_prompt(folder_hint=""):
     cats = ", ".join(CATEGORY_OPTIONS)
+    hint_line = f'Folder/SKU name hint: "{folder_hint}". If the folder name mentions a color (e.g. Blue, Black, Beige, Grey, Navy, Olive, Brown, Maroon, White, Green), prioritize that exact color.\n' if folder_hint else ""
     return (
-        "You are an expert e-commerce fashion cataloger. Visually inspect this garment image very carefully and output ONLY a valid JSON object without markdown or code formatting.\n"
+        "You are an expert e-commerce fashion cataloger. Visually inspect the MAIN GARMENT worn by the model (ignore background, props, studio lighting warmth, and skin tones) and output ONLY a valid JSON object without markdown or code formatting.\n"
+        + hint_line +
         "Return this exact schema:\n"
         "{\n"
         '  "category": "<One of: ' + cats + '>",\n'
         '  "gender": "<Women or Men>",\n'
-        '  "color": "<Visible dominant garment color: Pink, Maroon, Black, Navy, Grey, Beige, Olive, Khaki, White, Off White, Lavender, Blue, Green, etc.>",\n'
+        '  "color": "<Exact dominant fabric color of the garment: Black, Blue, Navy, LightBlue, DarkBlue, Beige, Grey, LightGrey, DarkGrey, White, Off White, Olive, Green, Brown, Coffee, Khaki, Maroon, Red, Yellow, Orange, Lavender, Purple, Teal, Wine, Pink>",\n'
         '  "pocket": "<Kangaroo Pocket / Cargo Pocket / Five Pocket / Side Pocket / Welt Pocket / Chest Pocket / Slash Pocket / No Pocket>",\n'
         '  "material": "<Visually detected actual fabric/fabric type: Cotton, Cotton Blend, Fleece, Rayon, Polyester, Denim, Crepe, Georgette, Silk, Linen, Knit, etc. Only use Denim if it is real denim jeans/jacket. For women co-ord sets or casual sets, detect Cotton, Rayon, or Cotton Blend accurately>",\n'
         '  "fabric_detail": "<Specific fabric description e.g. 100% Cotton, Pure Cotton, Cotton Blend, Soft Fleece, Poly Cotton, Rayon>",\n'
         '  "sleeve_length": "<Full Sleeve / Long Sleeve / Short Sleeve / 3/4 Sleeve / Half Sleeve / Sleeveless>",\n'
         '  "pattern": "<Solid / Printed / Washed / Striped / Checked / Floral / Self Design>"\n'
         "}\n"
-        "Crucial Rules: Do NOT output Denim unless it is clearly denim material. If it is a 2-piece set or co-ord for women, gender is Women and category is co-ord set."
+        "CRITICAL COLOR ACCURACY RULES:\n"
+        "1. NEVER default to 'Pink' or guess 'Pink' due to warm studio lighting, skin tones, or shadows.\n"
+        "2. Carefully distinguish dark shades (Black, Navy, DarkBlue, Charcoal, DarkGrey, Brown) from each other.\n"
+        "3. Carefully distinguish neutral warm tones (Beige, Cream, Off White, Khaki, Tan, Brown) — do NOT misclassify Beige/Cream/Tan garments as Pink or Peach.\n"
+        "4. Carefully distinguish Blue shades (Blue, Navy, LightBlue, SkyBlue, IceBlue, Teal) — never label a Blue garment as Pink.\n"
+        "5. Only output 'Pink' if the garment fabric itself is unmistakably pink/magenta/rose. Do NOT output Denim unless it is clearly denim material."
     )
 
 # 1. Gemini Vision Call
-def call_gemini_vision(image_bytes, img_name, api_key, model):
+def call_gemini_vision(image_bytes, img_name, api_key, model, folder_hint=""):
     if not api_key or not image_bytes:
         return None
     b64 = base64.b64encode(image_bytes).decode('utf-8')
     payload = {
         "contents": [{"parts": [
-            {"text": get_vision_prompt()},
+            {"text": get_vision_prompt(folder_hint)},
             {"inline_data": {"mime_type": guess_mime(img_name), "data": b64}}
         ]}],
         "generationConfig": {
@@ -806,7 +947,7 @@ def call_gemini_vision(image_bytes, img_name, api_key, model):
     return None
 
 # 2. NVIDIA Vision Call
-def call_nvidia_vision(image_bytes, img_name, api_key, model):
+def call_nvidia_vision(image_bytes, img_name, api_key, model, folder_hint=""):
     if not api_key or not image_bytes:
         return None
     mime = guess_mime(img_name)
@@ -824,12 +965,12 @@ def call_nvidia_vision(image_bytes, img_name, api_key, model):
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": get_vision_prompt()},
+                    {"type": "text", "text": get_vision_prompt(folder_hint)},
                     {"type": "image_url", "image_url": {"url": data_url}}
                 ]
             }
         ],
-        "temperature": 0.2,
+        "temperature": 0.1,
         "max_tokens": 1500
     }
     try:
@@ -843,7 +984,7 @@ def call_nvidia_vision(image_bytes, img_name, api_key, model):
     return None
 
 # 3. Groq Vision Call
-def call_groq_vision(image_bytes, img_name, api_key, model):
+def call_groq_vision(image_bytes, img_name, api_key, model, folder_hint=""):
     if not api_key or not image_bytes:
         return None
     mime = guess_mime(img_name)
@@ -860,7 +1001,7 @@ def call_groq_vision(image_bytes, img_name, api_key, model):
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": get_vision_prompt()},
+                    {"type": "text", "text": get_vision_prompt(folder_hint)},
                     {"type": "image_url", "image_url": {"url": data_url}}
                 ]
             }
@@ -879,16 +1020,16 @@ def call_groq_vision(image_bytes, img_name, api_key, model):
     return None
 
 # Unified Detection with Step-by-Step Fallback (Gemini ➜ NVIDIA ➜ Groq)
-def multi_ai_vision_detect(image_bytes, img_name):
-    res = call_gemini_vision(image_bytes, img_name, GEMINI_API_KEY, GEMINI_VISION_MODEL)
+def multi_ai_vision_detect(image_bytes, img_name, folder_hint=""):
+    res = call_gemini_vision(image_bytes, img_name, GEMINI_API_KEY, GEMINI_VISION_MODEL, folder_hint=folder_hint)
     if res and isinstance(res, dict) and res.get('category'):
         return res, "Gemini"
 
-    res = call_nvidia_vision(image_bytes, img_name, NVIDIA_API_KEY, NVIDIA_MODEL)
+    res = call_nvidia_vision(image_bytes, img_name, NVIDIA_API_KEY, NVIDIA_MODEL, folder_hint=folder_hint)
     if res and isinstance(res, dict) and res.get('category'):
         return res, "NVIDIA"
 
-    res = call_groq_vision(image_bytes, img_name, GROQ_API_KEY, GROQ_VISION_MODEL)
+    res = call_groq_vision(image_bytes, img_name, GROQ_API_KEY, GROQ_VISION_MODEL, folder_hint=folder_hint)
     if res and isinstance(res, dict) and res.get('category'):
         return res, "Groq"
 
@@ -902,17 +1043,37 @@ def canonicalize_ai_category(cat_str):
     close = difflib.get_close_matches(cat, CATEGORY_OPTIONS, n=1, cutoff=0.6)
     return close[0] if close else 'apparel'
 
-def canonicalize_ai_color(col_str):
+def canonicalize_ai_color(col_str, folder_name="", image_bytes=None):
+    # 1. If folder name explicitly has a color (like blue, black, beige), honor it first!
+    explicit_fld = extract_explicit_color_from_text(folder_name)
+    if explicit_fld:
+        return explicit_fld
+
     col = str(col_str or '').strip()
-    if not col:
-        return None
-    canon = str(_canonicalize_color(col))
-    joined = canon.lower().replace(' ', '')
-    for c in COMMON_COLORS:
-        if c.lower().replace(' ', '') == joined:
-            return c
-    words = re.split(r'[\s\-]+', canon)
-    return ' '.join(w.capitalize() for w in words if w)
+    if col:
+        canon = str(_canonicalize_color(col))
+        joined = canon.lower().replace(' ', '')
+        matched_col = None
+        for c in COMMON_COLORS:
+            if c.lower().replace(' ', '') == joined:
+                matched_col = c
+                break
+        if not matched_col:
+            words = re.split(r'[\s\-]+', canon)
+            matched_col = ' '.join(w.capitalize() for w in words if w)
+
+        # Verify against pixel analysis if AI returned Pink/Peach/Rose
+        if image_bytes and matched_col.lower() in ('pink', 'lightpink', 'rose', 'peach'):
+            px_col = analyze_image_dominant_color(image_bytes)
+            if px_col and px_col.lower() not in ('pink', 'red', 'maroon', 'peach'):
+                return px_col
+        return matched_col
+
+    if image_bytes:
+        px_col = analyze_image_dominant_color(image_bytes)
+        if px_col:
+            return px_col
+    return "Black"
 
 def canonicalize_ai_pocket(p_str):
     p = str(p_str or '').strip()
@@ -937,10 +1098,10 @@ def run_vision_detection(zip_images_data):
         img_name, img_bytes = zip_images_data[fld][0]
         status.info(f"🤖 AI analyzing garment image: **{cs}** ({i+1}/{len(folders)})...")
 
-        data, provider = multi_ai_vision_detect(img_bytes, img_name)
+        data, provider = multi_ai_vision_detect(img_bytes, img_name, folder_hint=fld)
         if data:
             cat = canonicalize_ai_category(data.get('category'))
-            col = canonicalize_ai_color(data.get('color'))
+            col = canonicalize_ai_color(data.get('color'), folder_name=fld, image_bytes=img_bytes)
             poc = canonicalize_ai_pocket(data.get('pocket'))
             gen = "Women" if str(data.get('gender')).lower().startswith('w') else "Men"
 
@@ -964,6 +1125,12 @@ def run_vision_detection(zip_images_data):
                 'ai_source': provider
             }
         else:
+            # Even if AI fails, use folder explicit color + pixel dominant color fallback
+            fallback_col = detect_color(fld, image_bytes=img_bytes)
+            results[cs] = {
+                'color': fallback_col,
+                'ai_source': 'Pixel/Folder-Fallback'
+            }
             failed.append(cs)
         time.sleep(0.3)
         progress.progress(min((i + 1) / len(folders), 1.0))
@@ -972,8 +1139,16 @@ def run_vision_detection(zip_images_data):
     return results, failed
 
 # ======================================================================
-# CONTENT BUILDERS (DYNAMIC GENDER & PRODUCT TYPE)
+# CONTENT BUILDERS (ALL DESCRIPTIONS STRICTLY <= 200 CHARACTERS)
 # ======================================================================
+def _limit_desc_200(text):
+    """Ensures any product description is strictly <= 200 characters without cutting mid-word."""
+    s = re.sub(r'\s+', ' ', str(text or '')).strip()
+    if len(s) <= DESC_MAX_LEN:
+        return s
+    cut = s[:DESC_MAX_LEN].rsplit(' ', 1)[0].rstrip('.,;:- ')
+    return (cut + '.') if len(cut) < DESC_MAX_LEN else s[:DESC_MAX_LEN]
+
 def _user_kw_list(user_kw):
     if not user_kw:
         return []
@@ -1036,8 +1211,7 @@ def build_freehand_bullets_and_desc(cat, brand, gender="Women", det_mat="Cotton 
             "COMFORTABLE ERGONOMIC FIT: Tailored cut provides ease of movement and all-day flattering drape.",
             "WASH & CARE: Easy gentle machine wash cold with similar colors. Do not bleach. Warm iron if required."
         ]
-        desc = (f"Upgrade your wardrobe with this stylish {b_prefix}{g_str} {cat_label}. "
-                f"Crafted from premium quality {det_mat}, it delivers an ideal mix of contemporary style and snug comfort for daily wear.")
+        desc = f"Upgrade your wardrobe with this stylish {b_prefix}{g_str} {cat_label}. Crafted from breathable {det_mat} for modern style and all-day comfort."
     elif cat in ['hoodie', 'sweatshirt']:
         bullets = [
             f"PREMIUM SOFT FLEECE FABRIC: Made from high-grade, breathable {det_mat} that keeps you warm, cozy, and comfortable throughout the day.",
@@ -1046,8 +1220,7 @@ def build_freehand_bullets_and_desc(cat, brand, gender="Women", det_mat="Cotton 
             "VERSATILE EVERYDAY WEAR: Effortlessly pairs with jeans, cargo pants, joggers, and sneakers for casual outings and winter styling.",
             "WASH & CARE: Easy machine wash cold with similar colors inside out. Do not bleach. Warm iron if required."
         ]
-        desc = (f"Upgrade your wardrobe with this stylish {b_prefix}{g_str} {cat_label}. "
-                f"Crafted from premium quality {det_mat}, it delivers an ideal mix of modern style and snug comfort for daily wear.")
+        desc = f"Upgrade your wardrobe with this stylish {b_prefix}{g_str} {cat_label}. Crafted from soft {det_mat} for modern style and cozy daily comfort."
     elif cat == 'cargo':
         bullets = [
             f"DURABLE UTILITY FABRIC: Tailored from rugged, breathable {det_mat} designed for active mobility and long-lasting durability.",
@@ -1056,8 +1229,7 @@ def build_freehand_bullets_and_desc(cat, brand, gender="Women", det_mat="Cotton 
             "IDEAL FOR CASUAL & OUTDOOR WEAR: Perfect for travel, hangouts, and pairing with oversized tees, hoodies, or boots.",
             "WASH & CARE: Machine wash cold inside out. Tumble dry low. Do not bleach. Warm iron if needed."
         ]
-        desc = (f"Experience peak comfort and utility with the {b_prefix}{g_str} {cat_label}. "
-                f"Engineered with reinforced stitching and high-strength fabric for an active, stylish lifestyle.")
+        desc = f"Experience comfort and utility with {b_prefix}{g_str} {cat_label}. Made from durable {det_mat} with multi-pocket styling for everyday wear."
     elif cat == 'jeans':
         bullets = [
             f"COMFORT STRETCH DENIM: Crafted from premium stretchable {det_mat} denim for flexible mobility and all-day ease.",
@@ -1066,8 +1238,7 @@ def build_freehand_bullets_and_desc(cat, brand, gender="Women", det_mat="Cotton 
             "TIMELESS RELAXED CUT: Sits comfortably at the waist with an authentic silhouette suitable for daily college and office casuals.",
             "WASH & CARE: Machine wash cold inside out with similar colors. Do not bleach. Warm iron if required."
         ]
-        desc = (f"Step out in confidence with the {b_prefix}{g_str} {cat_label}. "
-                f"Designed with durable stretch denim, it combines all-day flexibility with an elevated, versatile everyday look.")
+        desc = f"Step out in style with {b_prefix}{g_str} {cat_label}. Crafted from stretchable {det_mat} for all-day flexibility and a classic casual look."
     else:
         bullets = [
             f"HIGH-QUALITY COMFORT FABRIC: Crafted from premium {det_mat} engineered for soft skin feel and long-lasting daily wear.",
@@ -1076,48 +1247,35 @@ def build_freehand_bullets_and_desc(cat, brand, gender="Women", det_mat="Cotton 
             "VERSATILE CASUAL PAIRING: Complements casual sneakers and daily wardrobe essentials for an easy, elevated style statement.",
             "WASH & CARE: Machine wash cold with like colors inside out. Do not bleach. Warm iron if required."
         ]
-        desc = (f"Upgrade your daily rotation with the {b_prefix}{g_str} {cat_label}. "
-                f"Engineered with premium fabric, it delivers the perfect balance of everyday durability and contemporary comfort.")
-    return bullets, desc
+        desc = f"Upgrade your daily rotation with {b_prefix}{g_str} {cat_label}. Crafted from premium {det_mat} for lasting durability and everyday comfort."
+    return bullets, _limit_desc_200(desc)
 
 def build_ajio_seo_content(cat, user_keywords="", gender="Women", mat_val="Cotton Blend"):
-    kw_str = user_keywords if user_keywords else "casual streetwear, relaxed fit, durable quality, all-day comfort"
+    kw_str = user_keywords if user_keywords else "relaxed fit, all-day comfort"
     cat_label = CATEGORY_LABELS.get(cat, 'Apparel')
     g_title = "Women's" if gender == "Women" else "Men's"
 
     if cat == 'co-ord set':
-        desc = (f"{g_title} Co-ord Set - Designed for effortless chic look and supreme comfort, this {g_title} Co-ord Set "
-                f"is crafted from premium breathable {mat_val} fabric. Engineered with {kw_str}. "
-                "Features matching top and bottom silhouette with comfortable flexi waist and neat seam finish. "
-                "Perfect for daily casuals, travel, vacations, and relaxed outings.")
+        desc = f"{g_title} Co-ord Set in breathable {mat_val} fabric. Features a matching top and bottom with {kw_str} for chic daily and travel wear."
         highlight = f"Premium {mat_val} fabric | Comfortable {g_title.lower()} fit | Elegant matching 2-piece set | Relaxed styling | Easy machine wash"
         add_info = "Styling Tip: Pair with minimal jewelry and slip-ons. Wash Care: Machine wash cold with similar colors."
     elif cat == 'cargo':
-        desc = (f"CARGO FOR {gender.upper()} - Designed for unmatched utility and streetwear style, this {g_title} Cargo Pants "
-                f"is crafted from premium breathable {mat_val} fabric. Engineered with {kw_str}. "
-                "Features multiple spacious flap cargo pockets, a comfortable flexi waist with sturdy button closure, "
-                "and durable reinforced stitching throughout. Perfect for everyday wear, outdoor adventures, and travel.")
+        desc = f"{g_title} Cargo Pants in durable {mat_val} fabric. Features utility flap pockets, flexi waist, and {kw_str} for casual outdoor wear."
         highlight = f"Premium breathable {mat_val} fabric | Comfortable flexi waist | Multi-pocket functional cargo utility styling | Relaxed fit | Easy machine wash"
         add_info = "Styling Tip: Pair with oversized t-shirts, hoodies, and chunky sneakers. Wash Care: Machine wash cold with similar colors."
     elif cat == 'jeans':
-        desc = (f"Upgrade your everyday denim rotation with this trendy {g_title} Jeans. "
-                f"Crafted from premium stretchable denim engineered with {kw_str}. "
-                "Featuring a contemporary mid-rise relaxed fit, functional 5-pocket styling, sturdy zip fly, and authentic washed finish. "
-                "Ideal for casual outings, daily wear, and weekend hangouts.")
+        desc = f"Trendy {g_title} Jeans in stretch denim with {kw_str}. Features a mid-rise relaxed fit, 5-pocket styling, and clean washed finish."
         highlight = "Premium stretch denim | Relaxed mid-rise silhouette | Authentic clean washed finish | Multi-pocket utility styling | All-season wear"
         add_info = "Styling Tip: Pair with casual shirts or boxy tees. Wash Care: Machine wash cold inside out."
     elif cat in ['hoodie', 'sweatshirt']:
-        desc = (f"Stay warm and stylish with this {g_title} Hoodie/Sweatshirt crafted from premium soft {mat_val} fabric. "
-                f"Engineered with {kw_str}. Features a functional hood with durable drawstrings, spacious kangaroo pocket, "
-                "and ribbed cuffs for a snug fit. Perfect for winter layering, travel, and everyday streetwear.")
+        desc = f"Warm {g_title} {cat_label} in soft {mat_val} fabric with {kw_str}. Features hood, kangaroo pocket, and ribbed cuffs for streetwear style."
         highlight = f"Premium soft {mat_val} fabric | Functional hood with drawstrings | Spacious kangaroo pocket | Ribbed cuffs | Machine washable"
         add_info = "Styling Tip: Layer over tees with jeans or joggers. Wash Care: Machine wash cold inside out."
     else:
-        desc = (f"{g_title} {cat_label} crafted from premium quality {mat_val} fabric featuring {kw_str}. "
-                "Designed for maximum comfort, durability, and everyday style. Easy to pair and easy to care.")
+        desc = f"{g_title} {cat_label} crafted from breathable {mat_val} fabric featuring {kw_str} for lasting comfort, durability, and everyday style."
         highlight = f"Premium {mat_val} fabric | Comfortable {g_title.lower()} fit | Durable stitching | Easy machine wash"
         add_info = "Wash Care: Machine wash cold with like colors. Do not bleach."
-    return desc[:950], highlight[:500], add_info[:500]
+    return _limit_desc_200(desc), highlight[:500], add_info[:500]
 
 # ======================================================================
 # WORKBOOK HELPERS
@@ -1207,9 +1365,10 @@ def find_sheet_for_category(wb, category):
 
 def run_ajio(uploaded_file, ctx):
     wb = load_workbook_clean(uploaded_file, uploaded_file.name)
-    mrp_fill = PatternFill(start_color="FFF200", end_color="FFF200", fill_type="solid")
-    mrp_font = Font(bold=True)
-    season_year = str(datetime.now().year + 1)
+    mrp_fill = HIGHLIGHT_FILL
+    mrp_font = HIGHLIGHT_FONT
+    # Always use current year
+    season_year = str(datetime.now().year)
 
     category_folders = {}
     for raw_folder in ctx['folders']:
@@ -1370,7 +1529,8 @@ def run_ajio(uploaded_file, ctx):
                 except Exception:
                     w_val, tf_val = "34", "32"
 
-                aset(ws, curr_r, col_style, clean_style)
+                # Highlight Style Code in Ajio format (manual change required)
+                aset(ws, curr_r, col_style, clean_style, fill=HIGHLIGHT_FILL, font=HIGHLIGHT_FONT)
                 aset(ws, curr_r, col_desc, desc_text)
                 aset(ws, curr_r, col_sku, full_sku)
                 aset(ws, curr_r, col_brand, ctx['brand'])
@@ -1479,8 +1639,8 @@ def run_vendor_central(uploaded_file, ctx):
 
     today_str = datetime.now().strftime("%Y-%m-%d")
     today_shipping = datetime.now().strftime("%Y%m%d")
-    mrp_fill = PatternFill(start_color="FFF200", end_color="FFF200", fill_type="solid")
-    mrp_font = Font(bold=True)
+    mrp_fill = HIGHLIGHT_FILL
+    mrp_font = HIGHLIGHT_FONT
     material_fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")
     added, preview = 0, []
 
@@ -1562,9 +1722,10 @@ def run_vendor_central(uploaded_file, ctx):
             c_part = get_vc_col(['part number'], ['part_number#1.value'])
             if c_part:
                 ws.cell(curr_r, c_part).value = full_sku
+            # Highlight Model Name in Amazon Vendor Central format
             c_mod_name = get_vc_col(['model name'], ['model_name#1.value'])
             if c_mod_name:
-                ws.cell(curr_r, c_mod_name).value = f"{cat.capitalize()} {clean_style}"
+                vset(c_mod_name, f"{cat.capitalize()} {clean_style}", highlight=HIGHLIGHT_FILL, bold=True)
 
             c_mfg = get_vc_col(['manufacturer'], ['manufacturer#1.value'])
             if c_mfg:
@@ -1648,7 +1809,7 @@ def run_vendor_central(uploaded_file, ctx):
 
             c_desc = get_vc_col(['product description'], ['rtip_product_description#1.value'])
             if c_desc:
-                ws.cell(curr_r, c_desc).value = desc_text
+                ws.cell(curr_r, c_desc).value = _limit_desc_200(desc_text)
 
             c_cmap = get_vc_col(['color map'], ['color#1.standardized_values#1'])
             if c_cmap:
@@ -2054,8 +2215,8 @@ def run_seller_central(uploaded_file, ctx):
         curr_r += 1
 
     today_str = datetime.now().strftime("%Y-%m-%d")
-    mrp_fill = PatternFill(start_color="FFF200", end_color="FFF200", fill_type="solid")
-    mrp_font = Font(bold=True)
+    mrp_fill = HIGHLIGHT_FILL
+    mrp_font = HIGHLIGHT_FONT
     material_fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")
 
     action_val = "Create or Replace (Full Update)"
@@ -2130,7 +2291,7 @@ def run_seller_central(uploaded_file, ctx):
             for idx_img, c_oi in enumerate(c_other_imgs):
                 if c_oi and idx_img + 1 < len(urls):
                     s_col(c_oi, urls[idx_img + 1])
-            s_col(c_desc, desc_text)
+            s_col(c_desc, _limit_desc_200(desc_text))
             for idx_b, c_bp in enumerate(c_bullets):
                 if c_bp and idx_b < len(bullets_list):
                     s_col(c_bp, bullets_list[idx_b])
@@ -2219,6 +2380,11 @@ def run_seller_central(uploaded_file, ctx):
             ws.cell(curr_r, c_prod_type).value = ref_cells[c_prod_type]
         if c_parentage:
             ws.cell(curr_r, c_parentage).value = parent_val
+        # Highlight Model Name column in Amazon format
+        if c_mod_name:
+            ws.cell(curr_r, c_mod_name).value = model_sku
+            ws.cell(curr_r, c_mod_name).fill = HIGHLIGHT_FILL
+            ws.cell(curr_r, c_mod_name).font = HIGHLIGHT_FONT
         parent_title = ""
         if c_title:
             child_title = ref_cells.get(c_title, '')
@@ -2247,8 +2413,12 @@ def run_seller_central(uploaded_file, ctx):
             ws.cell(curr_r, c_parentage).value = child_val
         if c_parent_sku and model_str:
             ws.cell(curr_r, c_parent_sku).value = model_str
-        if c_mod_name and model_str:
-            ws.cell(curr_r, c_mod_name).value = model_str
+        # Highlight Model Name column in Amazon format
+        if c_mod_name:
+            if model_str:
+                ws.cell(curr_r, c_mod_name).value = model_str
+            ws.cell(curr_r, c_mod_name).fill = HIGHLIGHT_FILL
+            ws.cell(curr_r, c_mod_name).font = HIGHLIGHT_FONT
         if c_prod_id_type:
             ws.cell(curr_r, c_prod_id_type).value = asin_type_val
         if c_ship_tpl:
@@ -2347,8 +2517,8 @@ MP_FIELD_CANDIDATES = {
 def run_generic_marketplace(uploaded_file, ctx, mp):
     wb = load_workbook_clean(uploaded_file, uploaded_file.name)
     fields = MP_FIELD_CANDIDATES.get(mp, MP_FIELD_CANDIDATES['Flipkart'])
-    mrp_fill = PatternFill(start_color="FFF200", end_color="FFF200", fill_type="solid")
-    mrp_font = Font(bold=True)
+    mrp_fill = HIGHLIGHT_FILL
+    mrp_font = HIGHLIGHT_FONT
 
     best_ws, best_row, best_score = None, None, -1
     sku_cands = [_norm_h(x) for x in fields['sku']]
@@ -2439,7 +2609,7 @@ def run_generic_marketplace(uploaded_file, ctx, mp):
             W(r, 'sku', full_sku)
             W(r, 'title', title)
             W(r, 'brand', ctx['brand'])
-            W(r, 'description', desc_text)
+            W(r, 'description', _limit_desc_200(desc_text))
             W(r, 'color', color_family_val, dropdown=True)
             W(r, 'size', clean_sz)
             W(r, 'fabric', mat_val, dropdown=True)
@@ -2487,10 +2657,6 @@ IGNORED_AMZ_SHEET_KEYWORDS = (
 )
 
 def _is_valid_vc_listing_sheet(ws):
-    """
-    Checks whether a worksheet in the Vendor Central workbook is a product listing sheet
-    (has SKU/Vendor SKU headers and at least one product data row).
-    """
     sname_low = str(ws.title or '').strip().lower()
     if any(k in sname_low for k in IGNORED_AMZ_SHEET_KEYWORDS):
         return False
@@ -2513,9 +2679,6 @@ def _is_valid_vc_listing_sheet(ws):
     return has_sku_header and has_item_header
 
 def _derive_parent_model_from_sku(sku_str, fallback_prefix=""):
-    """
-    If Model Name is empty in a VC row, derives a clean parent SKU by stripping size suffix.
-    """
     s = str(sku_str or '').strip()
     if not s:
         return fallback_prefix or "PARENT-SKU"
@@ -2523,11 +2686,6 @@ def _derive_parent_model_from_sku(sku_str, fallback_prefix=""):
     return stripped if stripped else s
 
 def _merge_vc_duplicate_cell_maps(existing_cells, new_cells, existing_score, new_score):
-    """
-    Merges two mapped_cells dicts for the same SKU when duplicate rows exist in VC
-    (e.g., one row has only SKU/ASIN and blank details, while another row has full details).
-    Keeps all non-empty values and prioritizes the row with richer data.
-    """
     if new_score > existing_score:
         primary, secondary = new_cells, existing_cells
     else:
@@ -2580,7 +2738,6 @@ def read_vendor_central_records(vc_bytes):
                 if k2 and k2 not in rec:
                     rec[k2] = v
 
-            # Deduplicate & merge by SKU: ignore blank duplicate rows and keep filled values
             if sku_norm not in records_by_sku:
                 records_by_sku[sku_norm] = rec
                 sku_order.append(sku_norm)
@@ -2663,6 +2820,11 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
         sc_key_to_col.get('item_name#1.value')
         or sc_lbl_occ_to_col.get(('item name', 1))
     )
+    sc_desc_col = (
+        sc_key_to_col.get('product_description#1.value')
+        or sc_lbl_occ_to_col.get(('product description', 1))
+        or sc_lbl_occ_to_col.get(('description', 1))
+    )
     sc_prod_id_type_col = (
         sc_key_to_col.get('amzn1.volt.ca.product_id_type')
         or sc_lbl_occ_to_col.get(('product id type', 1))
@@ -2711,13 +2873,10 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
     while curr_r <= ws_sc.max_row and ws_sc.cell(curr_r, sc_sku_col).value not in (None, ''):
         curr_r += 1
 
-    # Discover all valid VC listing sheets (supports 1, 2, 4, 5, or N category sheets)
     vc_listing_sheets = [wb_vc[s] for s in wb_vc.sheetnames if _is_valid_vc_listing_sheet(wb_vc[s])]
     if not vc_listing_sheets:
         vc_listing_sheets = [pick_template_sheet(wb_vc)]
 
-    # Deduplication & Smart Merge store across all VC rows:
-    # If the same SKU appears twice (one blank/partial row + one filled row), merge them into 1 complete row.
     deduped_sku_order = []
     deduped_sku_store = {}
     sheets_summary = []
@@ -2785,7 +2944,6 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
         sheet_raw_rows = 0
         sheet_unique_skus = set()
         sheet_duplicates_merged = 0
-        sheet_detected_pts = set()
 
         for r_vc in range(vc_data_r, ws_vc.max_row + 1):
             sku_val = ws_vc.cell(r_vc, vc_sku_col).value
@@ -2798,7 +2956,6 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
             sheet_raw_rows += 1
             sku_norm_key = sku_str.lower()
 
-            # Count how many actual non-empty cells this VC row has (to identify blank vs filled row)
             non_empty_vc_cells = 0
             for c_chk in range(1, ws_vc.max_column + 1):
                 if ws_vc.cell(r_vc, c_chk).value not in (None, ''):
@@ -2809,7 +2966,7 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
                 val = ws_vc.cell(r_vc, vc_c).value
                 if val not in (None, ''):
                     for sc_c in (sc_cols_list if isinstance(sc_cols_list, list) else [sc_cols_list]):
-                        mapped_cells[sc_c] = val
+                        mapped_cells[sc_c] = _limit_desc_200(val) if sc_c == sc_desc_col else val
 
             if vc_asin_col and sc_prod_id_val_col:
                 asin_val = ws_vc.cell(r_vc, vc_asin_col).value
@@ -2844,7 +3001,6 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
                     'fill_score': non_empty_vc_cells,
                 }
             else:
-                # Duplicate SKU found! Ignore blank fields and merge filled data into a single record
                 sheet_duplicates_merged += 1
                 existing = deduped_sku_store[sku_norm_key]
                 existing['mapped_cells'] = _merge_vc_duplicate_cell_maps(
@@ -2853,13 +3009,11 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
                     existing['fill_score'],
                     non_empty_vc_cells
                 )
-                # If the previous row was blank/missing Model Name and this row has Model Name, adopt it
                 if not custom_parent_override:
                     if has_explicit_model and (not existing['has_explicit_model'] or non_empty_vc_cells > existing['fill_score']):
                         existing['model_str'] = model_str
                         existing['has_explicit_model'] = True
 
-                # Merge raw metadata for accurate Product Type detection
                 if raw_pt_val not in (None, '') and (not existing['raw_pt_val'] or non_empty_vc_cells > existing['fill_score']):
                     existing['raw_pt_val'] = raw_pt_val
                 if raw_itn_val not in (None, '') and (not existing['raw_itn_val'] or non_empty_vc_cells > existing['fill_score']):
@@ -2881,7 +3035,6 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
                 'SC Product Type(s)': "Auto",
             })
 
-    # Finalize deduplicated rows, apply optional price/MRP overrides, and resolve SC Product Type
     vc_rows_data = []
     model_first_child_cells = {}
     sheet_pts_map = {}
@@ -2893,7 +3046,9 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
         mapped_cells = entry['mapped_cells']
         sh_title = entry['sheet_title']
 
-        # Optional UI overrides for Selling Price / MRP if still blank after merging
+        if sc_desc_col and sc_desc_col in mapped_cells:
+            mapped_cells[sc_desc_col] = _limit_desc_200(mapped_cells[sc_desc_col])
+
         if sc_price_col and ctx.get('selling_price') and sc_price_col not in mapped_cells:
             mapped_cells[sc_price_col] = ctx['selling_price']
         if sc_mrp_col and ctx.get('mrp') and sc_mrp_col not in mapped_cells:
@@ -2914,7 +3069,6 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
             sheet_pts_map.setdefault(sh_title, set()).add(str(resolved_pt))
 
         if model_str:
-            # Ensure the parent row inherits from the richest child row in its Model Name group
             if model_str not in model_first_child_cells or len(mapped_cells) > len(model_first_child_cells[model_str]):
                 model_first_child_cells[model_str] = mapped_cells
 
@@ -2976,6 +3130,11 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
             ws_sc.cell(curr_r, sc_prod_type_col).value = ref_cells[sc_prod_type_col]
         if sc_parentage_col:
             ws_sc.cell(curr_r, sc_parentage_col).value = parent_val
+        # Highlight Model Name column in Amazon format
+        if sc_model_name_col:
+            ws_sc.cell(curr_r, sc_model_name_col).value = model_sku
+            ws_sc.cell(curr_r, sc_model_name_col).fill = HIGHLIGHT_FILL
+            ws_sc.cell(curr_r, sc_model_name_col).font = HIGHLIGHT_FONT
 
         parent_title = ""
         if sc_title_col:
@@ -2997,7 +3156,7 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
             'Product Id Type': '',
             'Product Id': '',
             'Shipping Template': '',
-            'Model Name': '',
+            'Model Name': model_sku,
             'Item Name': parent_title,
         })
         curr_r += 1
@@ -3013,8 +3172,12 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
             ws_sc.cell(curr_r, sc_parentage_col).value = child_val
         if sc_parent_sku_col and model_str:
             ws_sc.cell(curr_r, sc_parent_sku_col).value = model_str
-        if sc_model_name_col and model_str:
-            ws_sc.cell(curr_r, sc_model_name_col).value = model_str
+        # Highlight Model Name column in Amazon format
+        if sc_model_name_col:
+            if model_str:
+                ws_sc.cell(curr_r, sc_model_name_col).value = model_str
+            ws_sc.cell(curr_r, sc_model_name_col).fill = HIGHLIGHT_FILL
+            ws_sc.cell(curr_r, sc_model_name_col).font = HIGHLIGHT_FONT
         if sc_prod_id_type_col:
             ws_sc.cell(curr_r, sc_prod_id_type_col).value = asin_type_val
         if sc_shipping_tpl_col:
@@ -3065,16 +3228,11 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
 
 # ======================================================================
 #   ✨ AJIO PERFECT LISTING ENGINE (merged from "3_Perfect_Listing.py")
-#   Sab functions `pl_` / `PL_` prefix ke sath hain taaki Listing Tool ke
-#   purane functions se naam na takraye.
-# ======================================================================
-# ======================================================================
-# 4. COLOR ABBREVIATION, SKU & STYLE CODE ENGINE (100% DYNAMIC)
 # ======================================================================
 PL_COLOR_TOKENS = {
     'black', 'white', 'blue', 'lightblue', 'darkblue', 'skyblue', 'iceblue', 'navy', 'navyblue',
     'green', 'olive', 'pista', 'sea-green', 'purple', 'lavender', 'pink', 'red', 'maroon',
-    'beige', 'brown', 'coffee', 'khaki', 'grey', 'gray', 'charcoal', 'yellow', 'orange',
+    'beige', 'biege', 'brown', 'coffee', 'khaki', 'grey', 'gray', 'charcoal', 'yellow', 'orange',
     'peach', 'teal', 'wine', 'cream', 'rust', 'gold', 'silver'
 }
 
@@ -3083,7 +3241,7 @@ PL_COLOR_ABBR = {
     'darkblue': 'DBlu', 'skyblue': 'SBlu', 'iceblue': 'IBlu', 'navy': 'Nvy',
     'green': 'Grn', 'olive': 'Olv', 'pista': 'Pst', 'sea-green': 'SGrn',
     'purple': 'Prp', 'lavender': 'Lav', 'pink': 'Pnk', 'red': 'Red',
-    'maroon': 'Mrn', 'beige': 'Beg', 'brown': 'Brn', 'coffee': 'Cfe',
+    'maroon': 'Mrn', 'beige': 'Beg', 'biege': 'Beg', 'brown': 'Brn', 'coffee': 'Cfe',
     'khaki': 'Khk', 'grey': 'Gry', 'gray': 'Gry', 'charcoal': 'Chr',
     'yellow': 'Ylw', 'orange': 'Orn', 'peach': 'Pch', 'teal': 'Tel',
     'wine': 'Win', 'cream': 'Crm', 'ribbin': 'Rbn', 'teddy': 'Tdy'
@@ -3094,15 +3252,12 @@ def pl_clean_sku_name(name):
     return re.sub(r'-+', '-', cleaned).strip('-')
 
 def pl_extract_style_code(folder_name):
-    """
-    Folder name se color suffix hata kar natural Style Code auto-extract hota hai.
-    Zero hardcoded prefix - Universal for Saree, Kurta, Jeans, Men, Kids, Night suit.
-    """
     clean = pl_clean_sku_name(folder_name)
     parts = clean.split('-')
     cut_idx = -1
     for i in range(len(parts) - 1, 0, -1):
-        if parts[i].lower() in PL_COLOR_TOKENS:
+        low_p = parts[i].lower()
+        if low_p in PL_COLOR_TOKENS or low_p in COLOR_MISSPELLINGS:
             cut_idx = i
             break
     if cut_idx > 0:
@@ -3112,10 +3267,6 @@ def pl_extract_style_code(folder_name):
     return clean
 
 def pl_generate_safe_ean(clean_style, clean_sz):
-    """
-    EAN hamesha <= 18 characters rahega aur size suffix (-{clean_sz}) kabhi cut nahi hoga.
-    Prefix aur color name ko abbreviate karke fit karta hai.
-    """
     sz_suffix = f"-{clean_sz}"
     candidate = f"{clean_style}{sz_suffix}"
     if len(candidate) <= 18:
@@ -3157,11 +3308,7 @@ PL_CATEGORY_OPTIONS = [
     'hoodie', 'sweatshirt', 'dress', 'top', 'skirt', 'apparel'
 ]
 
-PL_COMMON_COLORS = [
-    "Beige", "LightGrey", "Grey", "DarkGrey", "Black", "Navy", "Blue", "LightBlue", "DarkBlue",
-    "SkyBlue", "IceBlue", "White", "Off White", "Green", "Olive", "Pista", "Sea Green", "Brown",
-    "Charcoal", "Khaki", "Red", "Maroon", "Yellow", "Orange", "Pink", "Purple", "Lavender", "Wine", "Peach", "Teal"
-]
+PL_COMMON_COLORS = COMMON_COLORS
 
 PL_COLOR_FAMILY_MAP = {
     'maroon': 'Red', 'red': 'Red', 'wine': 'Red', 'darkred': 'Red',
@@ -3170,29 +3317,27 @@ PL_COLOR_FAMILY_MAP = {
     'black': 'Black', 'charcoal': 'Grey', 'grey': 'Grey', 'gray': 'Grey',
     'lightgrey': 'Grey', 'darkgrey': 'Grey', 'white': 'White', 'offwhite': 'Off White',
     'green': 'Green', 'olive': 'Olive', 'pista': 'Sea Green', 'sea green': 'Sea Green',
-    'brown': 'Brown', 'coffee': 'Brown', 'beige': 'Beige', 'khaki': 'Khaki',
+    'brown': 'Brown', 'coffee': 'Brown', 'beige': 'Beige', 'biege': 'Beige', 'khaki': 'Khaki',
     'yellow': 'Yellow', 'mustard': 'Yellow', 'orange': 'Orange', 'peach': 'Peach',
     'pink': 'Pink', 'purple': 'Purple', 'lavender': 'Purple'
 }
 
-def pl_detect_color_from_name(text):
-    text_clean = str(text).replace('-', ' ').replace('_', ' ').lower()
-    for col in sorted(PL_COMMON_COLORS, key=len, reverse=True):
-        if col.lower() in text_clean:
-            return col
-    return "Pink"
+def pl_detect_color_from_name(text, image_bytes=None):
+    """
+    Accurately detects color from folder/SKU name (including misspellings like 'biege', 'blak', 'blu')
+    and falls back to pixel RGB analysis if needed — never blindly defaults to Pink.
+    """
+    return detect_color(text, image_bytes=image_bytes)
 
 def pl_map_color_to_family(col_name):
-    c = str(col_name).strip().lower()
-    return PL_COLOR_FAMILY_MAP.get(c, col_name)
+    canon = _canonicalize_color(col_name)
+    c = str(canon or '').strip().lower()
+    return PL_COLOR_FAMILY_MAP.get(c, canon or "Black")
 
 # ======================================================================
 # 5. DYNAMIC DIMENSIONS, WEIGHT & INTELLIGENT HSN
 # ======================================================================
 def pl_get_dimensions_and_weight(category):
-    """
-    Volumetric L*W*H / 5 aur actual weight dono strictly 300g se 450g ke beech rehte hain.
-    """
     cat = str(category or '').lower()
     if any(k in cat for k in ['jean', 'denim', 'cargo', 'heavy', 'jacket']):
         l, w, h = 28, 25, 3.0
@@ -3265,15 +3410,17 @@ def pl_extract_json_from_text(text):
         pass
     return None
 
-def pl_get_garment_vision_prompt():
+def pl_get_garment_vision_prompt(folder_hint=""):
     cats = ", ".join(PL_CATEGORY_OPTIONS)
+    hint_line = f'Folder/SKU name hint: "{folder_hint}". If the folder name mentions a color (e.g. Blue, Black, Beige, Grey, Navy, Olive, Brown, Maroon, White, Green), prioritize that exact color.\n' if folder_hint else ""
     return (
-        "You are an expert e-commerce fashion cataloger. Visually inspect this garment image very carefully and output ONLY a valid JSON object without markdown or code formatting.\n"
+        "You are an expert e-commerce fashion cataloger. Visually inspect the MAIN GARMENT worn by the model (ignore background, props, studio lighting warmth, and skin tones) and output ONLY a valid JSON object without markdown or code formatting.\n"
+        + hint_line +
         "Return this exact schema:\n"
         "{\n"
         '  "category": "<One of: ' + cats + '>",\n'
         '  "gender": "<Women, Men, Boys, Girls, or Infants>",\n'
-        '  "color": "<Dominant color: Pink, Maroon, Black, Navy, Blue, LightBlue, SkyBlue, Grey, Beige, Olive, Pista, Sea Green, Lavender, White, Red, Yellow, etc.>",\n'
+        '  "color": "<Exact dominant fabric color of the garment: Black, Blue, Navy, LightBlue, DarkBlue, SkyBlue, Beige, Grey, LightGrey, DarkGrey, White, Off White, Olive, Green, Pista, Sea Green, Brown, Coffee, Khaki, Maroon, Red, Yellow, Orange, Lavender, Purple, Teal, Wine, Pink>",\n'
         '  "pocket": "<Kangaroo Pocket / Cargo Pocket / Five Pocket / Side Pocket / Welt Pocket / Chest Pocket / Slash Pocket / No Pocket>",\n'
         '  "material": "<Actual fabric: Cotton, Cotton Blend, Rayon, Fleece, Polyester, Denim, Crepe, Georgette, Silk, Knit, Velvet, Chiffon>",\n'
         '  "fabric_detail": "<Specific fabric description e.g. 100% Cotton, Pure Cotton, Cotton Blend, Soft Fleece, Rayon, Silk Blend>",\n'
@@ -3283,6 +3430,12 @@ def pl_get_garment_vision_prompt():
         '  "waist_type": "<Flexi waist / Elasticated waist / Fixed waist>",\n'
         '  "pattern": "<Solid / Printed / Washed / Striped / Checked / Floral / Quilted / Self-design>"\n'
         "}\n"
+        "CRITICAL COLOR ACCURACY RULES:\n"
+        "1. NEVER default to 'Pink' or guess 'Pink' due to warm studio lighting, skin tones, or shadows.\n"
+        "2. Carefully distinguish dark shades (Black, Navy, DarkBlue, Charcoal, DarkGrey, Brown) from each other.\n"
+        "3. Carefully distinguish neutral warm tones (Beige, Cream, Off White, Khaki, Tan, Brown) — do NOT misclassify Beige/Cream/Tan garments as Pink or Peach.\n"
+        "4. Carefully distinguish Blue shades (Blue, Navy, LightBlue, SkyBlue, IceBlue, Teal) — never label a Blue garment as Pink.\n"
+        "5. Only output 'Pink' if the garment fabric itself is unmistakably pink/magenta/rose."
     )
 
 def pl_get_size_chart_prompt():
@@ -3394,15 +3547,18 @@ def pl_fallback_ocr_size_chart(image_bytes):
     }
     return {'bottomwear_type': bottom_type, 'sleeve_length': sleeve_len, 'measurements': measurements}
 
-def pl_multi_ai_vision_detect(image_bytes, img_name):
-    prompt = pl_get_garment_vision_prompt()
-    res = pl_call_gemini_api(prompt, image_bytes, img_name)
-    if res and isinstance(res, dict) and res.get('color'): return res, "Gemini"
-    res = pl_call_nvidia_api(prompt, image_bytes, img_name)
-    if res and isinstance(res, dict) and res.get('color'): return res, "NVIDIA"
-    res = pl_call_groq_api(prompt, image_bytes, img_name)
-    if res and isinstance(res, dict) and res.get('color'): return res, "Groq"
-    return None, "None"
+def pl_multi_ai_vision_detect(image_bytes, img_name, folder_hint=""):
+    prompt = pl_get_garment_vision_prompt(folder_hint=folder_hint)
+    for fn, provider in [
+        (pl_call_gemini_api, "Gemini"),
+        (pl_call_nvidia_api, "NVIDIA"),
+        (pl_call_groq_api, "Groq"),
+    ]:
+        res = fn(prompt, image_bytes, img_name)
+        if res and isinstance(res, dict) and res.get('color'):
+            res['color'] = canonicalize_ai_color(res.get('color'), folder_name=folder_hint, image_bytes=image_bytes)
+            return res, provider
+    return {'color': detect_color(folder_hint, image_bytes=image_bytes)}, "Pixel/Folder-Fallback"
 
 def pl_multi_ai_size_chart_detect(image_bytes, img_name):
     prompt = pl_get_size_chart_prompt()
@@ -3514,7 +3670,7 @@ def pl_pick_dropdown_value_safe(info, col_idx, desired, fallback=None):
     return close[0] if close else options[0]
 
 # ======================================================================
-# 8. CDN UPLOADER & DYNAMIC SEO CONTENT
+# 8. CDN UPLOADER & DYNAMIC SEO CONTENT (<= 200 CHAR DESCRIPTION)
 # ======================================================================
 def pl_upload_to_imgbb(image_bytes, api_key):
     if not api_key:
@@ -3540,18 +3696,15 @@ def pl_build_dynamic_seo_content(category, gender, brand, fabric, pattern, keywo
     g_title = "Women's" if str(gender).lower().startswith('w') else ("Men's" if str(gender).lower().startswith('m') else "Unisex")
     b_prefix = f"{brand} " if brand else ""
     cat_label = category.title() if category else "Apparel"
-    kw_str = keywords if keywords else "comfortable relaxed fit, premium fabric, all-day comfort, durable quality"
+    kw_str = keywords if keywords else "relaxed fit and all-day comfort"
 
     desc = (
-        f"{b_prefix}{g_title} {cat_label} - Designed for modern style and maximum comfort, "
-        f"this {g_title.lower()} {cat_label.lower()} is tailored from high-grade breathable {fabric} fabric. "
-        f"Engineered with {kw_str}. "
-        f"Featuring an elegant {pattern.lower()} pattern with refined seam construction. "
-        f"Ideal for daily wear, casual outings, work from home, and relaxed styling."
+        f"{b_prefix}{g_title} {cat_label} in breathable {fabric} fabric with an elegant {pattern.lower()} pattern. "
+        f"Designed for {kw_str} and effortless daily wear."
     )
     highlight = f"Premium breathable {fabric} fabric | Comfortable {g_title.lower()} fit | Elegant {pattern.lower()} design | Durable stitching | Easy machine wash"
     add_info = "Wash Care: Machine wash cold with similar colors. Do not bleach. Warm iron if needed."
-    return desc[:950], highlight[:500], add_info[:500]
+    return _limit_desc_200(desc), highlight[:500], add_info[:500]
 
 # ======================================================================
 # 9. UNIVERSAL AJIO LISTING ENGINE (100% PREFIX-FREE)
@@ -3641,10 +3794,9 @@ def pl_run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detecte
 
     img_cols = []
     for i in range(1, 15):
-        c_i = find_col([f'*MODEL' if i == 1 else f'MODEL{i}'])
+        c_i = find_col(['*MODEL' if i == 1 else f'MODEL{i}'])
         if c_i and c_i not in img_cols: img_cols.append(c_i)
 
-    # Dynamic Dimensions & Weights strictly between 300g and 450g
     dims_data = pl_get_dimensions_and_weight(cat_detected)
     hsn_val = pl_resolve_hsn_code(ctx.get('hsn'), cat_detected)
 
@@ -3655,24 +3807,28 @@ def pl_run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detecte
     total_added = 0
     preview = []
     sizes = ctx.get('sizes') or ['S', 'M', 'L', 'XL', '2XL']
-    season_year = str(datetime.now().year + 1)
+    # Always use current year
+    season_year = str(datetime.now().year)
 
-    mrp_fill = PatternFill(start_color="FFF200", end_color="FFF200", fill_type="solid")
-    mrp_font = Font(bold=True)
+    mrp_fill = HIGHLIGHT_FILL
+    mrp_font = HIGHLIGHT_FONT
 
-    def set_val(r, c, val, dropdown=False):
+    def set_val(r, c, val, dropdown=False, fill=None, font=None):
         if not c or val in (None, ''): return
-        ws.cell(r, c).value = pl_pick_dropdown_value_safe(info, c, val, val) if dropdown else val
+        cell = ws.cell(r, c)
+        cell.value = pl_pick_dropdown_value_safe(info, c, val, val) if dropdown else val
+        if fill: cell.fill = fill
+        if font: cell.font = font
 
-    # Fill data for each product folder in zip
     for fld, img_tuples in zip_images_data.items():
-        # EXACT BASE SKU FROM ZIP FOLDER (NO HARDCODED PREFIX)
         base_sku = pl_clean_sku_name(fld)
-        # NATURAL STYLE CODE EXTRACTED BY REMOVING COLOR SUFFIX
         style_code = pl_extract_style_code(fld)
+        first_img_bytes = img_tuples[0][1] if img_tuples else None
 
         ai_data = ctx.get('vision_results', {}).get(base_sku, {})
-        det_col = ai_data.get('color') or pl_detect_color_from_name(fld)
+        explicit_fld_col = extract_explicit_color_from_text(fld)
+        det_col = explicit_fld_col or ai_data.get('color') or pl_detect_color_from_name(fld, image_bytes=first_img_bytes)
+        det_col = canonicalize_ai_color(det_col, folder_name=fld, image_bytes=first_img_bytes)
         col_fam = pl_map_color_to_family(det_col)
         mat_val = ai_data.get('material') or "Cotton"
         fab_detail = ai_data.get('fabric_detail') or f"100% {mat_val}"
@@ -3705,9 +3861,7 @@ def pl_run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detecte
 
         for sz in sizes:
             clean_sz = pl_clean_sku_name(sz)
-            # ITEM SKU = ZIP FOLDER NAME + '-' + SIZE
             full_sku = f"{base_sku}-{clean_sz}"
-            # EAN = SAFE <= 18 CHARACTERS (SIZE SUFFIX ALWAYS PRESERVED)
             ean_val = pl_generate_safe_ean(base_sku, clean_sz)
 
             sz_meas = measurements.get(clean_sz) or measurements.get(clean_sz.upper()) or {}
@@ -3721,7 +3875,8 @@ def pl_run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detecte
             hip_val = sz_meas.get('hip', 38)
             inseam_val = sz_meas.get('inseam', 28)
 
-            set_val(curr_r, col_style, style_code)
+            # Highlight Style Code in Ajio format (manual change required)
+            set_val(curr_r, col_style, style_code, fill=HIGHLIGHT_FILL, font=HIGHLIGHT_FONT)
             set_val(curr_r, col_desc, desc_text)
             set_val(curr_r, col_sku, full_sku)
             set_val(curr_r, col_brand, ctx.get('brand', ''))
@@ -3743,7 +3898,6 @@ def pl_run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detecte
             set_val(curr_r, col_size, clean_sz)
             set_val(curr_r, col_std_size, clean_sz)
 
-            # Dimensions strictly 300g to 450g
             set_val(curr_r, col_art_h, dims_data['art_h']); set_val(curr_r, col_art_l, dims_data['art_l'])
             set_val(curr_r, col_art_w, dims_data['art_w']); set_val(curr_r, col_art_luom, dims_data['art_luom'])
             set_val(curr_r, col_art_wt, dims_data['art_wt']); set_val(curr_r, col_art_wtuom, dims_data['art_wtuom'])
@@ -3816,8 +3970,8 @@ def render_listing_ui():
     if 'pl_vision_results' not in st.session_state:
         st.session_state['pl_vision_results'] = {}
 
-    st.success(f"✨ **{marketplace} Listing Engine Active** — Multi-AI Vision (Gemini ➜ NVIDIA ➜ Groq) | "
-               "Dynamic Size Chart Reader | Template Analyzer | 100% Dropdown Safety")
+    st.success(f"✨ **{marketplace} Listing Engine Active** — Multi-AI Vision (Gemini ➜ NVIDIA ➜ Groq + Pixel Color Verification) | "
+               "Descriptions <= 200 Chars | Current Year Auto-Fill | Highlighted Style Code / Model Name")
 
     pl_folders = []
     pl_zip_images = {}
@@ -3831,7 +3985,6 @@ def render_listing_ui():
         zip_file = st.file_uploader("Product Folders (.zip):", type=["zip"], key="pl_zip_in")
         if zip_file:
             try:
-                # ZIP ka naam use nahi hota: sirf ZIP ke andar ke product folders = SKUs
                 folder_to_imgs, found_charts = parse_product_zip(zip_file)
                 pl_size_charts.update(found_charts)
                 pl_folders = sorted(folder_to_imgs.keys())
@@ -3872,7 +4025,7 @@ def render_listing_ui():
         try:
             wb_check = openpyxl.load_workbook(tpl_file, data_only=True)
             t_info = pl_read_and_analyze_template(wb_check)
-            tpl_file.seek(0)  # generate se pehle file pointer reset
+            tpl_file.seek(0)
             c_t1, c_t2, c_t3 = st.columns(3)
             with c_t1: st.metric("Target Styles Sheet", t_info['styles_sheet'])
             with c_t2: st.metric("Template Columns", len(t_info['headers']))
@@ -3941,7 +4094,6 @@ def render_listing_ui():
             try:
                 tpl_file.seek(0)
                 if is_ajio:
-                    # ============ AJIO: Perfect Listing engine ============
                     ctx = {
                         'sizes': sizes_list, 'brand': brand_name.strip(), 'mrp': mrp_value.strip(),
                         'mfg': mfg_address.strip(), 'hsn': hsn_code.strip(), 'keywords': custom_keywords.strip(),
@@ -3952,7 +4104,9 @@ def render_listing_ui():
                         for fld in pl_folders:
                             base_sku = pl_clean_sku_name(fld)
                             if base_sku not in ctx['vision_results'] and pl_zip_images.get(fld):
-                                v_res, provider = pl_multi_ai_vision_detect(pl_zip_images[fld][0][1], pl_zip_images[fld][0][0])
+                                v_res, provider = pl_multi_ai_vision_detect(
+                                    pl_zip_images[fld][0][1], pl_zip_images[fld][0][0], folder_hint=fld
+                                )
                                 if v_res:
                                     v_res['ai_source'] = provider
                                     ctx['vision_results'][base_sku] = v_res
@@ -3980,7 +4134,7 @@ def render_listing_ui():
                         out_bytes, preview_data, total_added, target_sheet = pl_run_perfect_ajio_listing(
                             tpl_file, pl_zip_images, size_chart_measurements, ctx
                         )
-                    st.success(f"🎉 Listing complete! Total **{total_added}** variants add hue (`{target_sheet}`).")
+                    st.success(f"🎉 Listing complete! Total **{total_added}** variants add hue (`{target_sheet}`). Style Code column Yellow Highlighted hai.")
                     if preview_data:
                         st.dataframe(preview_data, use_container_width=True)
                     base_name, ext = os.path.splitext(tpl_file.name)
@@ -3990,7 +4144,6 @@ def render_listing_ui():
                                        file_name=out_name, mime=_mime_for(out_name), type="primary")
 
                 else:
-                    # ============ BAAKI MARKETPLACES: unke apne engines, Ajio jaisa dashboard ============
                     folders = pl_folders if pl_folders else manual_list
                     valid_keys = {clean_sku_name(f) for f in folders}
                     vr = {k: v for k, v in st.session_state.get('vision_results', {}).items() if k in valid_keys}
@@ -4033,11 +4186,11 @@ def render_listing_ui():
                     out, preview, added = None, [], 0
                     if marketplace == "Amazon - Vendor Central":
                         out, preview, added = run_vendor_central(tpl_file, ctx)
-                        st.success(f"🎉 Amazon Vendor Central template filled! Total {added} variants.")
+                        st.success(f"🎉 Amazon Vendor Central template filled! Total {added} variants. (Model Name Yellow Highlighted)")
                         st.info("ℹ️ **Product Type column blank rakha gaya hai** — template me dropdown se manually select kar lena.")
                     elif marketplace == "Amazon - Seller Central":
                         out, preview, added = run_seller_central(tpl_file, ctx)
-                        st.success(f"🎉 Amazon Seller Central template (`Template` sheet) filled! Total {added} rows (Parent + Child).")
+                        st.success(f"🎉 Amazon Seller Central template (`Template` sheet) filled! Total {added} rows (Parent + Child, Model Name Yellow Highlighted).")
                     else:
                         out, preview, added = run_generic_marketplace(tpl_file, ctx, marketplace)
                         st.success(f"🎉 {marketplace} template filled! Total {added} variants.")
@@ -4065,7 +4218,7 @@ def render_convert_ui():
         "1. Niche **Filled Vendor Central File** (1, 2, 4, 5 ya kitni bhi category sheets wali) aur **Blank Seller Central File** upload karein.\n"
         "2. **Smart Duplicate & Blank Row Merge:** Agar VC file me same SKU/ASIN 2 baar hai (ek row me details blank hain aur doosri row me details bhari hain), toh system **us SKU ko sirf 1 baar lega** aur blank row ko ignore karke filled row ka poora data fetch kar lega.\n"
         "3. Vendor Central file ki **sabhi listing sheets** automatically read hongi aur har sheet/category ke hisab se Blank Seller Central template ke **`Product Type`** dropdown se exact matching Product Type (`SHIRT`, `PANTS`, `SWEATSHIRT`, `KURTA`, `SUIT`, `DRESS`, `COAT`, etc.) select hoga.\n"
-        "4. Har unique **`Model Name`** ko **`SKU`** column me **`Parent`** row ke roop me add kiya jayega.\n"
+        "4. Har unique **`Model Name`** ko **`SKU`** column me **`Parent`** row ke roop me add kiya jayega aur **`Model Name` column ko Yellow Highlight** kiya jayega.\n"
         "5. Sabhi Child SKUs me **`Parentage Level = Child`**, **`Parent SKU = Model Name`**, **`Product Id Type = ASIN`**, **`Product Id = Merchant Suggested ASIN`**, aur **`Shipping Template (IN) = Migrated Template`** set hoga.\n"
         "6. Sabhi rows me **`Listing Action = Create or Replace (Full Update)`**, **`Variation Theme Name = SIZE/COLOR`**, **`Item Condition = New`**, **`Fulfillment Channel Code (IN) = Fulfillment by Merchant (Default)`**, aur **`Quantity (IN) = 0`** rahega."
     )
@@ -4126,18 +4279,3 @@ if CONVERT_MODE:
     render_convert_ui()
 else:
     render_listing_ui()
-
-
-# ======================================================================
-# 🔐 .streamlit/secrets.toml (EXAMPLE - optional override via secrets)
-# ----------------------------------------------------------------------
-# IMGBB_API_KEY   = "137be55d19cf3d6a7ec051e369137041"
-# GEMINI_API_KEY  = "AQ.Ab8RN6Lb4kCeCRQtjVtw5MYcz7Wl0x4dBRvNxsYCAD9TYoUk2Q"
-# NVIDIA_API_KEY  = "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"
-# GROQ_API_KEY    = "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"
-#
-# # Optional (model names change karne ho to):
-# # GEMINI_VISION_MODEL = "gemini-2.0-flash"
-# # NVIDIA_MODEL        = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
-# # GROQ_VISION_MODEL   = "llama-3.2-11b-vision-preview"
-# ======================================================================
