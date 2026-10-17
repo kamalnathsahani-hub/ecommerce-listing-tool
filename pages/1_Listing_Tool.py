@@ -23,10 +23,8 @@ st.title("📦 Multi-Marketplace Auto Listing Generator (Universal Pro V24 - Uni
 st.caption("Ajio | Amazon VC | VC➜SC | Amazon SC | Flipkart | Meesho | Myntra + 🤖 AI Vision (Gemini ➜ NVIDIA ➜ Groq Fallback)")
 
 # ======================================================================
-#                🔑 API KEYS & MULTI-AI VISION CONFIG (SECRETS)
+#                🔑 API KEYS & MULTI-AI VISION CONFIG
 # ======================================================================
-# Keys ab code me nahi hain. Ye `.streamlit/secrets.toml` se (ya environment
-# variable se) load hongi. Example secrets.toml neeche file ke end me diya hai.
 def _get_secret(name, default=""):
     try:
         val = st.secrets[name]
@@ -35,18 +33,18 @@ def _get_secret(name, default=""):
     return str(val or default).strip()
 
 
-IMGBB_PERMANENT_KEY = _get_secret("137be55d19cf3d6a7ec051e369137041")
+IMGBB_PERMANENT_KEY = _get_secret("IMGBB_API_KEY", "137be55d19cf3d6a7ec051e369137041")
 
 # 1️⃣ Primary AI: Google Gemini Vision
-GEMINI_API_KEY = _get_secret("AQ.Ab8RN6Lb4kCeCRQtjVtw5MYcz7Wl0x4dBRvNxsYCAD9TYoUk2Q")
+GEMINI_API_KEY = _get_secret("GEMINI_API_KEY", "AQ.Ab8RN6Lb4kCeCRQtjVtw5MYcz7Wl0x4dBRvNxsYCAD9TYoUk2Q")
 GEMINI_VISION_MODEL = _get_secret("GEMINI_VISION_MODEL", "gemini-2.0-flash")
 
 # 2️⃣ Secondary AI: NVIDIA Vision
-NVIDIA_API_KEY = _get_secret("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")
+NVIDIA_API_KEY = _get_secret("NVIDIA_API_KEY", "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")
 NVIDIA_MODEL = _get_secret("NVIDIA_MODEL", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning")
 
 # 3️⃣ Tertiary AI: Groq Vision
-GROQ_API_KEY = _get_secret("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")
+GROQ_API_KEY = _get_secret("GROQ_API_KEY", "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")
 GROQ_VISION_MODEL = _get_secret("GROQ_VISION_MODEL", "llama-3.2-11b-vision-preview")
 
 _missing_keys = [n for n, v in [
@@ -4131,12 +4129,12 @@ else:
 
 
 # ======================================================================
-# 🔐 .streamlit/secrets.toml (EXAMPLE - is file ko code ke saath kabhi git me push mat karna)
+# 🔐 .streamlit/secrets.toml (EXAMPLE - optional override via secrets)
 # ----------------------------------------------------------------------
-# IMGBB_API_KEY   = "your-new-imgbb-key"
-# GEMINI_API_KEY  = "your-new-gemini-key"
-# NVIDIA_API_KEY  = "your-new-nvidia-key"
-# GROQ_API_KEY    = "your-new-groq-key"
+# IMGBB_API_KEY   = "137be55d19cf3d6a7ec051e369137041"
+# GEMINI_API_KEY  = "AQ.Ab8RN6Lb4kCeCRQtjVtw5MYcz7Wl0x4dBRvNxsYCAD9TYoUk2Q"
+# NVIDIA_API_KEY  = "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"
+# GROQ_API_KEY    = "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"
 #
 # # Optional (model names change karne ho to):
 # # GEMINI_VISION_MODEL = "gemini-2.0-flash"
