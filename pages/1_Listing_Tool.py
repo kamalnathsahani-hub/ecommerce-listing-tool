@@ -23,21 +23,41 @@ st.title("📦 Multi-Marketplace Auto Listing Generator (Universal Pro V24 - Uni
 st.caption("Ajio | Amazon VC | VC➜SC | Amazon SC | Flipkart | Meesho | Myntra + 🤖 AI Vision (Gemini ➜ NVIDIA ➜ Groq Fallback)")
 
 # ======================================================================
-#                🔑 API KEYS & MULTI-AI VISION CONFIG
+#                🔑 API KEYS & MULTI-AI VISION CONFIG (SECRETS)
 # ======================================================================
-IMGBB_PERMANENT_KEY = "137be55d19cf3d6a7ec051e369137041"
+# Keys ab code me nahi hain. Ye `.streamlit/secrets.toml` se (ya environment
+# variable se) load hongi. Example secrets.toml neeche file ke end me diya hai.
+def _get_secret(name, default=""):
+    try:
+        val = st.secrets[name]
+    except Exception:
+        val = os.environ.get(name, default)
+    return str(val or default).strip()
+
+
+IMGBB_PERMANENT_KEY = _get_secret("IMGBB_API_KEY")
 
 # 1️⃣ Primary AI: Google Gemini Vision
-GEMINI_API_KEY = "AQ.Ab8RN6Lb4kCeCRQtjVtw5MYcz7Wl0x4dBRvNxsYCAD9TYoUk2Q"
-GEMINI_VISION_MODEL = "gemini-2.0-flash"
+GEMINI_API_KEY = _get_secret("GEMINI_API_KEY")
+GEMINI_VISION_MODEL = _get_secret("GEMINI_VISION_MODEL", "gemini-2.0-flash")
 
 # 2️⃣ Secondary AI: NVIDIA Vision
-NVIDIA_API_KEY = "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"
-NVIDIA_MODEL = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+NVIDIA_API_KEY = _get_secret("NVIDIA_API_KEY")
+NVIDIA_MODEL = _get_secret("NVIDIA_MODEL", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning")
 
 # 3️⃣ Tertiary AI: Groq Vision
-GROQ_API_KEY = "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"
-GROQ_VISION_MODEL = "llama-3.2-11b-vision-preview"
+GROQ_API_KEY = _get_secret("GROQ_API_KEY")
+GROQ_VISION_MODEL = _get_secret("GROQ_VISION_MODEL", "llama-3.2-11b-vision-preview")
+
+_missing_keys = [n for n, v in [
+    ("IMGBB_API_KEY", IMGBB_PERMANENT_KEY), ("GEMINI_API_KEY", GEMINI_API_KEY),
+    ("NVIDIA_API_KEY", NVIDIA_API_KEY), ("GROQ_API_KEY", GROQ_API_KEY),
+] if not v]
+if _missing_keys:
+    st.warning(
+        "⚠️ Ye keys `secrets.toml` me nahi mili: **" + ", ".join(_missing_keys) + "**. "
+        "Missing AI key skip hogi (agli AI par fallback), aur IMGBB_API_KEY na ho to CDN links nahi banenge."
+    )
 
 # ======================================================================
 # 1. MARKETPLACE SELECTION
@@ -98,6 +118,77 @@ def is_size_chart_file(filename):
 
 def _norm_h(s):
     return re.sub(r'[\s_\-*]+', '', str(s or '')).strip().lower()
+
+# ======================================================================
+# 📦 ZIP PARSER - SKU = ZIP KE ANDAR KE PRODUCT FOLDERS (ZIP KA NAAM NAHI)
+# ======================================================================
+def parse_product_zip(zip_file):
+    """
+    ZIP ke andar ke alag-alag PRODUCT FOLDERS se SKU banata hai.
+    - ZIP ka apna naam kabhi use nahi hota.
+    - Common wrapper folder(s) (kisi bhi naam ke) auto-strip ho jate hain.
+    - Har product folder = 1 SKU.
+    - Wrapper ke root me padi size chart sabhi SKUs ko mil jati hai (jinki apni chart nahi).
+    Returns: (folder_to_imgs, size_charts)
+    """
+    IMG_EXT = ('.jpg', '.jpeg', '.png', '.webp')
+    folder_to_imgs, size_charts = {}, {}
+    global_chart = None
+
+    with zipfile.ZipFile(zip_file, 'r') as z:
+        entries = []  # (dir_parts, filename, zipinfo)
+        for info in z.infolist():
+            if info.is_dir():
+                continue
+            path = info.filename.replace('\\', '/').strip('/')
+            parts = [p for p in path.split('/') if p]
+            if len(parts) < 2:
+                continue  # ZIP root ki loose files ignore
+            if parts[0] == '__MACOSX' or any(p.startswith('.') for p in parts):
+                continue
+            fname = parts[-1]
+            if fname.lower() == 'thumbs.db' or not fname.lower().endswith(IMG_EXT):
+                continue
+            entries.append((parts[:-1], fname, info))
+
+        # Common wrapper folder(s) hatao: jab tak ek hi top folder ho aur uske andar aur folder bhi hon
+        while (
+            entries
+            and len({d[0] for d, _, _ in entries if d}) == 1
+            and all(len(d) >= 1 for d, _, _ in entries)
+            and any(len(d) >= 2 for d, _, _ in entries)
+        ):
+            entries = [(d[1:], f, i) for d, f, i in entries]
+
+        # Ab d[0] = product folder = SKU
+        for dir_parts, fname, info in entries:
+            if not dir_parts:
+                # wrapper ke root ki loose file: sirf size chart ko global rakho
+                if is_size_chart_file(fname) and global_chart is None:
+                    global_chart = {'filename': fname, 'bytes': z.read(info)}
+                continue
+            fld = dir_parts[0]
+            data = z.read(info)
+            if is_size_chart_file(fname):
+                size_charts[fld] = {'filename': fname, 'bytes': data}
+            else:
+                folder_to_imgs.setdefault(fld, []).append((fname, data))
+
+    if global_chart:
+        for fld in folder_to_imgs:
+            size_charts.setdefault(fld, global_chart)
+
+    # Sirf wahi size charts rakho jinka product folder images ke saath maujood hai
+    size_charts = {k: v for k, v in size_charts.items() if k in folder_to_imgs}
+
+    def _num_key(item):
+        nums = re.findall(r'\d+', item[0])
+        return int(nums[0]) if nums else 999
+
+    for fld in folder_to_imgs:
+        folder_to_imgs[fld].sort(key=_num_key)
+
+    return folder_to_imgs, size_charts
 
 CATEGORY_OPTIONS = [
     'co-ord set', 'hoodie', 'sweatshirt', 'cargo', 'jeans', 'tshirt',
@@ -489,6 +580,8 @@ def make_workable_dropbox_url(base_url, sku, img_num):
     return f"{clean}/{sku}/{img_num}.jpg?raw=1"
 
 def upload_to_imgbb(image_bytes, api_key):
+    if not api_key:
+        return None
     try:
         url = "https://api.imgbb.com/1/upload"
         payload = {"key": api_key, "image": base64.b64encode(image_bytes).decode('utf-8')}
@@ -721,7 +814,7 @@ def call_nvidia_vision(image_bytes, img_name, api_key, model):
     mime = guess_mime(img_name)
     b64 = base64.b64encode(image_bytes).decode('utf-8')
     data_url = f"data:{mime};base64,{b64}"
-    
+
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -758,7 +851,7 @@ def call_groq_vision(image_bytes, img_name, api_key, model):
     mime = guess_mime(img_name)
     b64 = base64.b64encode(image_bytes).decode('utf-8')
     data_url = f"data:{mime};base64,{b64}"
-    
+
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
@@ -789,15 +882,15 @@ def call_groq_vision(image_bytes, img_name, api_key, model):
 
 # Unified Detection with Step-by-Step Fallback (Gemini ➜ NVIDIA ➜ Groq)
 def multi_ai_vision_detect(image_bytes, img_name):
-    res = call_gemini_vision(image_bytes, img_name, GEMINI_API_KEY.strip(), GEMINI_VISION_MODEL)
+    res = call_gemini_vision(image_bytes, img_name, GEMINI_API_KEY, GEMINI_VISION_MODEL)
     if res and isinstance(res, dict) and res.get('category'):
         return res, "Gemini"
 
-    res = call_nvidia_vision(image_bytes, img_name, NVIDIA_API_KEY.strip(), NVIDIA_MODEL)
+    res = call_nvidia_vision(image_bytes, img_name, NVIDIA_API_KEY, NVIDIA_MODEL)
     if res and isinstance(res, dict) and res.get('category'):
         return res, "NVIDIA"
 
-    res = call_groq_vision(image_bytes, img_name, GROQ_API_KEY.strip(), GROQ_VISION_MODEL)
+    res = call_groq_vision(image_bytes, img_name, GROQ_API_KEY, GROQ_VISION_MODEL)
     if res and isinstance(res, dict) and res.get('category'):
         return res, "Groq"
 
@@ -845,18 +938,18 @@ def run_vision_detection(zip_images_data):
         cs = clean_sku_name(fld)
         img_name, img_bytes = zip_images_data[fld][0]
         status.info(f"🤖 AI analyzing garment image: **{cs}** ({i+1}/{len(folders)})...")
-        
+
         data, provider = multi_ai_vision_detect(img_bytes, img_name)
         if data:
             cat = canonicalize_ai_category(data.get('category'))
             col = canonicalize_ai_color(data.get('color'))
             poc = canonicalize_ai_pocket(data.get('pocket'))
             gen = "Women" if str(data.get('gender')).lower().startswith('w') else "Men"
-            
+
             mat = str(data.get('material') or '').strip().title()
             if not mat or (mat.lower() == 'denim' and cat != 'jeans'):
                 mat = DEFAULT_CATEGORY_FABRICS.get(cat, 'Cotton Blend')
-                
+
             fab_det = str(data.get('fabric_detail') or f"100% {mat}").title()
             sleeve = str(data.get('sleeve_length') or ('Long Sleeve' if cat in ['hoodie', 'sweatshirt'] else 'Short Sleeve')).title()
             pattern = str(data.get('pattern') or 'Solid').title()
@@ -993,7 +1086,7 @@ def build_ajio_seo_content(cat, user_keywords="", gender="Women", mat_val="Cotto
     kw_str = user_keywords if user_keywords else "casual streetwear, relaxed fit, durable quality, all-day comfort"
     cat_label = CATEGORY_LABELS.get(cat, 'Apparel')
     g_title = "Women's" if gender == "Women" else "Men's"
-    
+
     if cat == 'co-ord set':
         desc = (f"{g_title} Co-ord Set - Designed for effortless chic look and supreme comfort, this {g_title} Co-ord Set "
                 f"is crafted from premium breathable {mat_val} fabric. Engineered with {kw_str}. "
@@ -1245,7 +1338,7 @@ def run_ajio(uploaded_file, ctx):
             det_col = resolve_color(raw_fld, clean_style, ctx)
             det_gen = resolve_gender(clean_style, ctx)
             color_family_val = map_to_standard_color_map(det_col)
-            
+
             vr_info = (ctx.get('vision_results') or {}).get(clean_style, {})
             fab_type_val = resolve_fabric(clean_style, cat, ctx)
             fab_detail_val = vr_info.get('fabric_detail') or f"100% {fab_type_val}"
@@ -1990,17 +2083,17 @@ def run_seller_central(uploaded_file, ctx):
 
         model_str = custom_parent_model if custom_parent_model else clean_style
         urls = get_sku_img_urls(raw_fld, ctx, clean_style)
-        
+
         mat_val = resolve_fabric(clean_style, cat, ctx)
         sleeve_val = resolve_sleeve_length(clean_style, cat, ctx)
-        
+
         bullets_list, desc_text = build_freehand_bullets_and_desc(cat, ctx['brand'], det_gen, mat_val)
         gen_kw = generate_generic_keywords_200(cat, det_col, ctx['keywords'], det_gen)
         style_val = get_style_from_dropdown(cat)
         item_type_val = get_item_type_name_from_dropdown(cat)
         color_map_val = map_to_standard_color_map(det_col)
         pocket_val = resolve_pocket(clean_style, cat, ctx)
-        
+
         fab_val = f"100% {mat_val}"
         prod_type_val = resolve_sc_product_type_for_row(
             ws, c_prod_type,
@@ -2328,7 +2421,7 @@ def run_generic_marketplace(uploaded_file, ctx, mp):
         cat = resolve_category(clean_style, ctx, ws.title)
         det_gen = resolve_gender(clean_style, ctx)
         color_family_val = map_to_standard_color_map(det_col)
-        
+
         mat_val = resolve_fabric(clean_style, cat, ctx)
         sleeve_val = resolve_sleeve_length(clean_style, cat, ctx)
 
@@ -3337,12 +3430,12 @@ def pl_read_and_analyze_template(wb):
         'headers': {},
         'mandatory_cols': []
     }
-    
+
     if 'Seller Information Sheet' in wb.sheetnames:
         target = wb['Seller Information Sheet'].cell(2, 1).value
         if target and str(target).strip() in wb.sheetnames:
             info['styles_sheet'] = str(target).strip()
-            
+
     if not info['styles_sheet']:
         for s in wb.sheetnames:
             if 'styles' in s.lower() and 'instruction' not in s.lower():
@@ -3366,7 +3459,7 @@ def pl_read_and_analyze_template(wb):
         if sum(1 for v in vals if any(k in v for k in keywords)) > 3:
             header_row = r
             break
-            
+
     info['header_row'] = header_row
     info['headers'] = {c: str(ws_styles.cell(header_row, c).value or '').strip() for c in range(1, ws_styles.max_column + 1)}
     info['mandatory_cols'] = [c for c, h in info['headers'].items() if h.startswith('*')]
@@ -3426,6 +3519,8 @@ def pl_pick_dropdown_value_safe(info, col_idx, desired, fallback=None):
 # 8. CDN UPLOADER & DYNAMIC SEO CONTENT
 # ======================================================================
 def pl_upload_to_imgbb(image_bytes, api_key):
+    if not api_key:
+        return None
     try:
         url = "https://api.imgbb.com/1/upload"
         payload = {"key": api_key, "image": base64.b64encode(image_bytes).decode('utf-8')}
@@ -3448,7 +3543,7 @@ def pl_build_dynamic_seo_content(category, gender, brand, fabric, pattern, keywo
     b_prefix = f"{brand} " if brand else ""
     cat_label = category.title() if category else "Apparel"
     kw_str = keywords if keywords else "comfortable relaxed fit, premium fabric, all-day comfort, durable quality"
-    
+
     desc = (
         f"{b_prefix}{g_title} {cat_label} - Designed for modern style and maximum comfort, "
         f"this {g_title.lower()} {cat_label.lower()} is tailored from high-grade breathable {fabric} fabric. "
@@ -3563,7 +3658,7 @@ def pl_run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detecte
     preview = []
     sizes = ctx.get('sizes') or ['S', 'M', 'L', 'XL', '2XL']
     season_year = str(datetime.now().year + 1)
-    
+
     mrp_fill = PatternFill(start_color="FFF200", end_color="FFF200", fill_type="solid")
     mrp_font = Font(bold=True)
 
@@ -3577,14 +3672,14 @@ def pl_run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detecte
         base_sku = pl_clean_sku_name(fld)
         # NATURAL STYLE CODE EXTRACTED BY REMOVING COLOR SUFFIX
         style_code = pl_extract_style_code(fld)
-        
+
         ai_data = ctx.get('vision_results', {}).get(base_sku, {})
         det_col = ai_data.get('color') or pl_detect_color_from_name(fld)
         col_fam = pl_map_color_to_family(det_col)
         mat_val = ai_data.get('material') or "Cotton"
         fab_detail = ai_data.get('fabric_detail') or f"100% {mat_val}"
         pattern_val = ai_data.get('pattern') or ("Quilted" if "quilt" in fld.lower() else "Solid")
-        
+
         sc_data = detected_size_charts.get(fld) or detected_size_charts.get('default') or {}
         sleeve_val = sc_data.get('sleeve_length') or ai_data.get('sleeve_length') or "Short sleeve"
         bottom_val = sc_data.get('bottomwear_type') or ("Capris" if "capri" in fld.lower() else "Pyjamas")
@@ -3593,7 +3688,7 @@ def pl_run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detecte
         desc_text, high_text, add_text = pl_build_dynamic_seo_content(
             cat_detected, gender_detected, ctx.get('brand', ''), mat_val, pattern_val, ctx.get('keywords', '')
         )
-        
+
         img_urls = list(ctx.get('live_links_cache', {}).get(fld, []))
         if ctx.get('size_chart_urls', {}).get(fld):
             chart_url = ctx['size_chart_urls'][fld]
@@ -3616,7 +3711,7 @@ def pl_run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detecte
             full_sku = f"{base_sku}-{clean_sz}"
             # EAN = SAFE <= 18 CHARACTERS (SIZE SUFFIX ALWAYS PRESERVED)
             ean_val = pl_generate_safe_ean(base_sku, clean_sz)
-            
+
             sz_meas = measurements.get(clean_sz) or measurements.get(clean_sz.upper()) or {}
             if not sz_meas:
                 _alias = {'2XL': 'XXL', 'XXL': '2XL'}.get(clean_sz.upper())
@@ -3634,7 +3729,7 @@ def pl_run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detecte
             set_val(curr_r, col_brand, ctx.get('brand', ''))
             set_val(curr_r, col_ean, ean_val)
             set_val(curr_r, col_td, ctx.get('td', 50))
-            
+
             if col_mrp:
                 if ctx.get('mrp'):
                     ws.cell(curr_r, col_mrp).value = int(ctx['mrp']) if str(ctx['mrp']).isdigit() else ctx['mrp']
@@ -3738,28 +3833,18 @@ def render_listing_ui():
         zip_file = st.file_uploader("Product Folders (.zip):", type=["zip"], key="pl_zip_in")
         if zip_file:
             try:
-                with zipfile.ZipFile(zip_file, 'r') as z:
-                    file_list = z.namelist()
-                    folder_to_imgs = {}
-                    for f in file_list:
-                        clean = f.replace('\\', '/').strip('/')
-                        parts = clean.split('/')
-                        if len(parts) >= 2:
-                            fld = parts[1] if parts[0].upper() == 'NIGHTSUIT' else parts[0]
-                            filename = parts[-1]
-                            if pl_is_size_chart_file(filename):
-                                pl_size_charts[fld] = {'filename': filename, 'bytes': z.read(f)}
-                            elif filename.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
-                                folder_to_imgs.setdefault(fld, []).append((filename, z.read(f)))
+                # ZIP ka naam use nahi hota: sirf ZIP ke andar ke product folders = SKUs
+                folder_to_imgs, found_charts = parse_product_zip(zip_file)
+                pl_size_charts.update(found_charts)
+                pl_folders = sorted(folder_to_imgs.keys())
+                for fld in pl_folders:
+                    pl_zip_images[fld] = folder_to_imgs[fld]
 
-                    pl_folders = sorted(list(folder_to_imgs.keys()))
-                    for fld in pl_folders:
-                        imgs = folder_to_imgs[fld]
-                        imgs.sort(key=lambda item: int(re.findall(r'\d+', item[0])[0]) if re.findall(r'\d+', item[0]) else 999)
-                        pl_zip_images[fld] = imgs
-
-                st.success(f"✅ ZIP Se Total **{len(pl_folders)}** SKUs Detect Hue:")
-                st.code(", ".join([pl_clean_sku_name(f) for f in pl_folders]))
+                if not pl_folders:
+                    st.warning("⚠️ ZIP me koi product folder (images ke saath) nahi mila.")
+                else:
+                    st.success(f"✅ ZIP ke andar Total **{len(pl_folders)}** Product Folders (SKUs) Detect Hue:")
+                    st.code(", ".join([clean_sku_name(f) for f in pl_folders]))
                 if pl_size_charts:
                     st.info(f"📐 **{len(pl_size_charts)} Size Charts Detect Hue:** "
                             f"{', '.join(set(v['filename'] for v in pl_size_charts.values()))}")
@@ -3789,6 +3874,7 @@ def render_listing_ui():
         try:
             wb_check = openpyxl.load_workbook(tpl_file, data_only=True)
             t_info = pl_read_and_analyze_template(wb_check)
+            tpl_file.seek(0)  # generate se pehle file pointer reset
             c_t1, c_t2, c_t3 = st.columns(3)
             with c_t1: st.metric("Target Styles Sheet", t_info['styles_sheet'])
             with c_t2: st.metric("Template Columns", len(t_info['headers']))
@@ -3855,6 +3941,7 @@ def render_listing_ui():
         else:
             sizes_list = [s.strip() for s in sizes_input.split(',') if s.strip()]
             try:
+                tpl_file.seek(0)
                 if is_ajio:
                     # ============ AJIO: Perfect Listing engine ============
                     ctx = {
@@ -4041,3 +4128,18 @@ if CONVERT_MODE:
     render_convert_ui()
 else:
     render_listing_ui()
+
+
+# ======================================================================
+# 🔐 .streamlit/secrets.toml (EXAMPLE - is file ko code ke saath kabhi git me push mat karna)
+# ----------------------------------------------------------------------
+# IMGBB_API_KEY   = "your-new-imgbb-key"
+# GEMINI_API_KEY  = "your-new-gemini-key"
+# NVIDIA_API_KEY  = "your-new-nvidia-key"
+# GROQ_API_KEY    = "your-new-groq-key"
+#
+# # Optional (model names change karne ho to):
+# # GEMINI_VISION_MODEL = "gemini-2.0-flash"
+# # NVIDIA_MODEL        = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+# # GROQ_VISION_MODEL   = "llama-3.2-11b-vision-preview"
+# ======================================================================
