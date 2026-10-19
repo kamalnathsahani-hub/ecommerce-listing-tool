@@ -2444,6 +2444,662 @@ def run_seller_central(uploaded_file, ctx):
     wb.save(output)
     output.seek(0)
     return output.getvalue(), preview, total_written
+# ======================================================================
+# 🛍️ DEDICATED MEESHO ENGINE (MeeshoTemplate2PricesGSTIN - Shirts/Trousers/All)
+# ======================================================================
+MEESHO_COLOR_SYNONYMS = {
+    'pista': 'Mint Green', 'pistachio': 'Mint Green', 'sea green': 'Mint Green',
+    'seagreen': 'Mint Green', 'lightgreen': 'Mint Green', 'light green': 'Mint Green',
+    'lightgrey': 'Grey Melange', 'light grey': 'Grey Melange',
+    'lightgray': 'Grey Melange', 'light gray': 'Grey Melange',
+    'darkgrey': 'Charcoal', 'dark grey': 'Charcoal',
+    'navy': 'Navy Blue', 'navyblue': 'Navy Blue', 'navy blue': 'Navy Blue',
+    'darkblue': 'Navy Blue', 'dark blue': 'Navy Blue',
+    'skyblue': 'Blue', 'sky blue': 'Blue', 'lightblue': 'Blue', 'light blue': 'Blue',
+    'iceblue': 'Aqua Blue', 'ice blue': 'Aqua Blue',
+    'chiku': 'Cream', 'chikoo': 'Cream', 'badami': 'Beige',
+    'khakhi': 'Khaki', 'biege': 'Beige',
+    'coffee': 'Brown', 'chocolate': 'Brown', 'camel': 'Brown', 'tan': 'Brown',
+    'wine': 'Maroon', 'burgundy': 'Maroon',
+    'off white': 'Off-White', 'offwhite': 'Off-White',
+    'lavender': 'Lavendar', 'lavendar': 'Lavendar',
+}
+
+MEESHO_VARIATION_SYNONYMS = {
+    '2xl': 'XXL', 'xxl': 'XXL',
+    '3xl': 'XXXL', 'xxxl': 'XXXL',
+    '4xl': '4XL', 'xxxxl': 'XXXXL',
+    '5xl': '5XL', 'xs': 'XS', 'xxs': 'XXS',
+    's': 'S', 'm': 'M', 'l': 'L', 'xl': 'XL',
+    'free': 'Free Size', 'freesize': 'Free Size', 'free size': 'Free Size',
+}
+
+MEESHO_SHIRT_MEASUREMENTS = {
+    'XS':   {'chest': 38, 'length': 27.5, 'shoulder': 16.5},
+    'S':    {'chest': 40, 'length': 28,   'shoulder': 17},
+    'M':    {'chest': 42, 'length': 29,   'shoulder': 17.5},
+    'L':    {'chest': 44, 'length': 29.5, 'shoulder': 18},
+    'XL':   {'chest': 46, 'length': 30,   'shoulder': 19},
+    'XXL':  {'chest': 48, 'length': 30.5, 'shoulder': 20},
+    '2XL':  {'chest': 48, 'length': 30.5, 'shoulder': 20},
+    'XXXL': {'chest': 50, 'length': 31,   'shoulder': 21},
+    '3XL':  {'chest': 50, 'length': 31,   'shoulder': 21},
+    '4XL':  {'chest': 52, 'length': 31.5, 'shoulder': 22},
+}
+
+MEESHO_TROUSER_MEASUREMENTS = {
+    '24':   {'waist': 24, 'hip': 32, 'length': 38},
+    '26':   {'waist': 26, 'hip': 34, 'length': 38},
+    '28':   {'waist': 28, 'hip': 36, 'length': 39},
+    '30':   {'waist': 30, 'hip': 38, 'length': 39},
+    '32':   {'waist': 32, 'hip': 40, 'length': 40},
+    '34':   {'waist': 34, 'hip': 42, 'length': 40},
+    '36':   {'waist': 36, 'hip': 44, 'length': 41},
+    '38':   {'waist': 38, 'hip': 46, 'length': 41},
+    '40':   {'waist': 40, 'hip': 48, 'length': 42},
+    '42':   {'waist': 42, 'hip': 50, 'length': 42},
+    'XS':   {'waist': 26, 'hip': 36, 'length': 38},
+    'S':    {'waist': 28, 'hip': 38, 'length': 39},
+    'M':    {'waist': 30, 'hip': 40, 'length': 39},
+    'L':    {'waist': 32, 'hip': 42, 'length': 40},
+    'XL':   {'waist': 34, 'hip': 44, 'length': 40},
+    'XXL':  {'waist': 36, 'hip': 46, 'length': 41},
+    '2XL':  {'waist': 36, 'hip': 46, 'length': 41},
+    'XXXL': {'waist': 38, 'hip': 48, 'length': 41},
+    '3XL':  {'waist': 38, 'hip': 48, 'length': 41},
+}
+
+def _extract_meesho_col_header(cell_val):
+    if cell_val in (None, ''):
+        return ""
+    lines = [ln.strip() for ln in str(cell_val).splitlines() if ln.strip()]
+    return lines[0] if lines else ""
+
+def analyze_meesho_template(wb):
+    main_ws, val_ws = None, None
+    for sname in wb.sheetnames:
+        ws_try = wb[sname]
+        r1_c1 = str(ws_try.cell(1, 1).value or '').strip().lower()
+        r2_c1 = str(ws_try.cell(2, 1).value or '').strip().lower()
+        r3_c1 = str(ws_try.cell(3, 1).value or '').strip().lower()
+
+        if 'field type' in r1_c1 or 'validation' in sname.lower():
+            if val_ws is None:
+                val_ws = ws_try
+            continue
+
+        if ('field names' in r2_c1 or 'fields + description' in r3_c1) and main_ws is None:
+            if not any(ign in sname.lower() for ign in ('sample', 'example', 'reference', 'instruction', 'return')):
+                main_ws = ws_try
+
+    if main_ws is None:
+        for sname in wb.sheetnames:
+            ws_try = wb[sname]
+            if 'fields + description' in str(ws_try.cell(3, 1).value or '').strip().lower():
+                main_ws = ws_try
+                break
+
+    if main_ws is None:
+        return None
+
+    banner = str(main_ws.cell(1, 1).value or main_ws.cell(1, 5).value or main_ws.title).strip()
+    headers, compulsory_cols = {}, []
+    rec_return_diff = 28
+
+    for c in range(1, main_ws.max_column + 1):
+        r2_val = str(main_ws.cell(2, c).value or '').strip()
+        r3_raw = str(main_ws.cell(3, c).value or '')
+        h_name = _extract_meesho_col_header(r3_raw)
+        if h_name:
+            headers[c] = h_name
+        if 'compulsory' in r2_val.lower():
+            compulsory_cols.append(c)
+        if h_name.lower() == 'wrong/defective returns price':
+            m_diff = re.search(r'Rs\.?\s*(\d+)\s*lower', r3_raw, flags=re.IGNORECASE)
+            if m_diff:
+                rec_return_diff = int(m_diff.group(1))
+
+    dropdown_map = {}
+    if val_ws is not None:
+        val_headers = {}
+        for vc in range(1, val_ws.max_column + 1):
+            vh = str(val_ws.cell(1, vc).value or '').strip()
+            if vh:
+                val_headers[_norm_h(vh)] = vc
+
+        for c, h_name in headers.items():
+            nh = _norm_h(h_name)
+            vc = val_headers.get(nh)
+            if vc is None and c <= val_ws.max_column and _norm_h(val_ws.cell(1, c).value) == nh:
+                vc = c
+            if vc is not None:
+                opts = []
+                for r in range(3, val_ws.max_row + 1):
+                    v = val_ws.cell(r, vc).value
+                    if v in (None, ''):
+                        continue
+                    sv = str(v).strip()
+                    if not sv or sv.lower().startswith('not available]'):
+                        continue
+                    opts.append(v)
+                if opts:
+                    dropdown_map[c] = opts
+
+    for c in headers:
+        if c not in dropdown_map:
+            dv_opts = get_dropdown_options_for_column(main_ws, c)
+            if dv_opts:
+                dropdown_map[c] = dv_opts
+
+    det_gender = "Men" if any(w in banner.lower() for w in ['men ', 'mens', '/men']) and 'women' not in banner.lower() else detect_gender(banner)
+    det_cat = detect_product_category(banner, "", main_ws.title)
+
+    return {
+        'main_ws': main_ws, 'val_ws': val_ws, 'sheet_name': main_ws.title,
+        'banner': banner, 'headers': headers, 'compulsory_cols': compulsory_cols,
+        'dropdown_map': dropdown_map, 'rec_return_diff': rec_return_diff,
+        'detected_gender': det_gender, 'detected_category': det_cat,
+    }
+
+def _meesho_pick_option(options, desired, fallback=None):
+    if not options:
+        return desired if desired is not None else fallback
+    str_opts = [(o, str(o).strip()) for o in options if o not in (None, '')]
+    if not str_opts:
+        return desired if desired is not None else fallback
+
+    for candidate in (desired, fallback):
+        if candidate in (None, ''):
+            continue
+        cand_str = str(candidate).strip()
+        cand_low = cand_str.lower()
+        cand_norm = _norm_h(cand_str)
+
+        for orig, s_opt in str_opts:
+            if s_opt.lower() == cand_low:
+                return orig
+        try:
+            cand_num = float(cand_str)
+            for orig, s_opt in str_opts:
+                try:
+                    if abs(float(s_opt) - cand_num) < 1e-6:
+                        return orig
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        for orig, s_opt in str_opts:
+            if _norm_h(s_opt) == cand_norm:
+                return orig
+        for orig, s_opt in str_opts:
+            ol = s_opt.lower()
+            if cand_low in ol or ol in cand_low:
+                return orig
+        close = difflib.get_close_matches(cand_str, [s for _, s in str_opts], n=1, cutoff=0.45)
+        if close:
+            for orig, s_opt in str_opts:
+                if s_opt == close[0]:
+                    return orig
+
+    return str_opts[0][0]
+
+def _parse_meesho_mfg_details(mfg_raw, mfg_name_input="", mfg_pin_input="", brand_fallback=""):
+    raw = str(mfg_raw or '').strip()
+    pin = str(mfg_pin_input or '').strip()
+    if not pin:
+        m_pin = re.search(r'\b(\d{6})\b', raw)
+        if m_pin:
+            pin = m_pin.group(1)
+    if not pin:
+        pin = "394107"
+
+    name = str(mfg_name_input or '').strip()
+    addr = raw
+    if not name:
+        lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+        if len(lines) >= 2:
+            name = lines[0].rstrip(',:-')
+            addr = ", ".join(lines[1:])
+        else:
+            name = "JB Fashion"
+
+    addr_clean = re.sub(r'[\s,\-]*\b' + re.escape(pin) + r'\b[\s,\-]*$', '', addr).strip().strip(',')
+    if not addr_clean:
+        addr_clean = raw or "PLOT NO 41, DEVAM AMB, RING ROAD -300FTRO PARK, NEAR VEDANT EMBRO PARK, Kosad, Surat"
+
+    pin_val = int(pin) if str(pin).isdigit() else pin
+    return name, addr_clean, pin_val
+
+def _extract_meesho_group_prefix(folder_name):
+    clean = clean_sku_name(folder_name)
+    base = pl_extract_style_code(clean)
+    base_no_num = re.sub(r'-\d+$', '', base)
+    return base_no_num.lower() if base_no_num else base.lower()
+
+def _infer_meesho_garment_attributes(raw_fld, clean_style, cat, det_gen, det_col, ctx):
+    fld_low = f"{raw_fld} {clean_style}".lower()
+    vr = (ctx.get('vision_results') or {}).get(clean_style) or {}
+
+    raw_explicit_col = extract_explicit_color_from_text(raw_fld)
+    col_key = str(raw_explicit_col or det_col or 'Black').strip().lower()
+    for tok in ('pista', 'chiku', 'chikoo', 'light grey', 'lightgrey', 'sky blue', 'sky-blue', 'skyblue', 'navyblue', 'navy blue', 'navy', 'khakhi', 'off white', 'offwhite', 'lavender'):
+        if tok in fld_low:
+            col_key = tok
+            break
+    meesho_color_desired = MEESHO_COLOR_SYNONYMS.get(col_key, det_col)
+
+    ai_sleeve = str(vr.get('sleeve_length') or '').lower()
+    if any(w in fld_low for w in ['full-shirt', 'full_shirt', 'full sleeve', 'fullsleeve', 'crush-lining', 'rib-shirt', 'utility-shirt']):
+        meesho_sleeve, title_sleeve = "Long Sleeves", "Full Sleeve"
+    elif any(w in fld_low for w in ['half-shirt', 'half_shirt', 'half sleeve', 'short-kurta', 'aloha', 'crush-', 'embro-', 'insta-', 'lilen-strip', 'linen-e-', 'oxford-lining', 'resort-', 'sunrise-lining', 'turkys']):
+        meesho_sleeve, title_sleeve = "Short Sleeves", "Short Sleeve"
+    elif 'long' in ai_sleeve or 'full' in ai_sleeve:
+        meesho_sleeve, title_sleeve = "Long Sleeves", "Full Sleeve"
+    elif 'three' in ai_sleeve or '3/4' in ai_sleeve:
+        meesho_sleeve, title_sleeve = "Three-Quarter Sleeves", "3/4 Sleeve"
+    elif 'sleeveless' in ai_sleeve:
+        meesho_sleeve, title_sleeve = "Sleeveless", "Sleeveless"
+    else:
+        meesho_sleeve, title_sleeve = "Short Sleeves", "Short Sleeve"
+
+    if any(w in fld_low for w in ['mandarin', 'short-kurta', 'crazy-half-shirt', 'kurta']):
+        meesho_neck = "Mandarin"
+    elif any(w in fld_low for w in ['cuban', 'aloha']) or re.match(r'^shirt-\d+', clean_style.lower()):
+        meesho_neck = "Cuban Collar"
+    elif any(w in fld_low for w in ['linen-e-', 'spread']):
+        meesho_neck = "Spread Collar"
+    else:
+        meesho_neck = "Slim Collar"
+
+    ai_pat = str(vr.get('pattern') or '').strip()
+    ai_mat = str(vr.get('material') or '').strip()
+
+    if any(w in fld_low for w in ['aloha', 'leaf', 'botanical']):
+        meesho_pattern, meesho_print_type, meesho_fabric, title_desc = "Printed", "Botanical", "Polycotton", "Leaf Print Casual"
+    elif 'embro-flower' in fld_low or ('embro' in fld_low and 'flower' in fld_low):
+        meesho_pattern, meesho_print_type, meesho_fabric, title_desc = "Embroidered", "Embroidered", "Cotton", "Floral Embriodered Casual"
+    elif 'linen-e-' in fld_low:
+        meesho_pattern, meesho_print_type, meesho_fabric, title_desc = "Embroidered", "Embroidered", "Cotton", "Embriodered Print Double-Breasted Casual"
+    elif 'embro' in fld_low or 'embroidered' in ai_pat.lower():
+        meesho_pattern, meesho_print_type, meesho_fabric, title_desc = "Embroidered", "Embroidered", "Cotton", "Embriodered Casual"
+    elif any(w in fld_low for w in ['check', 'chacks', 'turkys']) or 'check' in ai_pat.lower():
+        meesho_pattern, meesho_print_type, meesho_fabric, title_desc = "Checked", "Checked", "Cotton Blend", "Chacks print Casual"
+    elif any(w in fld_low for w in ['strip', 'lining', 'crazy-full', 'crazy-half']) or 'strip' in ai_pat.lower():
+        meesho_pattern, meesho_print_type = "Striped", "Striped"
+        if 'oxford' in fld_low:
+            meesho_fabric = "Cotton"
+        elif any(w in fld_low for w in ['crush-lining', 'lilen-strip', 'sunrise-lining']):
+            meesho_fabric = "Polycotton"
+        else:
+            meesho_fabric = ai_mat if ai_mat in ('Cotton', 'Polycotton', 'Cotton Blend', 'Polyester') else "Polyester"
+        title_desc = "Striped Mandarin Collar" if meesho_neck == "Mandarin" else "Striped Casual"
+    elif 'rib-shirt' in fld_low or 'corduroy' in fld_low:
+        meesho_pattern, meesho_print_type, meesho_fabric, title_desc = "Solid", "Solid", "Polyester", "Corduroy Casual"
+    elif 'short-kurta' in fld_low:
+        meesho_pattern, meesho_print_type, meesho_fabric, title_desc = "Solid", "Solid", "Polyester", "Mandarin Collar"
+    elif 'utility' in fld_low:
+        meesho_pattern, meesho_print_type, meesho_fabric, title_desc = "Solid", "Solid", "Polycotton", "Solid Casual"
+    elif 'resort' in fld_low:
+        meesho_pattern, meesho_print_type, meesho_fabric, title_desc = "Solid", "Solid", "Cotton Blend", "Solid Casual"
+    elif 'crush' in fld_low:
+        meesho_pattern, meesho_print_type, meesho_fabric, title_desc = "Solid", "Solid", "Polyester", "Solid Casual"
+    elif 'insta' in fld_low or re.match(r'^shirt-\d+', clean_style.lower()):
+        meesho_pattern, meesho_print_type, meesho_fabric, title_desc = "Solid", "Solid", "Polyester", "Textured Casual"
+    else:
+        meesho_pattern = ai_pat if ai_pat else "Solid"
+        meesho_print_type = meesho_pattern
+        meesho_fabric = ai_mat if ai_mat else DEFAULT_CATEGORY_FABRICS.get(cat, "Cotton Blend")
+        title_desc = "Solid Casual" if meesho_pattern.lower() == 'solid' else f"{meesho_pattern} Casual"
+
+    brand_str = f"{ctx['brand']} " if ctx.get('brand') else ""
+    g_title = "Women's" if det_gen == "Women" else "Men's"
+    cat_label = CATEGORY_LABELS.get(cat, "Casual Wear")
+
+    if cat == 'shirt':
+        if 'Double-Breasted' in title_desc:
+            product_name = f"{brand_str}{g_title} {title_desc} Shirt".strip()
+        else:
+            product_name = f"{brand_str}{g_title} {title_desc} {title_sleeve} Shirt".strip()
+    elif cat in ('trousers', 'cargo', 'joggers', 'jeans', 'shorts'):
+        fit_word = "Cargo" if cat == 'cargo' else ("Jogger" if cat == 'joggers' else "Regular Fit")
+        product_name = f"{brand_str}{g_title} {meesho_pattern} {fit_word} {cat_label}".strip()
+    else:
+        product_name = f"{brand_str}{g_title} {title_desc} {cat_label}".strip()
+
+    return {
+        'product_name': re.sub(r'\s+', ' ', product_name).strip(),
+        'color': meesho_color_desired,
+        'fabric': meesho_fabric,
+        'pattern': meesho_pattern,
+        'print_type': meesho_print_type,
+        'neck': meesho_neck,
+        'sleeve_length': meesho_sleeve,
+    }
+
+def run_meesho(uploaded_file, ctx, size_charts_data=None):
+    wb = load_workbook_clean(uploaded_file, uploaded_file.name)
+    m_info = analyze_meesho_template(wb)
+    if not m_info:
+        raise ValueError("Meesho template sheet ('Fields + Description:') nahi mili. Kripya valid Meesho template upload karein.")
+
+    ws = m_info['main_ws']
+    try:
+        ungroup_worksheet(ws)
+    except Exception:
+        pass
+
+    headers = m_info['headers']
+    dropdown_map = m_info['dropdown_map']
+    rec_diff = m_info['rec_return_diff']
+    tpl_cat = m_info['detected_category']
+    tpl_gen = m_info['detected_gender']
+
+    norm_to_col = {}
+    for c, h_name in headers.items():
+        nh = _norm_h(h_name)
+        if nh and nh not in norm_to_col:
+            norm_to_col[nh] = c
+
+    def get_mcol(candidates):
+        for cand in candidates:
+            nc = _norm_h(cand)
+            if nc in norm_to_col:
+                return norm_to_col[nc]
+        return None
+
+    c_prod_name = get_mcol(['Product Name'])
+    c_variation = get_mcol(['Variation'])
+    c_meesho_price = get_mcol(['Meesho Price'])
+    c_return_price = get_mcol(['Wrong/Defective Returns Price'])
+    c_mrp = get_mcol(['MRP'])
+    c_gst = get_mcol(['GST %', 'GST'])
+    c_hsn = get_mcol(['HSN ID', 'HSN', 'HSN Code'])
+    c_weight = get_mcol(['Net Weight (gms)', 'Net Weight'])
+    c_inventory = get_mcol(['Inventory'])
+    c_country = get_mcol(['Country of Origin'])
+    c_mfg_name = get_mcol(['Manufacturer Name'])
+    c_mfg_addr = get_mcol(['Manufacturer Address'])
+    c_mfg_pin = get_mcol(['Manufacturer Pincode'])
+    c_pkr_name = get_mcol(['Packer Name'])
+    c_pkr_addr = get_mcol(['Packer Address'])
+    c_pkr_pin = get_mcol(['Packer Pincode'])
+    c_imp_name = get_mcol(['Importer Name'])
+    c_imp_addr = get_mcol(['Importer Address'])
+    c_imp_pin = get_mcol(['Importer Pincode'])
+
+    c_color = get_mcol(['Color', 'Colour'])
+    c_fabric = get_mcol(['Fabric'])
+    c_fit = get_mcol(['Fit/Shape', 'Fit/ Shape', 'Fit'])
+    c_generic = get_mcol(['Generic Name'])
+    c_neck = get_mcol(['Neck', 'Collar'])
+    c_net_qty = get_mcol(['Net Quantity (N)', 'Net Quantity'])
+    c_occasion = get_mcol(['Occasion'])
+    c_pattern = get_mcol(['Pattern'])
+    c_print_type = get_mcol(['Print Or Pattern Type', 'Print or Pattern Type'])
+    c_sleeve_len = get_mcol(['Sleeve Length'])
+
+    c_chest = get_mcol(['Chest Size', 'Bust Size'])
+    c_length_sz = get_mcol(['Length Size'])
+    c_shoulder = get_mcol(['Shoulder Size'])
+
+    c_stretch = get_mcol(['Stretchability'])
+    c_type = get_mcol(['Type'])
+    c_waist_rise = get_mcol(['Waist Rise'])
+    c_hip = get_mcol(['Hip Size'])
+    c_waist_sz = get_mcol(['Waist Size'])
+
+    c_imgs = [
+        get_mcol(['Image 1 (Front)', 'Image 1', 'Image1']),
+        get_mcol(['Image 2', 'Image2']),
+        get_mcol(['Image 3', 'Image3']),
+        get_mcol(['Image 4', 'Image4']),
+    ]
+
+    c_style_id = get_mcol(['Product ID / Style ID', 'Style ID', 'Product ID'])
+    c_sku_id = get_mcol(['SKU ID', 'Seller SKU', 'SKU'])
+    c_brand_name = get_mcol(['Brand Name'])
+    c_group_id = get_mcol(['Group ID'])
+    c_desc = get_mcol(['Product Description', 'Description'])
+    c_brand_dd = get_mcol(['Brand'])
+    c_closure = get_mcol(['Closure'])
+    c_distress = get_mcol(['Distress'])
+    c_hemline = get_mcol(['Hemline'])
+    c_length_opt = get_mcol(['Length'])
+    c_pockets = get_mcol(['Number of Pockets'])
+    c_sleeve_style = get_mcol(['Sleeve Styling'])
+    c_style_opt = get_mcol(['Style'])
+    c_waist_closure = get_mcol(['Waist closure', 'Waist Closure'])
+    c_weave = get_mcol(['Weave Pattern'])
+
+    def mset(row_idx, col_idx, val, dropdown=False, fill=None, font=None):
+        if not col_idx or val in (None, ''):
+            return
+        cell = ws.cell(row_idx, col_idx)
+        if dropdown and col_idx in dropdown_map:
+            cell.value = _meesho_pick_option(dropdown_map[col_idx], val, val)
+        else:
+            cell.value = val
+        if fill:
+            cell.fill = fill
+        if font:
+            cell.font = font
+
+    # Start writing at Row 5 (after Row 4 Tutorial Link)
+    curr_r = 5
+    check_col = c_prod_name or c_sku_id or 4
+    while curr_r <= ws.max_row and ws.cell(curr_r, check_col).value not in (None, ''):
+        curr_r += 1
+
+    # Parse Manufacturer & Packer details
+    mfg_name, mfg_addr, mfg_pin = _parse_meesho_mfg_details(
+        ctx.get('mfg', ''),
+        ctx.get('meesho_mfg_name', ''),
+        ctx.get('meesho_mfg_pin', ''),
+        ctx.get('brand', '')
+    )
+
+    # Price & Return Price calculation
+    raw_meesho_price = str(ctx.get('selling_price') or '').strip()
+    raw_return_price = str(ctx.get('meesho_return_price') or '').strip()
+    raw_mrp = str(ctx.get('mrp') or '').strip()
+
+    meesho_price_val = int(raw_meesho_price) if raw_meesho_price.isdigit() else (raw_meesho_price or None)
+    mrp_val = int(raw_mrp) if raw_mrp.isdigit() else (raw_mrp or None)
+
+    if raw_return_price:
+        return_price_val = int(raw_return_price) if raw_return_price.isdigit() else raw_return_price
+    elif isinstance(meesho_price_val, int) and meesho_price_val > rec_diff:
+        return_price_val = meesho_price_val - rec_diff
+    else:
+        return_price_val = None
+
+    gst_val = int(ctx.get('meesho_gst', 5))
+    inv_val = int(ctx.get('quantity', 0))
+
+    # Group ID assignment per style family
+    group_options = dropdown_map.get(c_group_id, [f"Group  {i}" for i in range(1, 201)])
+    family_to_group = {}
+    group_counter = 0
+
+    total_added = 0
+    preview = []
+
+    for raw_fld in ctx['folders']:
+        clean_style = clean_sku_name(raw_fld)
+        cat = resolve_category(clean_style, ctx, ws.title)
+        if cat == 'apparel' and tpl_cat and tpl_cat != 'apparel':
+            cat = tpl_cat
+        det_gen = tpl_gen if tpl_gen in ('Men', 'Women') else resolve_gender(clean_style, ctx)
+        det_col = resolve_color(raw_fld, clean_style, ctx)
+
+        fam_key = _extract_meesho_group_prefix(raw_fld)
+        if fam_key not in family_to_group:
+            group_counter += 1
+            desired_grp_1 = f"Group  {group_counter}"
+            desired_grp_2 = f"Group {group_counter:02d}"
+            family_to_group[fam_key] = _meesho_pick_option(group_options, desired_grp_1, desired_grp_2)
+        group_id_val = family_to_group[fam_key]
+
+        attrs = _infer_meesho_garment_attributes(raw_fld, clean_style, cat, det_gen, det_col, ctx)
+        sku_img_urls = get_sku_img_urls(raw_fld, ctx, clean_style)
+
+        # Weight & HSN
+        custom_wt = str(ctx.get('meesho_weight') or '').strip()
+        if custom_wt.isdigit():
+            weight_val = int(custom_wt)
+        else:
+            weight_val = 300 if cat in ('shirt', 'tshirt', 'top', 'kurti', 'kurta') else 350
+
+        hsn_desired = str(ctx.get('hsn') or '').strip() or get_hsn_code(cat)
+        generic_desired = "Trousers" if cat in ('trousers', 'cargo', 'joggers', 'pants') else ("Shirts" if cat == 'shirt' else CATEGORY_LABELS.get(cat, "Shirts"))
+
+        # Check dropdown options for final preview values
+        final_color = _meesho_pick_option(dropdown_map.get(c_color), attrs['color'], "Black")
+        final_fabric = _meesho_pick_option(dropdown_map.get(c_fabric), attrs['fabric'], "Cotton")
+        final_pattern = _meesho_pick_option(dropdown_map.get(c_pattern), attrs['pattern'], "Solid")
+
+        preview.append({
+            'Sheet': ws.title,
+            'Product ID / Style ID': clean_style,
+            'Group ID': group_id_val,
+            'Product Name': attrs['product_name'],
+            'Color': final_color,
+            'Fabric': final_fabric,
+            'Pattern': final_pattern,
+            'Meesho Price': meesho_price_val or 'Highlight',
+            'Return Price': return_price_val or 'Highlight',
+            'MRP': mrp_val or 'Highlight',
+        })
+
+        for sz in ctx['sizes']:
+            clean_sz = clean_sku_name(sz)
+            full_sku = f"{clean_style}-{clean_sz}"
+            var_desired = MEESHO_VARIATION_SYNONYMS.get(clean_sz.lower(), clean_sz)
+
+            mset(curr_r, c_prod_name, attrs['product_name'])
+            mset(curr_r, c_variation, var_desired, dropdown=True)
+
+            if c_meesho_price:
+                if meesho_price_val is not None:
+                    ws.cell(curr_r, c_meesho_price).value = meesho_price_val
+                else:
+                    ws.cell(curr_r, c_meesho_price).fill = HIGHLIGHT_FILL
+                    ws.cell(curr_r, c_meesho_price).font = HIGHLIGHT_FONT
+
+            if c_return_price:
+                if return_price_val is not None:
+                    ws.cell(curr_r, c_return_price).value = return_price_val
+                elif meesho_price_val is None:
+                    ws.cell(curr_r, c_return_price).fill = HIGHLIGHT_FILL
+                    ws.cell(curr_r, c_return_price).font = HIGHLIGHT_FONT
+
+            if c_mrp:
+                if mrp_val is not None:
+                    ws.cell(curr_r, c_mrp).value = mrp_val
+                else:
+                    ws.cell(curr_r, c_mrp).fill = HIGHLIGHT_FILL
+                    ws.cell(curr_r, c_mrp).font = HIGHLIGHT_FONT
+
+            mset(curr_r, c_gst, gst_val, dropdown=True)
+            mset(curr_r, c_hsn, hsn_desired, dropdown=True)
+            mset(curr_r, c_weight, weight_val)
+            mset(curr_r, c_inventory, inv_val)
+            mset(curr_r, c_country, "India", dropdown=True)
+
+            mset(curr_r, c_mfg_name, mfg_name)
+            mset(curr_r, c_mfg_addr, mfg_addr)
+            mset(curr_r, c_mfg_pin, mfg_pin)
+            mset(curr_r, c_pkr_name, mfg_name)
+            mset(curr_r, c_pkr_addr, mfg_addr)
+            mset(curr_r, c_pkr_pin, mfg_pin)
+            mset(curr_r, c_imp_name, "Not Required")
+            mset(curr_r, c_imp_addr, "Not Required")
+            mset(curr_r, c_imp_pin, "Not Required")
+
+            mset(curr_r, c_color, attrs['color'], dropdown=True)
+            mset(curr_r, c_fabric, attrs['fabric'], dropdown=True)
+
+            fit_desired = "Cargo" if cat == 'cargo' else ("Jogger Pants" if cat == 'joggers' else "Regular")
+            mset(curr_r, c_fit, fit_desired, dropdown=True)
+            mset(curr_r, c_generic, generic_desired, dropdown=True)
+            mset(curr_r, c_net_qty, 1, dropdown=True)
+            mset(curr_r, c_occasion, "Casual", dropdown=True)
+            mset(curr_r, c_pattern, attrs['pattern'], dropdown=True)
+            mset(curr_r, c_print_type, attrs['print_type'], dropdown=True)
+
+            # Topwear / Shirts specific columns
+            if c_neck:
+                mset(curr_r, c_neck, attrs['neck'], dropdown=True)
+            if c_sleeve_len:
+                mset(curr_r, c_sleeve_len, attrs['sleeve_length'], dropdown=True)
+
+            sz_key = clean_sz.upper()
+            sh_m = MEESHO_SHIRT_MEASUREMENTS.get(sz_key) or MEESHO_SHIRT_MEASUREMENTS.get( str(var_desired).upper() ) or {'chest': 42, 'length': 29, 'shoulder': 17.5}
+            if c_chest:
+                mset(curr_r, c_chest, sh_m['chest'], dropdown=True)
+            if c_shoulder:
+                mset(curr_r, c_shoulder, sh_m['shoulder'], dropdown=True)
+
+            # Bottomwear / Trousers specific columns
+            tr_m = MEESHO_TROUSER_MEASUREMENTS.get(sz_key) or MEESHO_TROUSER_MEASUREMENTS.get(str(var_desired).upper())
+            if not tr_m:
+                try:
+                    w_num = int(re.findall(r'\d+', clean_sz)[0])
+                    tr_m = {'waist': w_num, 'hip': w_num + 8, 'length': 40}
+                except Exception:
+                    tr_m = {'waist': 32, 'hip': 40, 'length': 40}
+
+            if c_waist_sz:
+                mset(curr_r, c_waist_sz, tr_m['waist'], dropdown=True)
+            if c_hip:
+                mset(curr_r, c_hip, tr_m['hip'], dropdown=True)
+
+            if c_length_sz:
+                len_val = tr_m['length'] if (c_waist_sz or cat in ('trousers', 'cargo', 'joggers', 'jeans')) else sh_m['length']
+                mset(curr_r, c_length_sz, len_val, dropdown=True)
+
+            if c_type:
+                type_desired = "Cargos" if cat == 'cargo' else ("Joggers" if cat == 'joggers' else "Regular")
+                mset(curr_r, c_type, type_desired, dropdown=True)
+            if c_waist_rise:
+                mset(curr_r, c_waist_rise, "Mid Rise", dropdown=True)
+
+            # Images 1..4
+            for img_i, c_im in enumerate(c_imgs):
+                if c_im and img_i < len(sku_img_urls):
+                    ws.cell(curr_r, c_im).value = sku_img_urls[img_i]
+
+            mset(curr_r, c_style_id, clean_style)
+            mset(curr_r, c_sku_id, full_sku)
+            mset(curr_r, c_brand_name, ctx.get('brand', ''))
+            mset(curr_r, c_group_id, group_id_val, dropdown=True)
+
+            # Recommended / Optional fields matching Shirts-10001 & Trousers-10262
+            if c_hemline:
+                mset(curr_r, c_hemline, "Straight", dropdown=True)
+            if c_length_opt:
+                len_opt_desired = "Full Length" if (c_waist_sz or cat in ('trousers', 'cargo', 'joggers', 'jeans')) else "Regular"
+                mset(curr_r, c_length_opt, len_opt_desired, dropdown=True)
+            if c_pockets:
+                poc_desired = 2 if (c_waist_sz or cat in ('trousers', 'cargo', 'joggers', 'jeans')) else 1
+                mset(curr_r, c_pockets, poc_desired, dropdown=True)
+            if c_sleeve_style:
+                mset(curr_r, c_sleeve_style, "Regular", dropdown=True)
+            if c_stretch:
+                mset(curr_r, c_stretch, "No", dropdown=True)
+            if c_distress:
+                mset(curr_r, c_distress, "Not Applicable", dropdown=True)
+            if c_waist_closure:
+                wc_desired = "Drawstring" if cat == 'joggers' else "Button"
+                mset(curr_r, c_waist_closure, wc_desired, dropdown=True)
+
+            curr_r += 1
+            total_added += 1
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output.getvalue(), preview, total_added, ws.title
 
 # ======================================================================
 # UNIVERSAL ENGINE (Flipkart / Meesho / Myntra)
