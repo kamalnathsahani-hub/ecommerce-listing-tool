@@ -7,8 +7,8 @@ from PIL import Image
 
 st.set_page_config(page_title="Multi-Marketplace Auto Listing Generator", layout="wide")
 if st.button("⬅️ Back to Home"): st.switch_page("app.py")
-st.title("📦 Multi-Marketplace Auto Listing Generator (Universal Pro V25 - Unified Dashboard)")
-st.caption("Ajio | Amazon VC | VC➜SC | Amazon SC | Flipkart | Meesho | Myntra + 🤖 AI Vision (Gemini ➜ NVIDIA ➜ Groq Fallback)")
+st.title("📦 Multi-Marketplace Auto Listing Generator (Universal Pro V26 - Unified Dashboard)")
+st.caption("Ajio | Amazon VC | VC➜SC | Amazon SC | Flipkart | Meesho | Myntra + 🤖 AI Vision & Universal Size Chart Engine")
 
 def _get_secret(name, default=""):
   try: val = st.secrets[name]
@@ -40,82 +40,107 @@ HIGHLIGHT_FILL = PatternFill(start_color="FFF200", end_color="FFF200", fill_type
 HIGHLIGHT_FONT = Font(bold=True)
 DESC_MAX_LEN = 200
 
-detected_folders, folder_images_count, zip_images_data, detected_size_chart_info = [], {}, {}, {}
-for _k in ('img_cache', 'category_overrides', 'gender_overrides', 'vision_results'):
+for _k in ('img_cache', 'category_overrides', 'gender_overrides', 'vision_results', 'size_chart_cache'):
   if _k not in st.session_state: st.session_state[_k] = {}
 img_cache = st.session_state['img_cache']
 
 def clean_sku_name(name):
-  cleaned = re.sub(r'[\s_]+', '-', str(name).strip())
-  return re.sub(r'-+', '-', cleaned).strip('-')
+  return re.sub(r'-+', '-', re.sub(r'[\s_]+', '-', str(name).strip())).strip('-')
 
 def is_size_chart_file(filename):
   low = os.path.basename(filename).lower()
-  patterns = ['size_chart', 'size-chart', 'sizechart', 'size_guide', 'sizeguide', 'size chart', 'chart', 'measurement']
+  patterns = ['size_chart', 'size-chart', 'sizechart', 'size_guide', 'sizeguide', 'size chart', 'size guide', 'chart', 'measurement', 'measurements', 'sizing', 'meas']
   return any(p in low for p in patterns) and low.endswith(('.jpg', '.jpeg', '.png', '.webp'))
+
+def _visual_is_size_chart(image_bytes):
+  if not image_bytes: return False
+  try:
+    img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+    w, h = img.size
+    if w < 120 or h < 120: return False
+    small = img.resize((84, 84))
+    pixels = list(small.getdata())
+    total = len(pixels)
+    light_bg, dark_ink, vivid = 0, 0, 0
+    for r, g, b in pixels:
+      mx, mn = max(r, g, b), min(r, g, b)
+      sat = (mx - mn) / float(mx) if mx > 0 else 0.0
+      val = mx / 255.0
+      if sat < 0.14 and val > 0.80: light_bg += 1
+      elif sat < 0.25 and val < 0.28: dark_ink += 1
+      elif sat > 0.35 and 0.25 < val < 0.90: vivid += 1
+    bg_r, ink_r, viv_r = light_bg / total, dark_ink / total, vivid / total
+    if bg_r < 0.56 or ink_r < 0.025 or ink_r > 0.38 or viv_r > 0.18: return False
+    gray = small.convert('L')
+    gw, gh = gray.size
+    h_lines = sum(1 for y in range(5, gh - 5) if sum(1 for x in range(5, gw - 5) if gray.getpixel((x, y)) < 110) > gw * 0.45)
+    v_lines = sum(1 for x in range(5, gw - 5) if sum(1 for y in range(5, gh - 5) if gray.getpixel((x, y)) < 110) > gh * 0.35)
+    return (h_lines >= 2 and v_lines >= 1) or (bg_r > 0.68 and 0.035 <= ink_r <= 0.25 and viv_r < 0.08)
+  except Exception: return False
 
 def _norm_h(s): return re.sub(r'[\s_\-*]+', '', str(s or '')).strip().lower()
 
 def parse_product_zip(zip_file):
   IMG_EXT = ('.jpg', '.jpeg', '.png', '.webp')
-  folder_to_imgs, size_charts, global_chart = {}, {}, None
+  folder_to_imgs, size_charts, global_chart, root_loose = {}, {}, None, []
   with zipfile.ZipFile(zip_file, 'r') as z:
     entries = []
     for info in z.infolist():
       if info.is_dir(): continue
-      path = info.filename.replace('\\', '/').strip('/')
-      parts = [p for p in path.split('/') if p]
-      if len(parts) < 2 or parts[0] == '__MACOSX' or any(p.startswith('.') for p in parts): continue
+      parts = [p for p in info.filename.replace('\\', '/').strip('/').split('/') if p]
+      if not parts or parts[0] == '__MACOSX' or any(p.startswith('.') for p in parts): continue
       fname = parts[-1]
       if fname.lower() == 'thumbs.db' or not fname.lower().endswith(IMG_EXT): continue
+      if len(parts) == 1:
+        raw_b = z.read(info)
+        if is_size_chart_file(fname) or _visual_is_size_chart(raw_b):
+          if global_chart is None: global_chart = {'filename': fname, 'bytes': raw_b}
+        else: root_loose.append((fname, raw_b))
+        continue
       entries.append((parts[:-1], fname, info))
     while entries and len({d[0] for d, _, _ in entries if d}) == 1 and all(len(d) >= 1 for d, _, _ in entries) and any(len(d) >= 2 for d, _, _ in entries):
       entries = [(d[1:], f, i) for d, f, i in entries]
+    wrap_loose = []
     for dir_parts, fname, info in entries:
+      data = z.read(info)
       if not dir_parts:
-        if is_size_chart_file(fname) and global_chart is None: global_chart = {'filename': fname, 'bytes': z.read(info)}
+        if is_size_chart_file(fname) or _visual_is_size_chart(data):
+          if global_chart is None: global_chart = {'filename': fname, 'bytes': data}
+        else: wrap_loose.append((fname, data))
         continue
       fld = dir_parts[0]
-      data = z.read(info)
       if is_size_chart_file(fname): size_charts[fld] = {'filename': fname, 'bytes': data}
       else: folder_to_imgs.setdefault(fld, []).append((fname, data))
+    if global_chart is None and len(wrap_loose) == 1: global_chart = {'filename': wrap_loose[0][0], 'bytes': wrap_loose[0][1]}
+    elif global_chart is None and len(root_loose) == 1: global_chart = {'filename': root_loose[0][0], 'bytes': root_loose[0][1]}
+
+  for fld in list(folder_to_imgs.keys()):
+    folder_to_imgs[fld].sort(key=lambda item: int(re.findall(r'\d+', item[0])[0]) if re.findall(r'\d+', item[0]) else 999)
+    if fld not in size_charts and len(folder_to_imgs[fld]) >= 2:
+      for idx in range(len(folder_to_imgs[fld]) - 1, 0, -1):
+        fn_c, b_c = folder_to_imgs[fld][idx]
+        if _visual_is_size_chart(b_c):
+          size_charts[fld] = {'filename': fn_c, 'bytes': b_c}
+          folder_to_imgs[fld].pop(idx)
+          break
+  if global_chart is None and len(size_charts) >= 1:
+    global_chart = next(iter(size_charts.values()))
   if global_chart:
     for fld in folder_to_imgs: size_charts.setdefault(fld, global_chart)
-  size_charts = {k: v for k, v in size_charts.items() if k in folder_to_imgs}
-  for fld in folder_to_imgs:
-    folder_to_imgs[fld].sort(key=lambda item: int(re.findall(r'\d+', item[0])[0]) if re.findall(r'\d+', item[0]) else 999)
-  return folder_to_imgs, size_charts
+  return folder_to_imgs, {k: v for k, v in size_charts.items() if k in folder_to_imgs}
 
 CATEGORY_OPTIONS = ['co-ord set', 'hoodie', 'sweatshirt', 'cargo', 'jeans', 'tshirt', 'shirt', 'trousers', 'joggers', 'shorts', 'jacket', 'kurta', 'kurti', 'dress', 'top', 'skirt', 'apparel']
 
 def detect_product_category(folder_name, user_keywords="", sheet_name=""):
   combined = f"{folder_name} {user_keywords} {sheet_name}".lower()
-  if any(k in combined for k in ["co-ord", "coord", "two piece", "suit set", "apparel set", "clothing set"]): return "co-ord set"
-  elif any(k in combined for k in ["hoodie", "hoody", "hooded"]): return "hoodie"
-  elif any(k in combined for k in ["sweatshirt", "sweater", "pullover", "cardigan"]): return "sweatshirt"
-  elif any(k in combined for k in ["cargo"]): return "cargo"
-  elif any(k in combined for k in ["jean", "denim"]): return "jeans"
-  elif any(k in combined for k in ["t-shirt", "tshirt", "tee", "polo"]): return "tshirt"
-  elif any(k in combined for k in ["kurti", "tunic"]): return "kurti"
-  elif any(k in combined for k in ["kurta", "ethnic", "salwar"]): return "kurta"
-  elif any(k in combined for k in ["dress", "frock", "gown", "jumpsuit"]): return "dress"
-  elif any(k in combined for k in ["top", "blouse", "camisole"]): return "top"
-  elif any(k in combined for k in ["shirt"]): return "shirt"
-  elif any(k in combined for k in ["trouser", "chinos", "pant", "bottom", "legging", "palazzo"]): return "trousers"
-  elif any(k in combined for k in ["jacket", "coat", "blazer", "windcheater", "shrug"]): return "jacket"
-  elif any(k in combined for k in ["track", "jogger", "sweatpant", "pyjama", "pajama"]): return "joggers"
-  elif any(k in combined for k in ["short", "boxer"]): return "shorts"
-  elif any(k in combined for k in ["skirt"]): return "skirt"
-  if "pant" in sheet_name.lower(): return "trousers"
-  elif "shirt" in sheet_name.lower(): return "shirt"
-  elif "coord" in sheet_name.lower() or "co-ord" in sheet_name.lower(): return "co-ord set"
+  for cat, keys in [("co-ord set", ["co-ord", "coord", "two piece", "suit set", "apparel set", "clothing set"]), ("hoodie", ["hoodie", "hoody", "hooded"]), ("sweatshirt", ["sweatshirt", "sweater", "pullover", "cardigan"]), ("cargo", ["cargo"]), ("jeans", ["jean", "denim"]), ("tshirt", ["t-shirt", "tshirt", "tee", "polo"]), ("kurti", ["kurti", "tunic"]), ("kurta", ["kurta", "ethnic", "salwar"]), ("dress", ["dress", "frock", "gown", "jumpsuit"]), ("top", ["top", "blouse", "camisole"]), ("shirt", ["shirt"]), ("trousers", ["trouser", "chinos", "pant", "bottom", "legging", "palazzo"]), ("jacket", ["jacket", "coat", "blazer", "windcheater", "shrug"]), ("joggers", ["track", "jogger", "sweatpant", "pyjama", "pajama"]), ("shorts", ["short", "boxer"]), ("skirt", ["skirt"])]:
+    if any(k in combined for k in keys): return cat
   return "apparel"
 
 def detect_gender(text):
   t = str(text).lower()
   if any(w in t for w in ["women", "woman", "female", "girl", "ladies", "kurti", "co-ord", "coord", "dress", "top", "skirt"]): return "Women"
-  if any(w in t for w in ["men", "man", "male", "boy", "gents"]): return "Men"
-  return "Women"
+  return "Men" if any(w in t for w in ["men", "man", "male", "boy", "gents"]) else "Women"
 
 def resolve_category(clean_style, ctx, sheet_name=""):
   ov = st.session_state.get('category_overrides', {})
@@ -135,128 +160,245 @@ def resolve_gender(clean_style, ctx):
 DEFAULT_CATEGORY_FABRICS = {'jeans': 'Denim', 'hoodie': 'Fleece', 'sweatshirt': 'Fleece', 'tshirt': 'Cotton', 'shirt': 'Cotton', 'cargo': 'Cotton', 'trousers': 'Cotton Blend', 'joggers': 'Cotton Blend', 'shorts': 'Cotton', 'co-ord set': 'Cotton Blend', 'kurti': 'Rayon', 'kurta': 'Cotton', 'dress': 'Crepe', 'top': 'Cotton Blend', 'jacket': 'Polyester', 'skirt': 'Cotton Blend', 'apparel': 'Cotton Blend'}
 
 def resolve_fabric(clean_style, cat, ctx):
-  vr = ctx.get('vision_results') or {}
-  ai_mat = (vr.get(clean_style) or {}).get('material')
+  ai_mat = ((ctx.get('vision_results') or {}).get(clean_style) or {}).get('material')
   if ai_mat and ai_mat.strip() and (ai_mat.strip().lower() != 'denim' or cat == 'jeans'): return ai_mat.strip().title()
   return "Denim" if cat == 'jeans' else DEFAULT_CATEGORY_FABRICS.get(cat, "Cotton Blend")
 
 def resolve_sleeve_length(clean_style, cat, ctx):
-  vr = ctx.get('vision_results') or {}
-  ai_sleeve = (vr.get(clean_style) or {}).get('sleeve_length')
-  if ai_sleeve and ai_sleeve.strip(): return ai_sleeve.strip().title()
-  if cat in ['hoodie', 'sweatshirt', 'jacket']: return "Long Sleeve"
-  elif cat in ['tshirt', 'shirt', 'kurti', 'dress', 'top']: return "Short Sleeve"
-  return "Sleeveless"
+  ai_sl = ((ctx.get('vision_results') or {}).get(clean_style) or {}).get('sleeve_length')
+  if ai_sl and ai_sl.strip(): return ai_sl.strip().title()
+  return "Long Sleeve" if cat in ['hoodie', 'sweatshirt', 'jacket'] else ("Short Sleeve" if cat in ['tshirt', 'shirt', 'kurti', 'dress', 'top'] else "Sleeveless")
 
+# ======================================================================
+# 🎨 ENHANCED COLOR DETECTION (White-Balance + Green vs Yellow Guard)
+# ======================================================================
 COMMON_COLORS = ["Beige", "LightGrey", "Grey", "DarkGrey", "Black", "Navy", "Blue", "LightBlue", "DarkBlue", "SkyBlue", "IceBlue", "White", "Off White", "Green", "Olive", "Pista", "Sea Green", "Brown", "Coffee", "Charcoal", "Khaki", "Cream", "Tan", "Camel", "Mustard", "Rust", "Red", "Maroon", "Yellow", "Orange", "Pink", "Purple", "Lavender", "Wine", "Peach", "Teal"]
 STANDARD_COLOR_MAPS = ['Beige', 'Black', 'Blue', 'Bronze', 'Brown', 'Clear', 'Gold', 'Green', 'Grey', 'Metallic', 'Multicolor', 'Off White', 'Orange', 'Pink', 'Purple', 'Red', 'Silver', 'Turquoise', 'White', 'Yellow']
-COLOR_MISSPELLINGS = {'maron': 'Maroon', 'marron': 'Maroon', 'marun': 'Maroon', 'mahroon': 'Maroon', 'mehroon': 'Maroon', 'meroon': 'Maroon', 'mrn': 'Maroon', 'greay': 'Grey', 'gray': 'Grey', 'gery': 'Grey', 'grrey': 'Grey', 'gry': 'Grey', 'begie': 'Beige', 'baige': 'Beige', 'beigh': 'Beige', 'biege': 'Beige', 'bieg': 'Beige', 'beig': 'Beige', 'beg': 'Beige', 'badami': 'Beige', 'chiku': 'Beige', 'chikoo': 'Beige', 'blak': 'Black', 'blackk': 'Black', 'blk': 'Black', 'blck': 'Black', 'wite': 'White', 'whit': 'White', 'whiet': 'White', 'wht': 'White', 'offwhite': 'Off White', 'ofwhite': 'Off White', 'crm': 'Cream', 'blu': 'Blue', 'bleu': 'Blue', 'bule': 'Blue', 'bluu': 'Blue', 'lblu': 'LightBlue', 'dblu': 'DarkBlue', 'sblu': 'SkyBlue', 'iblu': 'IceBlue', 'navi': 'Navy', 'nvy': 'Navy', 'navyblue': 'Navy', 'chochlate': 'Brown', 'cofee': 'Coffee', 'brn': 'Brown', 'cfe': 'Coffee', 'yello': 'Yellow', 'ylw': 'Yellow', 'orenge': 'Orange', 'orang': 'Orange', 'orn': 'Orange', 'pinke': 'Pink', 'pnk': 'Pink', 'gren': 'Green', 'grn': 'Green', 'oliv': 'Olive', 'olv': 'Olive', 'khakhi': 'Khaki', 'khk': 'Khaki', 'lavendar': 'Lavender', 'lav': 'Lavender', 'prp': 'Purple', 'chr': 'Charcoal'}
+COLOR_MISSPELLINGS = {'maron': 'Maroon', 'marron': 'Maroon', 'marun': 'Maroon', 'mahroon': 'Maroon', 'mehroon': 'Maroon', 'meroon': 'Maroon', 'mrn': 'Maroon', 'greay': 'Grey', 'gray': 'Grey', 'gery': 'Grey', 'grrey': 'Grey', 'gry': 'Grey', 'begie': 'Beige', 'baige': 'Beige', 'beigh': 'Beige', 'biege': 'Beige', 'bieg': 'Beige', 'beig': 'Beige', 'beg': 'Beige', 'badami': 'Beige', 'chiku': 'Beige', 'chikoo': 'Beige', 'blak': 'Black', 'blackk': 'Black', 'blk': 'Black', 'blck': 'Black', 'wite': 'White', 'whit': 'White', 'whiet': 'White', 'wht': 'White', 'offwhite': 'Off White', 'ofwhite': 'Off White', 'crm': 'Cream', 'blu': 'Blue', 'bleu': 'Blue', 'bule': 'Blue', 'bluu': 'Blue', 'lblu': 'LightBlue', 'dblu': 'DarkBlue', 'sblu': 'SkyBlue', 'iblu': 'IceBlue', 'navi': 'Navy', 'nvy': 'Navy', 'navyblue': 'Navy', 'chochlate': 'Brown', 'cofee': 'Coffee', 'brn': 'Brown', 'cfe': 'Coffee', 'yello': 'Yellow', 'ylw': 'Yellow', 'orenge': 'Orange', 'orang': 'Orange', 'orn': 'Orange', 'pinke': 'Pink', 'pnk': 'Pink', 'gren': 'Green', 'grn': 'Green', 'pista': 'Pista', 'pistachio': 'Pista', 'mint': 'Pista', 'mintgreen': 'Pista', 'sage': 'Pista', 'sagegreen': 'Pista', 'oliv': 'Olive', 'olv': 'Olive', 'khakhi': 'Khaki', 'khk': 'Khaki', 'lavendar': 'Lavender', 'lav': 'Lavender', 'prp': 'Purple', 'chr': 'Charcoal'}
 
 def extract_explicit_color_from_text(text):
   if not text: return None
   text_clean = re.sub(r'[^a-zA-Z\s]', ' ', str(text)).lower()
-  words = [w for w in text_clean.split() if w]
-  joined = ''.join(words)
+  words, joined = [w for w in text_clean.split() if w], ''.join(text_clean.split())
   for col in sorted(COMMON_COLORS, key=len, reverse=True):
     cl = col.lower()
     if (' ' in cl and cl in text_clean) or cl in words or cl.replace(' ', '') in words: return col
   for key in sorted(COLOR_MISSPELLINGS, key=len, reverse=True):
     if key in words: return COLOR_MISSPELLINGS[key]
   for col in sorted(COMMON_COLORS, key=len, reverse=True):
-    cl_nospace = col.lower().replace(' ', '')
-    if len(cl_nospace) >= 4 and cl_nospace in joined: return col
+    cl_ns = col.lower().replace(' ', '')
+    if len(cl_ns) >= 4 and cl_ns in joined: return col
   for key in sorted(COLOR_MISSPELLINGS, key=len, reverse=True):
     if len(key) >= 4 and key in joined: return COLOR_MISSPELLINGS[key]
   color_lowers = [c.lower() for c in COMMON_COLORS]
   for w in words:
     if len(w) >= 4:
-      close = difflib.get_close_matches(w, color_lowers, n=1, cutoff=0.82)
-      if close:
-        for col in COMMON_COLORS:
-          if col.lower() == close[0]: return col
+      close = difflib.get_close_matches(w, color_lowers, n=1, cutoff=0.84)
+      if close: return next(c for c in COMMON_COLORS if c.lower() == close[0])
   return None
 
-def analyze_image_dominant_color(image_bytes):
-  if not image_bytes: return None
-  try:
-    img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
-    w, h = img.size
-    cropped = img.crop((int(w * 0.25), int(h * 0.22), int(w * 0.75), int(h * 0.77))).resize((60, 60))
-    pixels = list(cropped.getdata())
-    corners = [img.getpixel((2, 2)), img.getpixel((w - 3, 2)), img.getpixel((2, h - 3)), img.getpixel((w - 3, h - 3))]
-    bg_r, bg_g, bg_b = sum(c[0] for c in corners) / 4.0, sum(c[1] for c in corners) / 4.0, sum(c[2] for c in corners) / 4.0
-    votes = {}
-    for r, g, b in pixels:
-      if abs(r - bg_r) + abs(g - bg_g) + abs(b - bg_b) < 35 and (r > 220 and g > 220 and b > 220): continue
-      hue, sat, val = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
-      h_deg = hue * 360.0
-      if 12 <= h_deg <= 38 and 0.22 <= sat <= 0.58 and 0.45 <= val <= 0.92 and r > g > b and (r - g) > 18: continue
-      if val < 0.20: cname = "Black"
-      elif sat < 0.12: cname = "White" if val > 0.85 else ("LightGrey" if val > 0.60 else ("Grey" if val > 0.35 else "Black"))
-      elif 22 <= h_deg <= 52 and sat < 0.42 and val >= 0.62: cname = "Beige"
-      elif 15 <= h_deg <= 45 and val < 0.62: cname = "Brown"
-      elif 185 <= h_deg <= 255: cname = "Navy" if val < 0.38 else ("LightBlue" if (val > 0.78 and sat < 0.45) else "Blue")
-      elif 68 <= h_deg < 165: cname = "Olive" if (h_deg < 105 and val < 0.65) else "Green"
-      elif 165 <= h_deg < 185: cname = "Teal"
-      elif 52 < h_deg < 68: cname = "Yellow"
-      elif 15 <= h_deg < 22: cname = "Orange"
-      elif 255 < h_deg <= 295: cname = "Lavender" if val > 0.75 else "Purple"
-      elif h_deg > 295 or h_deg < 15: cname = "Maroon" if val < 0.48 else ("Red" if (sat > 0.62 and h_deg < 12) else "Pink")
-      else: cname = "Black"
-      votes[cname] = votes.get(cname, 0) + 1
-    return max(votes.items(), key=lambda x: x[1])[0] if votes else None
-  except Exception: return None
+def analyze_image_dominant_color(image_bytes_or_list):
+  if not image_bytes_or_list: return None
+  img_list = [image_bytes_or_list] if isinstance(image_bytes_or_list, (bytes, bytearray)) else [
+    (x[1] if isinstance(x, (tuple, list)) and len(x) > 1 else x) for x in (image_bytes_or_list[:3] if isinstance(image_bytes_or_list, list) else [])
+  ]
+  img_list = [b for b in img_list if isinstance(b, (bytes, bytearray))]
+  if not img_list: return None
+  votes = {}
+  for ibytes in img_list:
+    try:
+      img = Image.open(io.BytesIO(ibytes)).convert('RGB')
+      w, h = img.size
+      corners = [img.getpixel((max(1, int(w*0.03)), max(1, int(h*0.03)))), img.getpixel((min(w-2, int(w*0.97)), max(1, int(h*0.03)))), img.getpixel((max(1, int(w*0.03)), min(h-2, int(h*0.97)))), img.getpixel((min(w-2, int(w*0.97)), min(h-2, int(h*0.97))))]
+      bg_r, bg_g, bg_b = sum(c[0] for c in corners)/4.0, sum(c[1] for c in corners)/4.0, sum(c[2] for c in corners)/4.0
+      bg_m = (bg_r + bg_g + bg_b) / 3.0
+      has_light_bg = (bg_r > 165 and bg_g > 155 and bg_b > 140)
+      wb_r = max(0.85, min(1.15, bg_m / bg_r)) if has_light_bg else 1.0
+      wb_g = max(0.85, min(1.15, bg_m / bg_g)) if has_light_bg else 1.0
+      wb_b = max(0.85, min(1.18, bg_m / bg_b)) if has_light_bg else 1.0
+      cropped = img.crop((int(w * 0.28), int(h * 0.24), int(w * 0.72), int(h * 0.73))).resize((60, 60))
+      for rr, rg, rb in cropped.getdata():
+        if abs(rr - bg_r) + abs(rg - bg_g) + abs(rb - bg_b) < 34 and (rr > 205 and rg > 205 and rb > 195): continue
+        r, g, b = min(255, int(rr * wb_r)), min(255, int(rg * wb_g)), min(255, int(rb * wb_b))
+        hue, sat, val = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
+        h_deg = hue * 360.0
+        if 11 <= h_deg <= 36 and 0.20 <= sat <= 0.58 and 0.42 <= val <= 0.92 and r > g > b and (r - g) > 16 and (g - b) > 10: continue
+        if val < 0.18: cname = "Black"
+        elif sat < 0.11: cname = "White" if val > 0.84 else ("LightGrey" if val > 0.58 else ("Grey" if val > 0.32 else "Black"))
+        elif g >= r * 0.96 and g > b + 10 and 50 <= h_deg <= 165:
+          cname = "Olive" if (h_deg < 102 and val < 0.62) else ("Pista" if (val >= 0.72 and sat < 0.46) else ("Sea Green" if h_deg >= 150 else "Green"))
+        elif 165 < h_deg < 188: cname = "Teal" if val < 0.70 else "Sea Green"
+        elif 188 <= h_deg <= 255: cname = "Navy" if val < 0.38 else ("SkyBlue" if (val > 0.75 and sat >= 0.35) else ("LightBlue" if (val > 0.76 and sat < 0.35) else "Blue"))
+        elif 22 <= h_deg <= 56 and sat < 0.38 and val >= 0.62: cname = "Cream" if val > 0.84 else "Beige"
+        elif 50 <= h_deg < 66 and r > g * 1.07 and sat >= 0.32: cname = "Mustard" if val < 0.72 else "Yellow"
+        elif 50 <= h_deg < 66: cname = "Pista" if g >= r else "Beige"
+        elif 15 <= h_deg < 46 and val < 0.62: cname = "Coffee" if val < 0.35 else "Brown"
+        elif 15 <= h_deg < 24 and sat >= 0.45: cname = "Rust" if val < 0.60 else "Orange"
+        elif 255 < h_deg <= 295: cname = "Lavender" if val > 0.72 else "Purple"
+        elif h_deg > 295 or h_deg < 15: cname = "Maroon" if val < 0.48 else ("Red" if (sat > 0.60 and (h_deg < 12 or h_deg > 345)) else "Pink")
+        else: cname = "Black"
+        votes[cname] = votes.get(cname, 0) + 1
+    except Exception: continue
+  return max(votes.items(), key=lambda x: x[1])[0] if votes else None
 
 def detect_color(text, image_bytes=None):
-  explicit = extract_explicit_color_from_text(text)
-  if explicit: return explicit
-  if image_bytes:
-    px_col = analyze_image_dominant_color(image_bytes)
-    if px_col: return px_col
-  return "Black"
+  return extract_explicit_color_from_text(text) or (analyze_image_dominant_color(image_bytes) if image_bytes else None) or "Black"
 
 def _canonicalize_color(name):
   if not name: return name
   explicit = extract_explicit_color_from_text(name)
   if explicit: return explicit
   raw = str(name).strip().lower().replace('-', ' ').replace('_', ' ')
-  words = raw.split()
-  joined = ''.join(words)
+  words, joined = raw.split(), ''.join(raw.split())
   for key in sorted(COLOR_MISSPELLINGS, key=len, reverse=True):
     if key == joined or key in words: return COLOR_MISSPELLINGS[key]
   for w in words:
     if len(w) >= 4:
-      close = difflib.get_close_matches(w, [c.lower() for c in COMMON_COLORS], n=1, cutoff=0.78)
-      if close:
-        for col in COMMON_COLORS:
-          if col.lower() == close[0]: return col
+      close = difflib.get_close_matches(w, [c.lower() for c in COMMON_COLORS], n=1, cutoff=0.80)
+      if close: return next(c for c in COMMON_COLORS if c.lower() == close[0])
   return name
+
+def canonicalize_ai_color(col_str, folder_name="", image_bytes=None):
+  explicit_fld = extract_explicit_color_from_text(folder_name)
+  if explicit_fld: return explicit_fld
+  px_col = analyze_image_dominant_color(image_bytes) if image_bytes else None
+  col = str(col_str or '').strip()
+  if col:
+    canon = str(_canonicalize_color(col))
+    joined = canon.lower().replace(' ', '')
+    matched = next((c for c in COMMON_COLORS if c.lower().replace(' ', '') == joined), None) or ' '.join(w.capitalize() for w in re.split(r'[\s\-]+', canon) if w)
+    m_low = matched.lower()
+    if px_col and m_low in ('yellow', 'mustard', 'gold', 'lemon') and px_col.lower() in ('green', 'pista', 'olive', 'sea green', 'teal', 'beige', 'cream', 'khaki', 'white', 'lightgrey'):
+      return px_col
+    if px_col and m_low in ('pink', 'lightpink', 'rose', 'peach') and px_col.lower() not in ('pink', 'red', 'maroon', 'peach', 'wine'):
+      return px_col
+    if px_col and m_low in ('beige', 'cream', 'off white', 'yellow') and px_col.lower() in ('pista', 'green', 'olive', 'sea green'):
+      return px_col
+    return matched
+  return px_col or "Black"
 
 def resolve_color(raw_fld, clean_style, ctx, image_bytes=None):
   explicit = extract_explicit_color_from_text(raw_fld) or extract_explicit_color_from_text(clean_style)
   if explicit: return explicit
-  vr = ctx.get('vision_results') or {}
-  ai_col = (vr.get(clean_style) or {}).get('color')
-  if ai_col:
-    ai_canon = _canonicalize_color(ai_col)
-    if image_bytes and str(ai_canon).lower() in ('pink', 'lightpink', 'rose', 'peach'):
-      px_col = analyze_image_dominant_color(image_bytes)
-      if px_col and px_col.lower() not in ('pink', 'red', 'maroon', 'peach'): return px_col
-    return ai_canon
-  return detect_color(raw_fld, image_bytes=image_bytes)
+  if image_bytes is None and ctx.get('zip_images_data') and raw_fld in ctx['zip_images_data']:
+    image_bytes = ctx['zip_images_data'][raw_fld]
+  ai_col = ((ctx.get('vision_results') or {}).get(clean_style) or {}).get('color')
+  return canonicalize_ai_color(ai_col, folder_name=raw_fld, image_bytes=image_bytes) if ai_col else detect_color(raw_fld, image_bytes=image_bytes)
 
 COLOR_FAMILY_MAP = {'maroon': 'Red', 'mehroon': 'Red', 'red': 'Red', 'wine': 'Red', 'burgundy': 'Red', 'rust': 'Red', 'crimson': 'Red', 'cherry': 'Red', 'darkred': 'Red', 'navy': 'Blue', 'navyblue': 'Blue', 'blue': 'Blue', 'lightblue': 'Blue', 'darkblue': 'Blue', 'iceblue': 'Blue', 'skyblue': 'Blue', 'royalblue': 'Blue', 'teal': 'Blue', 'turquoise': 'Turquoise', 'black': 'Black', 'charcoal': 'Grey', 'grey': 'Grey', 'gray': 'Grey', 'lightgrey': 'Grey', 'darkgrey': 'Grey', 'smoke': 'Grey', 'silver': 'Silver', 'white': 'White', 'offwhite': 'Off White', 'cream': 'White', 'ivory': 'White', 'green': 'Green', 'olive': 'Green', 'mint': 'Green', 'darkgreen': 'Green', 'lightgreen': 'Green', 'parrotgreen': 'Green', 'pista': 'Green', 'seagreen': 'Green', 'brown': 'Brown', 'coffee': 'Brown', 'tan': 'Brown', 'chocolate': 'Brown', 'camel': 'Brown', 'darkbrown': 'Brown', 'lightbrown': 'Brown', 'beige': 'Beige', 'khaki': 'Beige', 'sand': 'Beige', 'yellow': 'Yellow', 'mustard': 'Yellow', 'orange': 'Orange', 'peach': 'Orange', 'pink': 'Pink', 'rose': 'Pink', 'lightpink': 'Pink', 'purple': 'Purple', 'lavender': 'Purple', 'violet': 'Purple', 'gold': 'Gold', 'bronze': 'Bronze', 'metallic': 'Metallic'}
 
 def map_to_standard_color_map(det_col):
   if not det_col: return "Black"
-  det_col = _canonicalize_color(det_col)
-  raw = str(det_col).strip().lower().replace('-', ' ').replace('_', ' ')
+  raw = str(_canonicalize_color(det_col)).strip().lower().replace('-', ' ').replace('_', ' ')
   words, joined = raw.split(), ''.join(raw.split())
   for sc in STANDARD_COLOR_MAPS:
     if sc.lower().replace(' ', '') == joined: return sc
   for key in sorted(COLOR_FAMILY_MAP, key=len, reverse=True):
     if key == joined or key in words: return COLOR_FAMILY_MAP[key]
   return "Multicolor"
+
+# ======================================================================
+# 📐 UNIVERSAL SIZE CHART & SMART MEASUREMENT INTELLIGENCE ENGINE
+# ======================================================================
+ALPHA_ORDER = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL', '4XL', '5XL']
+SIZE_SYNONYM_MAP = {'2XL': 'XXL', '3XL': 'XXXL', 'XXXXL': '4XL', 'XXXXXL': '5XL', 'FREE': 'L', 'FREESIZE': 'L', 'FREE SIZE': 'L'}
+NUMERIC_TO_ALPHA_MAP = {'24': 'XXS', '26': 'XS', '28': 'S', '30': 'M', '32': 'L', '34': 'XL', '36': 'XXL', '38': 'XXXL', '40': '4XL', '42': '5XL'}
+
+BASE_ALPHA_GARMENT_CHART = {
+  'XXS': {'chest': 36, 'bust': 35, 'front_length': 26.5, 'shoulder': 16.0, 'sleeve_in': 8.0, 'waist': 26, 'hip': 36, 'bottom_length': 38, 'inseam': 27.5},
+  'XS':  {'chest': 38, 'bust': 37, 'front_length': 27.5, 'shoulder': 16.5, 'sleeve_in': 8.5, 'waist': 28, 'hip': 38, 'bottom_length': 38.5, 'inseam': 28.0},
+  'S':   {'chest': 40, 'bust': 39, 'front_length': 28.0, 'shoulder': 17.0, 'sleeve_in': 9.0, 'waist': 30, 'hip': 40, 'bottom_length': 39.0, 'inseam': 28.0},
+  'M':   {'chest': 42, 'bust': 41, 'front_length': 29.0, 'shoulder': 17.5, 'sleeve_in': 9.5, 'waist': 32, 'hip': 42, 'bottom_length': 39.5, 'inseam': 28.5},
+  'L':   {'chest': 44, 'bust': 43, 'front_length': 29.5, 'shoulder': 18.0, 'sleeve_in': 10.0, 'waist': 34, 'hip': 44, 'bottom_length': 40.0, 'inseam': 29.0},
+  'XL':  {'chest': 46, 'bust': 45, 'front_length': 30.0, 'shoulder': 19.0, 'sleeve_in': 10.5, 'waist': 36, 'hip': 46, 'bottom_length': 40.5, 'inseam': 29.0},
+  'XXL': {'chest': 48, 'bust': 47, 'front_length': 30.5, 'shoulder': 20.0, 'sleeve_in': 11.0, 'waist': 38, 'hip': 48, 'bottom_length': 41.0, 'inseam': 29.5},
+  'XXXL':{'chest': 50, 'bust': 49, 'front_length': 31.0, 'shoulder': 21.0, 'sleeve_in': 11.5, 'waist': 40, 'hip': 50, 'bottom_length': 41.5, 'inseam': 30.0},
+  '4XL': {'chest': 52, 'bust': 51, 'front_length': 31.5, 'shoulder': 22.0, 'sleeve_in': 12.0, 'waist': 42, 'hip': 52, 'bottom_length': 42.0, 'inseam': 30.0},
+  '5XL': {'chest': 54, 'bust': 53, 'front_length': 32.0, 'shoulder': 22.5, 'sleeve_in': 12.5, 'waist': 44, 'hip': 54, 'bottom_length': 42.5, 'inseam': 30.5},
+}
+
+def _to_num(v):
+  if v in (None, ''): return None
+  try:
+    m = re.search(r'(\d+(?:\.\d+)?)', str(v))
+    if not m: return None
+    f = float(m.group(1))
+    return int(f) if abs(f - round(f)) < 1e-6 else round(f, 1)
+  except Exception: return None
+
+def _norm_size_key(sz):
+  s = str(sz or '').strip().upper()
+  return SIZE_SYNONYM_MAP.get(s, s)
+
+def resolve_complete_measurements_for_size(sz, cat="shirt", sc_data=None, gender="Men"):
+  raw_sz = str(sz or 'M').strip().upper()
+  norm_sz = _norm_size_key(raw_sz)
+  is_women = str(gender or '').lower().startswith('w')
+  cat_low = str(cat or 'apparel').lower()
+  if norm_sz in BASE_ALPHA_GARMENT_CHART:
+    base, alpha_idx = dict(BASE_ALPHA_GARMENT_CHART[norm_sz]), ALPHA_ORDER.index(norm_sz)
+  else:
+    num_w = _to_num(norm_sz)
+    mapped_a = NUMERIC_TO_ALPHA_MAP.get(str(num_w), 'L')
+    alpha_idx = ALPHA_ORDER.index(mapped_a) if mapped_a in ALPHA_ORDER else 4
+    base = dict(BASE_ALPHA_GARMENT_CHART.get(mapped_a, BASE_ALPHA_GARMENT_CHART['L']))
+    if num_w and 20 <= num_w <= 56:
+      base['waist'] = num_w
+      base['hip'] = num_w + (10 if is_women else 8)
+      base['bottom_length'] = 38 if num_w <= 26 else (39 if num_w <= 30 else (40 if num_w <= 34 else (41 if num_w <= 38 else 42)))
+      base['inseam'] = round(base['bottom_length'] - 11, 1)
+  if is_women and cat_low in ('co-ord set', 'top', 'kurti', 'dress', 'night suit', 'lounge wear'):
+    base['front_length'] = round(base['front_length'] - 2.5, 1) if cat_low in ('co-ord set', 'top', 'night suit') else (38.0 if cat_low in ('kurti', 'dress') else base['front_length'])
+    base['waist'], base['hip'] = max(22, base['bust'] - 15), base['bust'] + 1
+
+  chart_map = (sc_data or {}).get('measurements') if isinstance(sc_data, dict) else None
+  extracted = {}
+  if isinstance(chart_map, dict) and chart_map:
+    norm_chart = {}
+    for k, v in chart_map.items():
+      if isinstance(v, dict): norm_chart[_norm_size_key(k)] = v; norm_chart[str(k).strip().upper()] = v
+    if norm_sz in norm_chart: extracted = dict(norm_chart[norm_sz])
+    elif raw_sz in norm_chart: extracted = dict(norm_chart[raw_sz])
+    else:
+      for c_idx, c_alpha in enumerate(ALPHA_ORDER):
+        if c_alpha in norm_chart:
+          diff = alpha_idx - c_idx
+          for mk, mv in norm_chart[c_alpha].items():
+            nv = _to_num(mv)
+            if nv is not None:
+              step = 2.0 if any(x in str(mk).lower() for x in ('chest', 'bust', 'waist', 'hip')) else 0.5
+              extracted[mk] = round(nv + diff * step, 1)
+          break
+
+  def _g(keys):
+    for k in keys:
+      for ek, ev in extracted.items():
+        if _norm_h(ek) == _norm_h(k):
+          nv = _to_num(ev)
+          if nv is not None and nv > 0: return nv
+    return None
+
+  chest, bust = _g(['chest', 'chest_size', 'garment_chest', 'to_fit_chest']), _g(['bust', 'bust_size', 'to_fit_bust'])
+  front_len, shoulder = _g(['front_length', 'length', 'top_length', 'shirt_length']), _g(['shoulder', 'shoulder_size', 'across_shoulder'])
+  sleeve_in, waist = _g(['sleeve', 'sleeve_length', 'sleeve_in']), _g(['waist', 'waist_size', 'to_fit_waist'])
+  hip, bottom_len, inseam = _g(['hip', 'hips', 'hip_size', 'to_fit_hip']), _g(['bottom_length', 'outseam', 'trouser_length']), _g(['inseam', 'inseam_length'])
+
+  if front_len and front_len >= 35 and cat_low in ('trousers', 'cargo', 'joggers', 'jeans', 'pants'):
+    if not bottom_len: bottom_len = front_len
+    front_len = None
+  if chest and not bust: bust = chest
+  elif bust and not chest: chest = bust
+  if chest and not shoulder: shoulder = round(max(14.0, min(23.0, 17.0 + (chest - 40.0) * 0.25)), 1)
+  if chest and not front_len: front_len = round((25.0 + (chest - 39.0) * 0.25) if (is_women and cat_low in ('co-ord set', 'top')) else (28.0 + (chest - 40.0) * 0.25), 1)
+  if waist and not hip: hip = round(waist + (10 if is_women else 8), 1)
+  elif hip and not waist: waist = round(max(22, hip - (10 if is_women else 8)), 1)
+  if waist and not bottom_len: bottom_len = 38 if waist <= 26 else (39 if waist <= 30 else (40 if waist <= 34 else (41 if waist <= 38 else 42)))
+  if bottom_len and not inseam: inseam = round(max(24.0, bottom_len - 11.0), 1)
+  elif inseam and not bottom_len: bottom_len = round(inseam + 11.0, 1)
+
+  fc, fb, ffl, fsh, fsl, fw, fh, fbl, fin = chest or base['chest'], bust or base['bust'], front_len or base['front_length'], shoulder or base['shoulder'], sleeve_in or base['sleeve_in'], waist or base['waist'], hip or base['hip'], bottom_len or base['bottom_length'], inseam or base['inseam']
+  fmt = lambda x: int(round(x)) if abs(x - round(x)) < 1e-6 else round(float(x), 1)
+  return {'chest': fmt(fc), 'bust': fmt(fb), 'to_fit_bust': fmt(fb), 'front_length': fmt(ffl), 'shoulder': fmt(fsh), 'sleeve_in': fmt(fsl), 'waist': fmt(fw), 'to_fit_waist': fmt(fw + (2 if is_women else 0)), 'hip': fmt(fh), 'to_fit_hip': fmt(fh), 'bottom_length': fmt(fbl), 'length': fmt(fbl if cat_low in ('trousers', 'cargo', 'joggers', 'jeans', 'pants') else ffl), 'inseam': fmt(fin)}
 
 POCKET_BY_CATEGORY = {'hoodie': 'Kangaroo Pocket', 'sweatshirt': 'Kangaroo Pocket', 'cargo': 'Cargo Pocket', 'jeans': 'Five Pocket', 'trousers': 'Slash Pocket', 'pants': 'Slash Pocket', 'joggers': 'Side Pocket', 'shorts': 'Side Pocket', 'jacket': 'Welt Pocket', 'shirt': 'Chest Pocket', 'tshirt': 'No Pocket', 'kurta': 'Side Pocket', 'kurti': 'No Pocket', 'co-ord set': 'Side Pocket', 'dress': 'No Pocket', 'top': 'No Pocket', 'skirt': 'No Pocket', 'apparel': 'Side Pocket'}
 def get_pocket_for_cat(cat): return POCKET_BY_CATEGORY.get(cat, 'Side Pocket')
@@ -267,14 +409,10 @@ def resolve_pocket(clean_style, cat, ctx):
 CATEGORY_LABELS = {'co-ord set': 'Co-ord Set', 'kurti': 'Kurti', 'kurta': 'Kurta', 'dress': 'Dress', 'top': 'Top', 'hoodie': 'Hoodie', 'sweatshirt': 'Sweatshirt', 'cargo': 'Cargo Pants', 'jeans': 'Jeans', 'tshirt': 'T-Shirt', 'shirt': 'Shirt', 'trousers': 'Trousers', 'jacket': 'Jacket', 'joggers': 'Joggers', 'shorts': 'Shorts', 'pants': 'Pants', 'skirt': 'Skirt', 'apparel': 'Casual Wear'}
 HSN_CODE_MAP = {'co-ord set': '62042200', 'kurti': '62042200', 'dress': '62044200', 'top': '62063000', 'jeans': '62034290', 'cargo': '62034200', 'trousers': '62034200', 'pants': '62034200', 'joggers': '62034200', 'shorts': '62034200', 'tshirt': '61099090', 'shirt': '62052000', 'hoodie': '61103000', 'sweatshirt': '61103000', 'jacket': '62014090', 'kurta': '62034200', 'skirt': '62045200'}
 def get_hsn_code(cat): return HSN_CODE_MAP.get(cat, '62034200')
-
 def get_item_type_name_from_dropdown(cat):
-  mapping = {'co-ord set': 'Outfit Set', 'kurti': 'Tunic', 'dress': 'Dress', 'top': 'Top', 'hoodie': 'Hooded Sweatshirt', 'sweatshirt': 'Sweatshirt', 'joggers': 'Sweatpants', 'jeans': 'Jeans', 'cargo': 'Cargo Pants', 'trousers': 'Casual Pants', 'pants': 'Casual Pants', 'shorts': 'Shorts', 'tshirt': 'T-Shirt', 'shirt': 'Casual Shirt', 'kurta': 'Kurta', 'jacket': 'Jacket', 'skirt': 'Skirt', 'apparel': 'Casual Pants'}
-  return mapping.get(cat, 'Casual Pants')
-
+  return {'co-ord set': 'Outfit Set', 'kurti': 'Tunic', 'dress': 'Dress', 'top': 'Top', 'hoodie': 'Hooded Sweatshirt', 'sweatshirt': 'Sweatshirt', 'joggers': 'Sweatpants', 'jeans': 'Jeans', 'cargo': 'Cargo Pants', 'trousers': 'Casual Pants', 'pants': 'Casual Pants', 'shorts': 'Shorts', 'tshirt': 'T-Shirt', 'shirt': 'Casual Shirt', 'kurta': 'Kurta', 'jacket': 'Jacket', 'skirt': 'Skirt', 'apparel': 'Casual Pants'}.get(cat, 'Casual Pants')
 def get_style_from_dropdown(cat):
-  mapping = {'co-ord set': 'Co-ords', 'kurti': 'A-Line', 'dress': 'Fit & Flare', 'top': 'Regular', 'hoodie': 'Pullover', 'sweatshirt': 'Pullover', 'joggers': 'Jogger', 'cargo': 'Cargo', 'trousers': 'Chino', 'jeans': 'Classic'}
-  return mapping.get(cat, 'Modern')
+  return {'co-ord set': 'Co-ords', 'kurti': 'A-Line', 'dress': 'Fit & Flare', 'top': 'Regular', 'hoodie': 'Pullover', 'sweatshirt': 'Pullover', 'joggers': 'Jogger', 'cargo': 'Cargo', 'trousers': 'Chino', 'jeans': 'Classic'}.get(cat, 'Modern')
 
 SC_PRODUCT_TYPE = {'co-ord set': 'SUIT', 'kurti': 'KURTA', 'dress': 'DRESS', 'top': 'SHIRT', 'hoodie': 'SWEATSHIRT', 'sweatshirt': 'SWEATSHIRT', 'jacket': 'COAT', 'jeans': 'PANTS', 'cargo': 'PANTS', 'trousers': 'PANTS', 'pants': 'PANTS', 'joggers': 'PANTS', 'shorts': 'SHORTS', 'tshirt': 'SHIRT', 'shirt': 'SHIRT', 'kurta': 'KURTA', 'skirt': 'SKIRT', 'apparel': 'SHIRT'}
 SC_PRODUCT_TYPE_CANDIDATES = {'co-ord set': ['SUIT', 'APPAREL_SET', 'COORDINATED_OUTFIT', 'OUTFIT_SET', 'SALWAR_SUIT_SET', 'TRACK_SUIT', 'DRESS', 'KURTA', 'SHIRT', 'TOP'], 'kurti': ['KURTA', 'TUNIC', 'SHIRT', 'TOP', 'DRESS', 'SALWAR_SUIT_SET'], 'kurta': ['KURTA', 'TUNIC', 'SALWAR_SUIT_SET', 'SHIRT'], 'dress': ['DRESS', 'ONE_PIECE_OUTFIT', 'JUMPSUIT', 'OVERALLS', 'TUNIC', 'SUIT', 'GOWN'], 'top': ['SHIRT', 'TOP', 'TUNIC', 'BLOUSE', 'SWEATSHIRT', 'KURTA'], 'tshirt': ['SHIRT', 'T_SHIRT', 'TSHIRT', 'TOP', 'SWEATSHIRT'], 'shirt': ['SHIRT', 'TOP', 'TUNIC', 'KURTA'], 'hoodie': ['SWEATSHIRT', 'HOODIE', 'SWEATER', 'PULLOVER', 'COAT', 'JACKET', 'SHIRT'], 'sweatshirt': ['SWEATSHIRT', 'SWEATER', 'PULLOVER', 'HOODIE', 'COAT', 'SHIRT'], 'jacket': ['COAT', 'JACKET', 'BLAZER', 'OUTERWEAR', 'SWEATSHIRT', 'VEST'], 'jeans': ['PANTS', 'JEANS', 'TROUSERS', 'BOTTOMS', 'OVERALLS', 'SHORTS'], 'cargo': ['PANTS', 'TROUSERS', 'CARGO_PANTS', 'BOTTOMS', 'JEANS', 'SHORTS'], 'trousers': ['PANTS', 'TROUSERS', 'BOTTOMS', 'LEGGINGS', 'JEANS', 'SUIT'], 'pants': ['PANTS', 'TROUSERS', 'BOTTOMS', 'LEGGINGS', 'JEANS'], 'joggers': ['PANTS', 'SWEATPANTS', 'TRACK_PANTS', 'JOGGERS', 'TROUSERS', 'TRACK_SUIT', 'PAJAMAS', 'SHORTS'], 'shorts': ['SHORTS', 'PANTS', 'BOTTOMS', 'UNDERPANTS'], 'skirt': ['SKIRT', 'DRESS', 'PANTS', 'BOTTOMS'], 'apparel': ['SHIRT', 'PANTS', 'SWEATSHIRT', 'KURTA', 'DRESS', 'SUIT', 'COAT', 'SHORTS', 'TUNIC', 'TOP']}
@@ -298,9 +436,8 @@ def resolve_sc_product_type_for_row(ws_sc, sc_prod_type_col, raw_prod_type="", s
   sheet_clean = re.sub(r'[\s_\-]+', '', str(sheet_name or '').strip().upper())
   if options:
     if sheet_clean:
-      if sheet_clean in norm_opts: return norm_opts[sheet_clean]
-      if sheet_clean.rstrip('S') in norm_opts: return norm_opts[sheet_clean.rstrip('S')]
-      if (sheet_clean + 'S') in norm_opts: return norm_opts[sheet_clean + 'S']
+      for sc_try in (sheet_clean, sheet_clean.rstrip('S'), sheet_clean + 'S'):
+        if sc_try in norm_opts: return norm_opts[sc_try]
     for cand in candidates:
       nc = re.sub(r'[\s_\-]+', '', cand.upper())
       if nc in norm_opts: return norm_opts[nc]
@@ -377,9 +514,9 @@ def get_dropdown_options_for_column(ws, col_idx):
       ws_dd = ws.parent['Dropdown Lists']
       col_keys = {str(ws.cell(r, col_idx).value or '').strip().lower() for r in (1, 2, 3, 4, 5) if ws.cell(r, col_idx).value not in (None, '')}
       for dd_c in range(1, ws_dd.max_column + 1):
-        header_hit_row = next((hr for hr in (1, 2, 3) if str(ws_dd.cell(hr, dd_c).value or '').strip().lower() in col_keys and str(ws_dd.cell(hr, dd_c).value or '').strip()), None)
-        if header_hit_row is not None:
-          vals = [str(ws_dd.cell(r, dd_c).value).strip() for r in range(header_hit_row + 1, ws_dd.max_row + 1) if ws_dd.cell(r, dd_c).value not in (None, '')]
+        hr = next((r for r in (1, 2, 3) if str(ws_dd.cell(r, dd_c).value or '').strip().lower() in col_keys and str(ws_dd.cell(r, dd_c).value or '').strip()), None)
+        if hr is not None:
+          vals = [str(ws_dd.cell(r, dd_c).value).strip() for r in range(hr + 1, ws_dd.max_row + 1) if ws_dd.cell(r, dd_c).value not in (None, '')]
           if vals: options = vals; break
     except Exception: pass
   if options:
@@ -419,23 +556,26 @@ def extract_json_from_text(text):
 
 def get_vision_prompt(folder_hint=""):
   cats = ", ".join(CATEGORY_OPTIONS)
-  hint_line = f'Folder/SKU name hint: "{folder_hint}". If the folder name mentions a color, prioritize that exact color.\n' if folder_hint else ""
+  hint_line = f'Folder/SKU name hint: "{folder_hint}". If the folder name explicitly mentions a color, prioritize that exact color.\n' if folder_hint else ""
   return (
-    "You are an expert e-commerce fashion cataloger. Visually inspect the MAIN GARMENT worn by the model and output ONLY a valid JSON object:\n" + hint_line +
-    '{"category": "<One of: ' + cats + '>", "gender": "<Women or Men>", "color": "<Black, Blue, Navy, LightBlue, DarkBlue, Beige, Grey, LightGrey, DarkGrey, White, Off White, Olive, Green, Pista, Brown, Coffee, Khaki, Cream, Maroon, Red, Yellow, Orange, Lavender, Purple, Teal, Wine, Peach, Pink>", "pocket": "<Kangaroo Pocket / Cargo Pocket / Five Pocket / Side Pocket / Welt Pocket / Chest Pocket / Slash Pocket / No Pocket>", "material": "<Cotton, Cotton Blend, Polycotton, Polyester, Fleece, Rayon, Denim, Crepe, Georgette, Silk, Linen, Knit>", "fabric_detail": "<100% Cotton, Cotton Blend, Polycotton, Soft Fleece, Polyester, Rayon>", "sleeve_length": "<Full Sleeve / Long Sleeve / Short Sleeve / 3/4 Sleeve / Sleeveless>", "pattern": "<Solid / Printed / Striped / Checked / Embroidered / Washed / Floral / Self Design>", "print_type": "<Solid / Botanical / Floral / Striped / Checked / Embroidered>", "neck_collar": "<Cuban Collar / Slim Collar / Mandarin / Spread Collar / Round Neck / Polo Neck / Hood>"}'
+    "You are an expert e-commerce fashion cataloger. Visually inspect ONLY the MAIN GARMENT fabric worn by the model (ignore background, props, skin tone, shoes, or inner tee).\n"
+    "CRITICAL COLOR ACCURACY RULES:\n"
+    "1. Compensate for warm/yellow studio lighting! Do NOT confuse Green, Pista (mint/pastel green), Sage, Olive, or Sea Green garments with Yellow, Mustard, or Beige.\n"
+    "2. Check the true fabric color in shaded folds: if it has a green/mint/sage/olive hue, output Green, Pista, Olive, or Sea Green. Only output Yellow or Mustard if the garment is genuinely bright yellow/golden.\n"
+    "3. Distinguish clearly between Navy vs Black vs DarkGrey, SkyBlue/LightBlue vs LightGrey, and Beige/Cream vs White.\n"
+    + hint_line +
+    'Output ONLY a valid JSON object:\n'
+    '{"category": "<One of: ' + cats + '>", "gender": "<Women or Men>", "color": "<Black, Blue, Navy, LightBlue, DarkBlue, SkyBlue, Beige, Grey, LightGrey, DarkGrey, White, Off White, Olive, Green, Pista, Sea Green, Brown, Coffee, Khaki, Cream, Maroon, Red, Yellow, Mustard, Orange, Lavender, Purple, Teal, Wine, Peach, Pink>", "pocket": "<Kangaroo Pocket / Cargo Pocket / Five Pocket / Side Pocket / Welt Pocket / Chest Pocket / Slash Pocket / No Pocket>", "material": "<Cotton, Cotton Blend, Polycotton, Polyester, Fleece, Rayon, Denim, Crepe, Georgette, Silk, Linen, Knit>", "fabric_detail": "<100% Cotton, Cotton Blend, Polycotton, Soft Fleece, Polyester, Rayon>", "sleeve_length": "<Full Sleeve / Long Sleeve / Short Sleeve / 3/4 Sleeve / Sleeveless>", "pattern": "<Solid / Printed / Striped / Checked / Embroidered / Washed / Floral / Self Design>", "print_type": "<Solid / Botanical / Floral / Striped / Checked / Embroidered>", "neck_collar": "<Cuban Collar / Slim Collar / Mandarin / Spread Collar / Round Neck / Polo Neck / Hood>"}'
   )
 
 def call_gemini_vision(image_bytes, img_name, api_key, model, folder_hint=""):
   if not api_key or not image_bytes: return None
   b64 = base64.b64encode(image_bytes).decode('utf-8')
-  payload = {"contents": [{"parts": [{"text": get_vision_prompt(folder_hint)}, {"inline_data": {"mime_type": guess_mime(img_name), "data": b64}}]}], "generationConfig": {"temperature": 0.0, "maxOutputTokens": 1500}}
   try:
-    res = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}", json=payload, timeout=40)
+    res = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}", json={"contents": [{"parts": [{"text": get_vision_prompt(folder_hint)}, {"inline_data": {"mime_type": guess_mime(img_name), "data": b64}}]}], "generationConfig": {"temperature": 0.0, "maxOutputTokens": 1500}}, timeout=40)
     if res.status_code == 200:
       cands = res.json().get('candidates') or []
-      if cands:
-        parts = (cands[0].get('content') or {}).get('parts') or []
-        return extract_json_from_text(''.join(str(p.get('text', '')) for p in parts))
+      if cands: return extract_json_from_text(''.join(str(p.get('text', '')) for p in (cands[0].get('content') or {}).get('parts') or []))
   except Exception: pass
   return None
 
@@ -469,23 +609,6 @@ def canonicalize_ai_category(cat_str):
   close = difflib.get_close_matches(cat, CATEGORY_OPTIONS, n=1, cutoff=0.6)
   return close[0] if close else 'apparel'
 
-def canonicalize_ai_color(col_str, folder_name="", image_bytes=None):
-  explicit_fld = extract_explicit_color_from_text(folder_name)
-  if explicit_fld: return explicit_fld
-  col = str(col_str or '').strip()
-  if col:
-    canon = str(_canonicalize_color(col))
-    joined = canon.lower().replace(' ', '')
-    matched_col = next((c for c in COMMON_COLORS if c.lower().replace(' ', '') == joined), None) or ' '.join(w.capitalize() for w in re.split(r'[\s\-]+', canon) if w)
-    if image_bytes and matched_col.lower() in ('pink', 'lightpink', 'rose', 'peach'):
-      px_col = analyze_image_dominant_color(image_bytes)
-      if px_col and px_col.lower() not in ('pink', 'red', 'maroon', 'peach'): return px_col
-    return matched_col
-  if image_bytes:
-    px_col = analyze_image_dominant_color(image_bytes)
-    if px_col: return px_col
-  return "Black"
-
 def canonicalize_ai_pocket(p_str):
   p = str(p_str or '').strip()
   if not p: return None
@@ -501,12 +624,13 @@ def run_vision_detection(zip_images_data):
   progress, status = st.progress(0.0), st.empty()
   for i, fld in enumerate(folders):
     cs = clean_sku_name(fld)
-    img_name, img_bytes = zip_images_data[fld][0]
-    status.info(f"🤖 AI analyzing garment image: **{cs}** ({i+1}/{len(folders)})...")
+    img_tuples = zip_images_data[fld]
+    img_name, img_bytes = img_tuples[0]
+    status.info(f"🤖 AI analyzing garment image & color: **{cs}** ({i+1}/{len(folders)})...")
     data, provider = multi_ai_vision_detect(img_bytes, img_name, folder_hint=fld)
     if data:
       cat = canonicalize_ai_category(data.get('category'))
-      col = canonicalize_ai_color(data.get('color'), folder_name=fld, image_bytes=img_bytes)
+      col = canonicalize_ai_color(data.get('color'), folder_name=fld, image_bytes=img_tuples)
       poc = canonicalize_ai_pocket(data.get('pocket'))
       gen = "Women" if str(data.get('gender')).lower().startswith('w') else "Men"
       mat = str(data.get('material') or '').strip().title()
@@ -516,9 +640,9 @@ def run_vision_detection(zip_images_data):
       pattern = str(data.get('pattern') or 'Solid').title()
       results[cs] = {'category': cat, 'color': col, 'pocket': poc, 'gender': gen, 'material': mat, 'fabric_detail': fab_det, 'sleeve_length': sleeve, 'pattern': pattern, 'print_type': str(data.get('print_type') or pattern).title(), 'neck_collar': str(data.get('neck_collar') or '').title(), 'ai_source': provider}
     else:
-      results[cs] = {'color': detect_color(fld, image_bytes=img_bytes), 'ai_source': 'Pixel/Folder-Fallback'}
+      results[cs] = {'color': detect_color(fld, image_bytes=img_tuples), 'ai_source': 'Pixel/Folder-Fallback'}
       failed.append(cs)
-    time.sleep(0.3)
+    time.sleep(0.2)
     progress.progress(min((i + 1) / len(folders), 1.0))
   progress.empty(); status.empty()
   return results, failed
@@ -587,31 +711,6 @@ def build_freehand_bullets_and_desc(cat, brand, gender="Women", det_mat="Cotton 
     desc = f"Upgrade your daily rotation with {b_prefix}{g_str} {cat_label}. Crafted from premium {det_mat} for lasting durability and everyday comfort."
   return bullets, _limit_desc_200(desc)
 
-def build_ajio_seo_content(cat, user_keywords="", gender="Women", mat_val="Cotton Blend"):
-  kw_str = user_keywords if user_keywords else "relaxed fit, all-day comfort"
-  cat_label, g_title = CATEGORY_LABELS.get(cat, 'Apparel'), "Women's" if gender == "Women" else "Men's"
-  if cat == 'co-ord set':
-    desc = f"{g_title} Co-ord Set in breathable {mat_val} fabric. Features a matching top and bottom with {kw_str} for chic daily and travel wear."
-    highlight = f"Premium {mat_val} fabric | Comfortable {g_title.lower()} fit | Elegant matching 2-piece set | Relaxed styling | Easy machine wash"
-    add_info = "Styling Tip: Pair with minimal jewelry and slip-ons. Wash Care: Machine wash cold with similar colors."
-  elif cat == 'cargo':
-    desc = f"{g_title} Cargo Pants in durable {mat_val} fabric. Features utility flap pockets, flexi waist, and {kw_str} for casual outdoor wear."
-    highlight = f"Premium breathable {mat_val} fabric | Comfortable flexi waist | Multi-pocket functional cargo utility styling | Relaxed fit | Easy machine wash"
-    add_info = "Styling Tip: Pair with oversized t-shirts, hoodies, and chunky sneakers. Wash Care: Machine wash cold with similar colors."
-  elif cat == 'jeans':
-    desc = f"Trendy {g_title} Jeans in stretch denim with {kw_str}. Features a mid-rise relaxed fit, 5-pocket styling, and clean washed finish."
-    highlight = "Premium stretch denim | Relaxed mid-rise silhouette | Authentic clean washed finish | Multi-pocket utility styling | All-season wear"
-    add_info = "Styling Tip: Pair with casual shirts or boxy tees. Wash Care: Machine wash cold inside out."
-  elif cat in ['hoodie', 'sweatshirt']:
-    desc = f"Warm {g_title} {cat_label} in soft {mat_val} fabric with {kw_str}. Features hood, kangaroo pocket, and ribbed cuffs for streetwear style."
-    highlight = f"Premium soft {mat_val} fabric | Functional hood with drawstrings | Spacious kangaroo pocket | Ribbed cuffs | Machine washable"
-    add_info = "Styling Tip: Layer over tees with jeans or joggers. Wash Care: Machine wash cold inside out."
-  else:
-    desc = f"{g_title} {cat_label} crafted from breathable {mat_val} fabric featuring {kw_str} for lasting comfort, durability, and everyday style."
-    highlight = f"Premium {mat_val} fabric | Comfortable {g_title.lower()} fit | Durable stitching | Easy machine wash"
-    add_info = "Wash Care: Machine wash cold with like colors. Do not bleach."
-  return _limit_desc_200(desc), highlight[:500], add_info[:500]
-
 def ungroup_worksheet(ws):
   for col_dim in ws.column_dimensions.values(): col_dim.outline_level = 0; col_dim.collapsed = False; col_dim.hidden = False
   for r_dim in ws.row_dimensions.values(): r_dim.outline_level = 0; r_dim.collapsed = False; r_dim.hidden = False
@@ -641,8 +740,8 @@ def get_sku_img_urls(raw_fld, ctx, clean_style):
   else:
     cnt = ctx['folder_images_count'].get(raw_fld, 5)
     urls = [make_workable_dropbox_url(ctx['dropbox'], clean_style, i) for i in range(1, cnt + 1)]
-  if ctx.get('size_chart_cdn_url') and ctx['size_chart_cdn_url'] not in urls:
-    urls.append(ctx['size_chart_cdn_url'])
+  sc_url = (ctx.get('size_chart_urls') or {}).get(raw_fld) or ctx.get('size_chart_cdn_url')
+  if sc_url and sc_url not in urls: urls.append(sc_url)
   return urls
 
 # ======================================================================
@@ -674,6 +773,7 @@ def run_vendor_central(uploaded_file, ctx):
   mrp_fill, mrp_font = HIGHLIGHT_FILL, HIGHLIGHT_FONT
   material_fill = PatternFill(start_color="FFE699", end_color="FFE699", fill_type="solid")
   added, preview = 0, []
+  sc_meas_all = ctx.get('size_chart_measurements') or {}
 
   def vset(col, value, dropdown=False, highlight=None, bold=False):
     if not col: return
@@ -695,6 +795,7 @@ def run_vendor_central(uploaded_file, ctx):
     style_val, item_type_val = get_style_from_dropdown(cat), get_item_type_name_from_dropdown(cat)
     color_map_val, pocket_val = map_to_standard_color_map(det_col), resolve_pocket(clean_style, cat, ctx)
     dept_val, gender_val = ("Womens", "Female") if det_gen == "Women" else ("Mens", "Male")
+    sc_data = sc_meas_all.get(raw_fld) or sc_meas_all.get('default') or {}
 
     preview.append({'SKU': clean_style, 'Category': cat, 'Gender': det_gen, 'Color': det_col, 'Color Map': color_map_val, 'Item Type': item_type_val, 'Style': style_val, 'Pocket': pocket_val, 'Material': mat_val})
 
@@ -702,6 +803,7 @@ def run_vendor_central(uploaded_file, ctx):
       clean_sz = clean_sku_name(sz)
       full_sku = f"{clean_style}-{clean_sz}"
       is_num_sz = clean_sz.isdigit()
+      meas = resolve_complete_measurements_for_size(clean_sz, cat, sc_data, det_gen)
       vendor_title = build_vendor_title(ctx['brand'], cat, full_sku, ctx['keywords'], 75, det_gen)
 
       vset(get_vc_col(['vendor code'], ['rtip_vendor_code#1.value']), "J B fashion -- Surat -- Dropship, in_pd-ravi_apparel, JBZ54")
@@ -755,9 +857,12 @@ def run_vendor_central(uploaded_file, ctx):
       vset(get_vc_col(['product site launch date'], ['product_site_launch_date#1.value']), today_str)
       vset(get_vc_col(['external product information entity'], ['external_product_information#1.entity']), "HSN Code", dropdown=True)
       vset(get_vc_col(['external product information'], ['external_product_information#1.value']), get_hsn_code(cat))
-      if is_num_sz:
-        vset(get_vc_col(['waist size'], ['waist#1.size#1.value']), clean_sz)
-        vset(get_vc_col(['waist size unit'], ['waist#1.size#1.unit']), "inches", dropdown=True)
+      vset(get_vc_col(['waist size'], ['waist#1.size#1.value']), meas['waist'])
+      vset(get_vc_col(['waist size unit'], ['waist#1.size#1.unit']), "inches", dropdown=True)
+      vset(get_vc_col(['chest size'], ['chest#1.size#1.value']), meas['chest'])
+      vset(get_vc_col(['chest size unit'], ['chest#1.size#1.unit']), "inches", dropdown=True)
+      vset(get_vc_col(['inseam length'], ['inseam#1.length#1.value']), meas['inseam'])
+      vset(get_vc_col(['inseam length unit'], ['inseam#1.length#1.unit']), "inches", dropdown=True)
       vset(get_vc_col(['product lifecycle supply type'], ['lifecycle_supply_type#1.value']), "Year Round Replenishable", dropdown=True)
       vset(get_vc_col(['seasons'], ['seasons#1.value']), "All", dropdown=True)
       vset(get_vc_col(['sleeve length description', 'sleeve length']), sleeve_val, dropdown=True)
@@ -870,6 +975,9 @@ def run_seller_central(uploaded_file, ctx):
   c_ssys = get_sc_col(['apparel size system', 'bottoms size system', 'size system'], ['apparel_size#1.size_system', 'bottoms_size#1.size_system'])
   c_scls = get_sc_col(['apparel size class', 'bottoms size class', 'size class'], ['apparel_size#1.size_class', 'bottoms_size#1.size_class'])
   c_sval = get_sc_col(['apparel size value', 'bottoms size value', 'size value', 'size name', 'size'], ['apparel_size#1.size', 'bottoms_size#1.size'])
+  c_waist_val, c_waist_unit = get_sc_col(['waist size'], ['waist#1.size#1.value']), get_sc_col(['waist size unit'], ['waist#1.size#1.unit'])
+  c_chest_val, c_chest_unit = get_sc_col(['chest size'], ['chest#1.size#1.value']), get_sc_col(['chest size unit'], ['chest#1.size#1.unit'])
+  c_inseam_val, c_inseam_unit = get_sc_col(['inseam length'], ['inseam#1.length#1.value']), get_sc_col(['inseam length unit'], ['inseam#1.length#1.unit'])
   c_mat = get_sc_col(['material', 'outer material type'], ['material#1.value'])
   c_fab = get_sc_col(['fabric type'], ['fabric_type#1.value'])
   c_noi = get_sc_col(['number of items'], ['number_of_items#1.value'])
@@ -922,6 +1030,7 @@ def run_seller_central(uploaded_file, ctx):
   var_theme_val, cond_new_val, fulfillment_default_val, qty_zero_val, ship_tpl_val, asin_type_val = "SIZE/COLOR", "New", "Fulfillment by Merchant (Default)", 0, "Migrated Template", "ASIN"
   custom_parent_model = (ctx.get('sc_parent_model') or '').strip()
   generated_rows, model_first_child_cells = [], {}
+  sc_meas_all = ctx.get('size_chart_measurements') or {}
 
   for raw_fld in ctx['folders']:
     clean_style = clean_sku_name(raw_fld)
@@ -938,11 +1047,13 @@ def run_seller_central(uploaded_file, ctx):
     fab_val = f"100% {mat_val}"
     prod_type_val = resolve_sc_product_type_for_row(ws, c_prod_type, raw_prod_type=SC_PRODUCT_TYPE.get(cat, ''), sheet_name=cat, item_type=item_type_val, model_name=model_str, item_name=clean_style)
     dept_val, gender_val = ("Womens", "Female") if det_gen == "Women" else ("Mens", "Male")
+    sc_data = sc_meas_all.get(raw_fld) or sc_meas_all.get('default') or {}
 
     for sz in ctx['sizes']:
       clean_sz = clean_sku_name(sz)
       full_sku = f"{clean_style}-{clean_sz}"
       size_class_val = "Numeric" if clean_sz.isdigit() else "Alpha"
+      meas = resolve_complete_measurements_for_size(clean_sz, cat, sc_data, det_gen)
       child_title = build_vendor_title(ctx['brand'], cat, full_sku, ctx['keywords'], 150, det_gen)
       cells = {}
       def s_col(col_idx, val, dropdown=False):
@@ -960,6 +1071,9 @@ def run_seller_central(uploaded_file, ctx):
       s_col(c_gkw, gen_kw); s_col(c_lifestyle, "Casual", dropdown=True); s_col(c_style, style_val, dropdown=True)
       s_col(c_dept, dept_val, dropdown=True); s_col(c_gender, gender_val, dropdown=True); s_col(c_age, "Adult", dropdown=True)
       s_col(c_ssys, "IN", dropdown=True); s_col(c_scls, size_class_val, dropdown=True); s_col(c_sval, clean_sz)
+      s_col(c_waist_val, meas['waist']); s_col(c_waist_unit, "Inches", dropdown=True)
+      s_col(c_chest_val, meas['chest']); s_col(c_chest_unit, "Inches", dropdown=True)
+      s_col(c_inseam_val, meas['inseam']); s_col(c_inseam_unit, "Inches", dropdown=True)
       s_col(c_mat, mat_val, dropdown=True); s_col(c_fab, fab_val); s_col(c_noi, 1)
       s_col(c_itn, item_type_val, dropdown=True); s_col(c_spec_sz, "Standard", dropdown=True)
       s_col(c_cmap, color_map_val, dropdown=True); s_col(c_color, det_col); s_col(c_part, full_sku)
@@ -978,7 +1092,6 @@ def run_seller_central(uploaded_file, ctx):
       generated_rows.append((full_sku, model_str, cells))
 
   preview, total_written = [], 0
-
   def apply_common_fixed_fields(row_idx):
     if c_action: ws.cell(row_idx, c_action).value = action_val
     if c_var_theme: ws.cell(row_idx, c_var_theme).value = var_theme_val
@@ -995,12 +1108,9 @@ def run_seller_central(uploaded_file, ctx):
     if c_prod_type and c_prod_type in ref_cells: ws.cell(curr_r, c_prod_type).value = ref_cells[c_prod_type]
     if c_parentage: ws.cell(curr_r, c_parentage).value = parent_val
     if c_mod_name:
-      ws.cell(curr_r, c_mod_name).value = model_sku
-      ws.cell(curr_r, c_mod_name).fill = HIGHLIGHT_FILL; ws.cell(curr_r, c_mod_name).font = HIGHLIGHT_FONT
-    parent_title = ""
-    if c_title:
-      parent_title = _build_parent_title_from_child(ref_cells.get(c_title, ''), model_sku)
-      ws.cell(curr_r, c_title).value = parent_title
+      ws.cell(curr_r, c_mod_name).value = model_sku; ws.cell(curr_r, c_mod_name).fill = HIGHLIGHT_FILL; ws.cell(curr_r, c_mod_name).font = HIGHLIGHT_FONT
+    parent_title = _build_parent_title_from_child(ref_cells.get(c_title, ''), model_sku) if c_title else ""
+    if c_title: ws.cell(curr_r, c_title).value = parent_title
     apply_common_fixed_fields(curr_r)
     preview.append({'Row': curr_r, 'SKU': model_sku, 'Product Type': ref_cells.get(c_prod_type, '') if c_prod_type else '', 'Listing Action': action_val, 'Parentage Level': parent_val, 'Parent SKU': '', 'Variation Theme': var_theme_val, 'Shipping Template': '', 'Item Name': parent_title})
     curr_r += 1; total_written += 1
@@ -1024,8 +1134,7 @@ def run_seller_central(uploaded_file, ctx):
 
   inserted_parents = set()
   for c_sku_val, m_str, m_cells in generated_rows:
-    if m_str and m_str not in inserted_parents:
-      inserted_parents.add(m_str); write_parent_row(m_str)
+    if m_str and m_str not in inserted_parents: inserted_parents.add(m_str); write_parent_row(m_str)
     write_child_row(c_sku_val, m_str, m_cells)
 
   output = io.BytesIO()
@@ -1037,8 +1146,6 @@ def run_seller_central(uploaded_file, ctx):
 # ======================================================================
 MEESHO_COLOR_SYNONYMS = {'pista': 'Mint Green', 'pistachio': 'Mint Green', 'sea green': 'Mint Green', 'seagreen': 'Mint Green', 'lightgreen': 'Mint Green', 'light green': 'Mint Green', 'lightgrey': 'Grey Melange', 'light grey': 'Grey Melange', 'lightgray': 'Grey Melange', 'light gray': 'Grey Melange', 'darkgrey': 'Charcoal', 'dark grey': 'Charcoal', 'navy': 'Navy Blue', 'navyblue': 'Navy Blue', 'navy blue': 'Navy Blue', 'darkblue': 'Navy Blue', 'dark blue': 'Navy Blue', 'skyblue': 'Blue', 'sky blue': 'Blue', 'lightblue': 'Blue', 'light blue': 'Blue', 'iceblue': 'Aqua Blue', 'ice blue': 'Aqua Blue', 'chiku': 'Cream', 'chikoo': 'Cream', 'badami': 'Beige', 'khakhi': 'Khaki', 'biege': 'Beige', 'coffee': 'Brown', 'chocolate': 'Brown', 'camel': 'Brown', 'tan': 'Brown', 'wine': 'Maroon', 'burgundy': 'Maroon', 'off white': 'Off-White', 'offwhite': 'Off-White', 'lavender': 'Lavendar', 'lavendar': 'Lavendar'}
 MEESHO_VARIATION_SYNONYMS = {'2xl': 'XXL', 'xxl': 'XXL', '3xl': 'XXXL', 'xxxl': 'XXXL', '4xl': '4XL', 'xxxxl': 'XXXXL', '5xl': '5XL', 'xs': 'XS', 'xxs': 'XXS', 's': 'S', 'm': 'M', 'l': 'L', 'xl': 'XL', 'free': 'Free Size', 'freesize': 'Free Size', 'free size': 'Free Size'}
-MEESHO_SHIRT_MEASUREMENTS = {'XS': {'chest': 38, 'length': 27.5, 'shoulder': 16.5}, 'S': {'chest': 40, 'length': 28, 'shoulder': 17}, 'M': {'chest': 42, 'length': 29, 'shoulder': 17.5}, 'L': {'chest': 44, 'length': 29.5, 'shoulder': 18}, 'XL': {'chest': 46, 'length': 30, 'shoulder': 19}, 'XXL': {'chest': 48, 'length': 30.5, 'shoulder': 20}, '2XL': {'chest': 48, 'length': 30.5, 'shoulder': 20}, 'XXXL': {'chest': 50, 'length': 31, 'shoulder': 21}, '3XL': {'chest': 50, 'length': 31, 'shoulder': 21}, '4XL': {'chest': 52, 'length': 31.5, 'shoulder': 22}}
-MEESHO_TROUSER_MEASUREMENTS = {'24': {'waist': 24, 'hip': 32, 'length': 38}, '26': {'waist': 26, 'hip': 34, 'length': 38}, '28': {'waist': 28, 'hip': 36, 'length': 39}, '30': {'waist': 30, 'hip': 38, 'length': 39}, '32': {'waist': 32, 'hip': 40, 'length': 40}, '34': {'waist': 34, 'hip': 42, 'length': 40}, '36': {'waist': 36, 'hip': 44, 'length': 41}, '38': {'waist': 38, 'hip': 46, 'length': 41}, '40': {'waist': 40, 'hip': 48, 'length': 42}, '42': {'waist': 42, 'hip': 50, 'length': 42}, 'XS': {'waist': 26, 'hip': 36, 'length': 38}, 'S': {'waist': 28, 'hip': 38, 'length': 39}, 'M': {'waist': 30, 'hip': 40, 'length': 39}, 'L': {'waist': 32, 'hip': 42, 'length': 40}, 'XL': {'waist': 34, 'hip': 44, 'length': 40}, 'XXL': {'waist': 36, 'hip': 46, 'length': 41}, '2XL': {'waist': 36, 'hip': 46, 'length': 41}, 'XXXL': {'waist': 38, 'hip': 48, 'length': 41}, '3XL': {'waist': 38, 'hip': 48, 'length': 41}}
 
 def _extract_meesho_col_header(cell_val):
   if cell_val in (None, ''): return ""
@@ -1049,24 +1156,19 @@ def analyze_meesho_template(wb):
   main_ws, val_ws = None, None
   for sname in wb.sheetnames:
     ws_try = wb[sname]
-    r1_c1 = str(ws_try.cell(1, 1).value or '').strip().lower()
-    r2_c1 = str(ws_try.cell(2, 1).value or '').strip().lower()
-    r3_c1 = str(ws_try.cell(3, 1).value or '').strip().lower()
+    r1_c1, r2_c1, r3_c1 = str(ws_try.cell(1, 1).value or '').strip().lower(), str(ws_try.cell(2, 1).value or '').strip().lower(), str(ws_try.cell(3, 1).value or '').strip().lower()
     if 'field type' in r1_c1 or 'validation' in sname.lower():
       if val_ws is None: val_ws = ws_try
       continue
     if ('field names' in r2_c1 or 'fields + description' in r3_c1) and main_ws is None:
-      if not any(ign in sname.lower() for ign in ('sample', 'example', 'reference', 'instruction', 'return')):
-        main_ws = ws_try
-  if main_ws is None:
-    main_ws = next((wb[s] for s in wb.sheetnames if 'fields + description' in str(wb[s].cell(3, 1).value or '').strip().lower()), None)
+      if not any(ign in sname.lower() for ign in ('sample', 'example', 'reference', 'instruction', 'return')): main_ws = ws_try
+  if main_ws is None: main_ws = next((wb[s] for s in wb.sheetnames if 'fields + description' in str(wb[s].cell(3, 1).value or '').strip().lower()), None)
   if main_ws is None: return None
 
   banner = str(main_ws.cell(1, 1).value or main_ws.cell(1, 5).value or main_ws.title).strip()
   headers, compulsory_cols, rec_return_diff = {}, [], 28
   for c in range(1, main_ws.max_column + 1):
-    r2_val = str(main_ws.cell(2, c).value or '').strip()
-    r3_raw = str(main_ws.cell(3, c).value or '')
+    r2_val, r3_raw = str(main_ws.cell(2, c).value or '').strip(), str(main_ws.cell(3, c).value or '')
     h_name = _extract_meesho_col_header(r3_raw)
     if h_name: headers[c] = h_name
     if 'compulsory' in r2_val.lower(): compulsory_cols.append(c)
@@ -1089,8 +1191,7 @@ def analyze_meesho_template(wb):
       if dv_opts: dropdown_map[c] = dv_opts
 
   det_gender = "Men" if any(w in banner.lower() for w in ['men ', 'mens', '/men']) and 'women' not in banner.lower() else detect_gender(banner)
-  det_cat = detect_product_category(banner, "", main_ws.title)
-  return {'main_ws': main_ws, 'val_ws': val_ws, 'sheet_name': main_ws.title, 'banner': banner, 'headers': headers, 'compulsory_cols': compulsory_cols, 'dropdown_map': dropdown_map, 'rec_return_diff': rec_return_diff, 'detected_gender': det_gender, 'detected_category': det_cat}
+  return {'main_ws': main_ws, 'val_ws': val_ws, 'sheet_name': main_ws.title, 'banner': banner, 'headers': headers, 'compulsory_cols': compulsory_cols, 'dropdown_map': dropdown_map, 'rec_return_diff': rec_return_diff, 'detected_gender': det_gender, 'detected_category': detect_product_category(banner, "", main_ws.title)}
 
 def _meesho_pick_option(options, desired, fallback=None):
   if not options: return desired if desired is not None else fallback
@@ -1108,6 +1209,13 @@ def _meesho_pick_option(options, desired, fallback=None):
         try:
           if abs(float(s_opt) - cand_num) < 1e-6: return orig
         except Exception: pass
+      num_opts = []
+      for orig, s_opt in str_opts:
+        try: num_opts.append((abs(float(s_opt) - cand_num), orig))
+        except Exception: pass
+      if num_opts:
+        num_opts.sort(key=lambda x: x[0])
+        if num_opts[0][0] <= 2.5: return num_opts[0][1]
     except Exception: pass
     for orig, s_opt in str_opts:
       if _norm_h(s_opt) == cand_norm: return orig
@@ -1120,8 +1228,7 @@ def _meesho_pick_option(options, desired, fallback=None):
   return str_opts[0][0]
 
 def _parse_meesho_mfg_details(mfg_raw, mfg_name_input="", mfg_pin_input="", brand_fallback=""):
-  raw = str(mfg_raw or '').strip()
-  pin = str(mfg_pin_input or '').strip()
+  raw, pin = str(mfg_raw or '').strip(), str(mfg_pin_input or '').strip()
   if not pin:
     m_pin = re.search(r'\b(\d{6})\b', raw)
     pin = m_pin.group(1) if m_pin else "394107"
@@ -1134,8 +1241,7 @@ def _parse_meesho_mfg_details(mfg_raw, mfg_name_input="", mfg_pin_input="", bran
   return name, addr_clean, (int(pin) if str(pin).isdigit() else pin)
 
 def _extract_meesho_group_prefix(folder_name):
-  clean = clean_sku_name(folder_name)
-  base = pl_extract_style_code(clean)
+  base = pl_extract_style_code(clean_sku_name(folder_name))
   base_no_num = re.sub(r'-\d+$', '', base)
   return base_no_num.lower() if base_no_num else base.lower()
 
@@ -1178,14 +1284,12 @@ def _infer_meesho_garment_attributes(raw_fld, clean_style, cat, det_gen, det_col
   elif 'insta' in fld_low or re.match(r'^shirt-\d+', clean_style.lower()): meesho_pattern, meesho_print_type, meesho_fabric, title_desc = "Solid", "Solid", "Polyester", "Textured Casual"
   else:
     meesho_pattern = ai_pat if ai_pat else "Solid"
-    meesho_print_type = meesho_pattern
-    meesho_fabric = ai_mat if ai_mat else DEFAULT_CATEGORY_FABRICS.get(cat, "Cotton Blend")
+    meesho_print_type, meesho_fabric = meesho_pattern, (ai_mat if ai_mat else DEFAULT_CATEGORY_FABRICS.get(cat, "Cotton Blend"))
     title_desc = "Solid Casual" if meesho_pattern.lower() == 'solid' else f"{meesho_pattern} Casual"
 
   brand_str = f"{ctx['brand']} " if ctx.get('brand') else ""
   g_title, cat_label = ("Women's" if det_gen == "Women" else "Men's"), CATEGORY_LABELS.get(cat, "Casual Wear")
-  if cat == 'shirt':
-    product_name = f"{brand_str}{g_title} {title_desc} Shirt".strip() if 'Double-Breasted' in title_desc else f"{brand_str}{g_title} {title_desc} {title_sleeve} Shirt".strip()
+  if cat == 'shirt': product_name = f"{brand_str}{g_title} {title_desc} Shirt".strip() if 'Double-Breasted' in title_desc else f"{brand_str}{g_title} {title_desc} {title_sleeve} Shirt".strip()
   elif cat in ('trousers', 'cargo', 'joggers', 'jeans', 'shorts'):
     fit_word = "Cargo" if cat == 'cargo' else ("Jogger" if cat == 'joggers' else "Regular Fit")
     product_name = f"{brand_str}{g_title} {meesho_pattern} {fit_word} {cat_label}".strip()
@@ -1220,7 +1324,7 @@ def run_meesho(uploaded_file, ctx, size_charts_data=None):
   c_color, c_fabric, c_fit, c_generic = get_mcol(['Color', 'Colour']), get_mcol(['Fabric']), get_mcol(['Fit/Shape', 'Fit/ Shape', 'Fit']), get_mcol(['Generic Name'])
   c_neck, c_net_qty, c_occasion, c_pattern, c_print_type, c_sleeve_len = get_mcol(['Neck', 'Collar']), get_mcol(['Net Quantity (N)', 'Net Quantity']), get_mcol(['Occasion']), get_mcol(['Pattern']), get_mcol(['Print Or Pattern Type', 'Print or Pattern Type']), get_mcol(['Sleeve Length'])
   c_chest, c_length_sz, c_shoulder = get_mcol(['Chest Size', 'Bust Size']), get_mcol(['Length Size']), get_mcol(['Shoulder Size'])
-  c_stretch, c_type, c_waist_rise, c_hip, c_waist_sz = get_mcol(['Stretchability']), get_mcol(['Type']), get_mcol(['Waist Rise']), get_mcol(['Hip Size']), get_mcol(['Waist Size'])
+  c_stretch, c_type, c_waist_rise, c_hip, c_waist_sz, c_inseam_sz = get_mcol(['Stretchability']), get_mcol(['Type']), get_mcol(['Waist Rise']), get_mcol(['Hip Size']), get_mcol(['Waist Size']), get_mcol(['Inseam Length', 'Inseam Size'])
   c_imgs = [get_mcol(['Image 1 (Front)', 'Image 1', 'Image1']), get_mcol(['Image 2', 'Image2']), get_mcol(['Image 3', 'Image3']), get_mcol(['Image 4', 'Image4'])]
   c_style_id, c_sku_id, c_brand_name, c_group_id = get_mcol(['Product ID / Style ID', 'Style ID', 'Product ID']), get_mcol(['SKU ID', 'Seller SKU', 'SKU']), get_mcol(['Brand Name']), get_mcol(['Group ID'])
   c_distress, c_hemline, c_length_opt, c_pockets, c_sleeve_style, c_waist_closure = get_mcol(['Distress']), get_mcol(['Hemline']), get_mcol(['Length']), get_mcol(['Number of Pockets']), get_mcol(['Sleeve Styling']), get_mcol(['Waist closure', 'Waist Closure'])
@@ -1245,6 +1349,7 @@ def run_meesho(uploaded_file, ctx, size_charts_data=None):
 
   group_options = dropdown_map.get(c_group_id, [f"Group  {i}" for i in range(1, 201)])
   family_to_group, group_counter, total_added, preview = {}, 0, 0, []
+  sc_meas_all = ctx.get('size_chart_measurements') or {}
 
   for raw_fld in ctx['folders']:
     clean_style = clean_sku_name(raw_fld)
@@ -1252,6 +1357,7 @@ def run_meesho(uploaded_file, ctx, size_charts_data=None):
     if cat == 'apparel' and tpl_cat and tpl_cat != 'apparel': cat = tpl_cat
     det_gen = tpl_gen if tpl_gen in ('Men', 'Women') else resolve_gender(clean_style, ctx)
     det_col = resolve_color(raw_fld, clean_style, ctx)
+    sc_data = sc_meas_all.get(raw_fld) or sc_meas_all.get('default') or {}
 
     fam_key = _extract_meesho_group_prefix(raw_fld)
     if fam_key not in family_to_group:
@@ -1260,18 +1366,24 @@ def run_meesho(uploaded_file, ctx, size_charts_data=None):
     group_id_val = family_to_group[fam_key]
 
     attrs = _infer_meesho_garment_attributes(raw_fld, clean_style, cat, det_gen, det_col, ctx)
+    if sc_data.get('sleeve_length') and not any(w in raw_fld.lower() for w in ['full', 'half', 'short']):
+      if 'long' in str(sc_data['sleeve_length']).lower() or 'full' in str(sc_data['sleeve_length']).lower(): attrs['sleeve_length'] = "Long Sleeves"
+      elif 'short' in str(sc_data['sleeve_length']).lower(): attrs['sleeve_length'] = "Short Sleeves"
+
     sku_img_urls = get_sku_img_urls(raw_fld, ctx, clean_style)
     custom_wt = str(ctx.get('meesho_weight') or '').strip()
     weight_val = int(custom_wt) if custom_wt.isdigit() else (300 if cat in ('shirt', 'tshirt', 'top', 'kurti', 'kurta') else 350)
     hsn_desired = str(ctx.get('hsn') or '').strip() or get_hsn_code(cat)
     generic_desired = "Trousers" if cat in ('trousers', 'cargo', 'joggers', 'pants') else ("Shirts" if cat == 'shirt' else CATEGORY_LABELS.get(cat, "Shirts"))
 
-    preview.append({'Sheet': ws.title, 'Product ID / Style ID': clean_style, 'Group ID': group_id_val, 'Product Name': attrs['product_name'], 'Color': _meesho_pick_option(dropdown_map.get(c_color), attrs['color'], "Black"), 'Fabric': _meesho_pick_option(dropdown_map.get(c_fabric), attrs['fabric'], "Cotton"), 'Pattern': _meesho_pick_option(dropdown_map.get(c_pattern), attrs['pattern'], "Solid"), 'Meesho Price': meesho_price_val or 'Highlight', 'Return Price': return_price_val or 'Highlight', 'MRP': mrp_val or 'Highlight'})
+    preview.append({'Sheet': ws.title, 'Product ID / Style ID': clean_style, 'Group ID': group_id_val, 'Product Name': attrs['product_name'], 'Color': _meesho_pick_option(dropdown_map.get(c_color), attrs['color'], "Black"), 'Fabric': _meesho_pick_option(dropdown_map.get(c_fabric), attrs['fabric'], "Cotton"), 'Pattern': _meesho_pick_option(dropdown_map.get(c_pattern), attrs['pattern'], "Solid"), 'Size Chart Used': 'Yes (ZIP)' if sc_data else 'Smart Auto', 'Meesho Price': meesho_price_val or 'Highlight', 'Return Price': return_price_val or 'Highlight'})
 
     for sz in ctx['sizes']:
       clean_sz = clean_sku_name(sz)
       full_sku = f"{clean_style}-{clean_sz}"
       var_desired = MEESHO_VARIATION_SYNONYMS.get(clean_sz.lower(), clean_sz)
+      meas = resolve_complete_measurements_for_size(clean_sz, cat, sc_data, det_gen)
+
       mset(curr_r, c_prod_name, attrs['product_name'])
       mset(curr_r, c_variation, var_desired, dropdown=True)
       if c_meesho_price:
@@ -1296,21 +1408,13 @@ def run_meesho(uploaded_file, ctx, size_charts_data=None):
       if c_neck: mset(curr_r, c_neck, attrs['neck'], dropdown=True)
       if c_sleeve_len: mset(curr_r, c_sleeve_len, attrs['sleeve_length'], dropdown=True)
 
-      sz_key = clean_sz.upper()
-      sh_m = MEESHO_SHIRT_MEASUREMENTS.get(sz_key) or MEESHO_SHIRT_MEASUREMENTS.get(str(var_desired).upper()) or {'chest': 42, 'length': 29, 'shoulder': 17.5}
-      if c_chest: mset(curr_r, c_chest, sh_m['chest'], dropdown=True)
-      if c_shoulder: mset(curr_r, c_shoulder, sh_m['shoulder'], dropdown=True)
-
-      tr_m = MEESHO_TROUSER_MEASUREMENTS.get(sz_key) or MEESHO_TROUSER_MEASUREMENTS.get(str(var_desired).upper())
-      if not tr_m:
-        try:
-          w_num = int(re.findall(r'\d+', clean_sz)[0])
-          tr_m = {'waist': w_num, 'hip': w_num + 8, 'length': 40}
-        except Exception: tr_m = {'waist': 32, 'hip': 40, 'length': 40}
-      if c_waist_sz: mset(curr_r, c_waist_sz, tr_m['waist'], dropdown=True)
-      if c_hip: mset(curr_r, c_hip, tr_m['hip'], dropdown=True)
-      if c_length_sz:
-        mset(curr_r, c_length_sz, tr_m['length'] if (c_waist_sz or cat in ('trousers', 'cargo', 'joggers', 'jeans')) else sh_m['length'], dropdown=True)
+      is_bottom_sheet = bool(c_waist_sz or cat in ('trousers', 'cargo', 'joggers', 'jeans', 'pants'))
+      if c_chest: mset(curr_r, c_chest, meas['chest'], dropdown=True)
+      if c_shoulder: mset(curr_r, c_shoulder, meas['shoulder'], dropdown=True)
+      if c_waist_sz: mset(curr_r, c_waist_sz, meas['waist'], dropdown=True)
+      if c_hip: mset(curr_r, c_hip, meas['hip'], dropdown=True)
+      if c_inseam_sz: mset(curr_r, c_inseam_sz, meas['inseam'], dropdown=True)
+      if c_length_sz: mset(curr_r, c_length_sz, meas['bottom_length'] if is_bottom_sheet else meas['front_length'], dropdown=True)
       if c_type: mset(curr_r, c_type, "Cargos" if cat == 'cargo' else ("Joggers" if cat == 'joggers' else "Regular"), dropdown=True)
       if c_waist_rise: mset(curr_r, c_waist_rise, "Mid Rise", dropdown=True)
 
@@ -1319,8 +1423,8 @@ def run_meesho(uploaded_file, ctx, size_charts_data=None):
       mset(curr_r, c_style_id, clean_style); mset(curr_r, c_sku_id, full_sku); mset(curr_r, c_brand_name, ctx.get('brand', '')); mset(curr_r, c_group_id, group_id_val, dropdown=True)
 
       if c_hemline: mset(curr_r, c_hemline, "Straight", dropdown=True)
-      if c_length_opt: mset(curr_r, c_length_opt, "Full Length" if (c_waist_sz or cat in ('trousers', 'cargo', 'joggers', 'jeans')) else "Regular", dropdown=True)
-      if c_pockets: mset(curr_r, c_pockets, 2 if (c_waist_sz or cat in ('trousers', 'cargo', 'joggers', 'jeans')) else 1, dropdown=True)
+      if c_length_opt: mset(curr_r, c_length_opt, "Full Length" if is_bottom_sheet else "Regular", dropdown=True)
+      if c_pockets: mset(curr_r, c_pockets, 2 if is_bottom_sheet else 1, dropdown=True)
       if c_sleeve_style: mset(curr_r, c_sleeve_style, "Regular", dropdown=True)
       if c_stretch: mset(curr_r, c_stretch, "No", dropdown=True)
       if c_distress: mset(curr_r, c_distress, "Not Applicable", dropdown=True)
@@ -1335,8 +1439,8 @@ def run_meesho(uploaded_file, ctx, size_charts_data=None):
 # UNIVERSAL ENGINE (Flipkart / Myntra)
 # ======================================================================
 MP_FIELD_CANDIDATES = {
-  'Flipkart': {'sku': ['listing sku', 'seller sku', 'sku', 'sku id'], 'title': ['product title', 'listing title', 'title', 'product name'], 'brand': ['brand', 'brand name'], 'description': ['description', 'product description', 'long description'], 'mrp': ['mrp', 'maximum retail price', 'list price', 'mrp inr'], 'price': ['selling price', 'price', 'your price'], 'hsn': ['hsn', 'hsn code'], 'color': ['color', 'color family', 'colour'], 'size': ['size', 'size value', 'variant size'], 'fabric': ['fabric', 'fabric type', 'material'], 'pattern': ['pattern', 'pattern type'], 'fit': ['fit', 'fit type'], 'country': ['country of origin', 'origin country', 'country'], 'generic_kw': ['search keywords', 'keywords', 'search terms'], 'gender': ['gender', 'ideal for'], 'care': ['wash care', 'care instructions'], 'sleeve': ['sleeve', 'sleeve length'], 'manufacturer': ['manufactured by', 'manufacturer', 'packer details', 'marketed by'], 'img1': ['main image url', 'image url 1', 'image 1', 'image1', 'primary image url']},
-  'Myntra': {'sku': ['seller sku', 'sku', 'sku id', 'style code'], 'title': ['style name', 'product name', 'title', 'item name'], 'brand': ['brand', 'brand name', 'vendor brand'], 'description': ['style description', 'description', 'product description'], 'mrp': ['mrp', 'maximum retail price', 'list price'], 'price': ['selling price', 'price', 'wholesale price'], 'hsn': ['hsn', 'hsn code'], 'color': ['color', 'colour', 'primary color'], 'size': ['size', 'variant size'], 'fabric': ['fabric', 'material', 'composition'], 'pattern': ['pattern', 'print'], 'fit': ['fit', 'fit type'], 'country': ['country of origin', 'country'], 'generic_kw': ['keywords', 'search keywords'], 'gender': ['gender', 'customer gender'], 'care': ['wash care', 'care instructions'], 'sleeve': ['sleeve length', 'sleeve styling'], 'manufacturer': ['manufactured by', 'manufacturer', 'marketed by', 'packer details'], 'img1': ['image 1', 'image1', 'images1', 'main image url', 'primary image url']},
+  'Flipkart': {'sku': ['listing sku', 'seller sku', 'sku', 'sku id'], 'title': ['product title', 'listing title', 'title', 'product name'], 'brand': ['brand', 'brand name'], 'description': ['description', 'product description', 'long description'], 'mrp': ['mrp', 'maximum retail price', 'list price', 'mrp inr'], 'price': ['selling price', 'price', 'your price'], 'hsn': ['hsn', 'hsn code'], 'color': ['color', 'color family', 'colour'], 'size': ['size', 'size value', 'variant size'], 'fabric': ['fabric', 'fabric type', 'material'], 'pattern': ['pattern', 'pattern type'], 'fit': ['fit', 'fit type'], 'country': ['country of origin', 'origin country', 'country'], 'generic_kw': ['search keywords', 'keywords', 'search terms'], 'gender': ['gender', 'ideal for'], 'care': ['wash care', 'care instructions'], 'sleeve': ['sleeve', 'sleeve length'], 'manufacturer': ['manufactured by', 'manufacturer', 'packer details', 'marketed by'], 'img1': ['main image url', 'image url 1', 'image 1', 'image1', 'primary image url'], 'chest': ['chest', 'chest size', 'bust', 'bust size'], 'waist': ['waist', 'waist size'], 'hip': ['hip', 'hip size'], 'shoulder': ['shoulder', 'shoulder size', 'across shoulder'], 'length': ['length', 'length size', 'front length'], 'inseam': ['inseam', 'inseam length']},
+  'Myntra': {'sku': ['seller sku', 'sku', 'sku id', 'style code'], 'title': ['style name', 'product name', 'title', 'item name'], 'brand': ['brand', 'brand name', 'vendor brand'], 'description': ['style description', 'description', 'product description'], 'mrp': ['mrp', 'maximum retail price', 'list price'], 'price': ['selling price', 'price', 'wholesale price'], 'hsn': ['hsn', 'hsn code'], 'color': ['color', 'colour', 'primary color'], 'size': ['size', 'variant size'], 'fabric': ['fabric', 'material', 'composition'], 'pattern': ['pattern', 'print'], 'fit': ['fit', 'fit type'], 'country': ['country of origin', 'country'], 'generic_kw': ['keywords', 'search keywords'], 'gender': ['gender', 'customer gender'], 'care': ['wash care', 'care instructions'], 'sleeve': ['sleeve length', 'sleeve styling'], 'manufacturer': ['manufactured by', 'manufacturer', 'marketed by', 'packer details'], 'img1': ['image 1', 'image1', 'images1', 'main image url', 'primary image url'], 'chest': ['chest', 'chest size', 'bust', 'bust size', 'garment chest'], 'waist': ['waist', 'waist size', 'garment waist'], 'hip': ['hip', 'hip size', 'garment hip'], 'shoulder': ['shoulder', 'shoulder size', 'across shoulder'], 'length': ['length', 'front length', 'garment length'], 'inseam': ['inseam', 'inseam length']},
 }
 
 def run_generic_marketplace(uploaded_file, ctx, mp):
@@ -1383,6 +1487,7 @@ def run_generic_marketplace(uploaded_file, ctx, mp):
     ws.cell(row, c).value = pick_dropdown_value(ws, c, value, value) if dropdown else value
 
   count, preview = 0, []
+  sc_meas_all = ctx.get('size_chart_measurements') or {}
   for raw_fld in ctx['folders']:
     clean_style = clean_sku_name(raw_fld)
     det_col = resolve_color(raw_fld, clean_style, ctx)
@@ -1392,11 +1497,13 @@ def run_generic_marketplace(uploaded_file, ctx, mp):
     bullets_list, desc_text = build_freehand_bullets_and_desc(cat, ctx['brand'], det_gen, mat_val)
     gen_kw = re.sub(r'\s+', ' ', str(generate_generic_keywords_200(cat, det_col, ctx['keywords'], det_gen)).replace(';', ' ')).strip()
     urls = get_sku_img_urls(raw_fld, ctx, clean_style)
+    sc_data = sc_meas_all.get(raw_fld) or sc_meas_all.get('default') or {}
     preview.append({'SKU': clean_style, 'Category': cat, 'Gender': det_gen, 'Color': det_col, 'Color Family': color_family_val, 'Material': mat_val, 'Sleeve': sleeve_val})
 
     for sz in ctx['sizes']:
       clean_sz = clean_sku_name(sz)
       full_sku = f"{clean_style}-{clean_sz}"
+      meas = resolve_complete_measurements_for_size(clean_sz, cat, sc_data, det_gen)
       r = start_row + count
       W(r, 'sku', full_sku); W(r, 'title', build_sc_title(ctx['brand'], cat, full_sku, ctx['keywords'], 150, det_gen)); W(r, 'brand', ctx['brand'])
       W(r, 'description', _limit_desc_200(desc_text)); W(r, 'color', color_family_val, dropdown=True)
@@ -1404,6 +1511,9 @@ def run_generic_marketplace(uploaded_file, ctx, mp):
       W(r, 'fit', 'Relaxed', dropdown=True); W(r, 'country', 'India', dropdown=True)
       W(r, 'generic_kw', gen_kw); W(r, 'gender', det_gen, dropdown=True); W(r, 'care', 'Machine Wash', dropdown=True)
       W(r, 'sleeve', sleeve_val, dropdown=True); W(r, 'hsn', get_hsn_code(cat)); W(r, 'manufacturer', ctx['mfg'])
+      W(r, 'chest', meas['chest'], dropdown=True); W(r, 'waist', meas['waist'], dropdown=True)
+      W(r, 'hip', meas['hip'], dropdown=True); W(r, 'shoulder', meas['shoulder'], dropdown=True)
+      W(r, 'length', meas['length'], dropdown=True); W(r, 'inseam', meas['inseam'], dropdown=True)
       for bi, bc in enumerate(bullet_cols):
         if bi < len(bullets_list): ws.cell(r, bc).value = bullets_list[bi]
       for ii, ic in enumerate(img_cols):
@@ -1499,7 +1609,6 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
     vc_lbl_r, vc_key_r, vc_data_r = _detect_amz_sheet_rows(ws_vc, 3, 4, 7)
     vc_to_sc_col, vc_lbl_counts = {}, {}
     vc_sku_col = vc_model_name_col = vc_asin_col = vc_prod_type_col = vc_item_type_col = vc_title_col = None
-
     for c in range(1, ws_vc.max_column + 1):
       lbl = str(ws_vc.cell(vc_lbl_r, c).value or '').strip().lower()
       key = str(ws_vc.cell(vc_key_r, c).value or '').strip() if vc_key_r else ''
@@ -1526,7 +1635,6 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
 
     if vc_sku_col is None: vc_sku_col = 2
     sheet_raw_rows, sheet_unique_skus, sheet_duplicates_merged = 0, set(), 0
-
     for r_vc in range(vc_data_r, ws_vc.max_row + 1):
       sku_val = ws_vc.cell(r_vc, vc_sku_col).value
       if sku_val in (None, ''): continue
@@ -1543,7 +1651,6 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
       if vc_asin_col and sc_prod_id_val_col:
         asin_val = ws_vc.cell(r_vc, vc_asin_col).value
         if asin_val not in (None, ''): mapped_cells[sc_prod_id_val_col] = str(asin_val).strip()
-
       raw_pt_val = ws_vc.cell(r_vc, vc_prod_type_col).value if vc_prod_type_col else ''
       raw_itn_val = ws_vc.cell(r_vc, vc_item_type_col).value if vc_item_type_col else ''
       raw_title_val = ws_vc.cell(r_vc, vc_title_col).value if vc_title_col else ''
@@ -1596,7 +1703,6 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
     if m_str and m_str not in seen_models: seen_models.add(m_str); unique_models_ordered.append(m_str); model_to_sheet[m_str] = sh_title
 
   preview, total_written = [], 0
-
   def apply_common_fixed_fields(row_idx):
     if sc_action_col: ws_sc.cell(row_idx, sc_action_col).value = action_val
     if sc_var_theme_col: ws_sc.cell(row_idx, sc_var_theme_col).value = var_theme_val
@@ -1613,12 +1719,9 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
     if sc_prod_type_col and sc_prod_type_col in ref_cells: ws_sc.cell(curr_r, sc_prod_type_col).value = ref_cells[sc_prod_type_col]
     if sc_parentage_col: ws_sc.cell(curr_r, sc_parentage_col).value = parent_val
     if sc_model_name_col:
-      ws_sc.cell(curr_r, sc_model_name_col).value = model_sku
-      ws_sc.cell(curr_r, sc_model_name_col).fill = HIGHLIGHT_FILL; ws_sc.cell(curr_r, sc_model_name_col).font = HIGHLIGHT_FONT
-    parent_title = ""
-    if sc_title_col:
-      parent_title = _build_parent_title_from_child(ref_cells.get(sc_title_col, ''), model_sku)
-      ws_sc.cell(curr_r, sc_title_col).value = parent_title
+      ws_sc.cell(curr_r, sc_model_name_col).value = model_sku; ws_sc.cell(curr_r, sc_model_name_col).fill = HIGHLIGHT_FILL; ws_sc.cell(curr_r, sc_model_name_col).font = HIGHLIGHT_FONT
+    parent_title = _build_parent_title_from_child(ref_cells.get(sc_title_col, ''), model_sku) if sc_title_col else ""
+    if sc_title_col: ws_sc.cell(curr_r, sc_title_col).value = parent_title
     apply_common_fixed_fields(curr_r)
     preview.append({'Row': curr_r, 'Source VC Sheet': model_to_sheet.get(model_sku, ''), 'SKU': model_sku, 'Product Type': ref_cells.get(sc_prod_type_col, '') if sc_prod_type_col else '', 'Listing Action': action_val, 'Parentage Level': parent_val, 'Parent SKU': '', 'Variation Theme': var_theme_val, 'Product Id Type': '', 'Product Id': '', 'Shipping Template': '', 'Model Name': model_sku, 'Item Name': parent_title})
     curr_r += 1; total_written += 1
@@ -1655,7 +1758,7 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
   return output.getvalue(), preview, total_written, sheets_summary
 
 # ======================================================================
-# ✨ AJIO PERFECT LISTING ENGINE
+# ✨ AJIO PERFECT LISTING ENGINE & UNIVERSAL AI SIZE CHART READER
 # ======================================================================
 PL_COLOR_TOKENS = {'black', 'white', 'blue', 'lightblue', 'darkblue', 'skyblue', 'iceblue', 'navy', 'navyblue', 'green', 'olive', 'pista', 'sea-green', 'purple', 'lavender', 'pink', 'red', 'maroon', 'beige', 'biege', 'brown', 'coffee', 'khaki', 'grey', 'gray', 'charcoal', 'yellow', 'orange', 'peach', 'teal', 'wine', 'cream', 'rust', 'gold', 'silver'}
 PL_COLOR_ABBR = {'black': 'Blk', 'white': 'Wht', 'blue': 'Blu', 'lightblue': 'LBlu', 'darkblue': 'DBlu', 'skyblue': 'SBlu', 'iceblue': 'IBlu', 'navy': 'Nvy', 'green': 'Grn', 'olive': 'Olv', 'pista': 'Pst', 'sea-green': 'SGrn', 'purple': 'Prp', 'lavender': 'Lav', 'pink': 'Pnk', 'red': 'Red', 'maroon': 'Mrn', 'beige': 'Beg', 'biege': 'Beg', 'brown': 'Brn', 'coffee': 'Cfe', 'khaki': 'Khk', 'grey': 'Gry', 'gray': 'Gry', 'charcoal': 'Chr', 'yellow': 'Ylw', 'orange': 'Orn', 'peach': 'Pch', 'teal': 'Tel', 'wine': 'Win', 'cream': 'Crm', 'ribbin': 'Rbn', 'teddy': 'Tdy'}
@@ -1706,10 +1809,20 @@ def pl_resolve_hsn_code(user_hsn, category):
 def pl_get_garment_vision_prompt(folder_hint=""):
   cats = ", ".join(PL_CATEGORY_OPTIONS)
   hint_line = f'Folder/SKU name hint: "{folder_hint}".\n' if folder_hint else ""
-  return "You are an expert e-commerce fashion cataloger. Inspect the MAIN GARMENT and output ONLY valid JSON:\n" + hint_line + '{"category": "<One of: ' + cats + '>", "gender": "<Women, Men, Boys, Girls>", "color": "<Black, Blue, Navy, LightBlue, DarkBlue, SkyBlue, Beige, Grey, LightGrey, DarkGrey, White, Off White, Olive, Green, Pista, Sea Green, Brown, Coffee, Khaki, Maroon, Red, Yellow, Orange, Lavender, Purple, Teal, Wine, Pink>", "pocket": "<Side Pocket / No Pocket / Cargo Pocket / Kangaroo Pocket>", "material": "<Cotton, Cotton Blend, Rayon, Fleece, Polyester, Denim, Crepe, Georgette, Silk, Knit>", "fabric_detail": "<100% Cotton, Cotton Blend, Soft Fleece, Rayon>", "sleeve_length": "<Short sleeve / Full-length sleeve / 3/4th sleeve / Sleeveless>", "topwear_type": "<Top / Tunic / Shirt / Hoodie / Sweatshirt / Kurta / Kurti>", "bottomwear_type": "<Capris / Pyjamas / Shorts / Trousers/Pants / Jeans>", "waist_type": "<Flexi waist / Elasticated waist / Fixed waist>", "pattern": "<Solid / Printed / Washed / Striped / Checked / Floral / Quilted>"}'
+  return (
+    "You are an expert e-commerce fashion cataloger. Inspect ONLY the MAIN GARMENT worn by the model.\n"
+    "IMPORTANT COLOR RULE: Compensate for warm studio lighting! Do NOT label Green, Pista (mint/pastel green), Olive, or Sea Green garments as Yellow, Mustard, or Beige. Output ONLY valid JSON:\n"
+    + hint_line +
+    '{"category": "<One of: ' + cats + '>", "gender": "<Women, Men, Boys, Girls>", "color": "<Black, Blue, Navy, LightBlue, DarkBlue, SkyBlue, Beige, Grey, LightGrey, DarkGrey, White, Off White, Olive, Green, Pista, Sea Green, Brown, Coffee, Khaki, Maroon, Red, Yellow, Orange, Lavender, Purple, Teal, Wine, Pink>", "pocket": "<Side Pocket / No Pocket / Cargo Pocket / Kangaroo Pocket>", "material": "<Cotton, Cotton Blend, Rayon, Fleece, Polyester, Denim, Crepe, Georgette, Silk, Knit>", "fabric_detail": "<100% Cotton, Cotton Blend, Soft Fleece, Rayon>", "sleeve_length": "<Short sleeve / Full-length sleeve / 3/4th sleeve / Sleeveless>", "topwear_type": "<Top / Tunic / Shirt / Hoodie / Sweatshirt / Kurta / Kurti>", "bottomwear_type": "<Capris / Pyjamas / Shorts / Trousers/Pants / Jeans>", "waist_type": "<Flexi waist / Elasticated waist / Fixed waist>", "pattern": "<Solid / Printed / Washed / Striped / Checked / Floral / Quilted>"}'
+  )
 
 def pl_get_size_chart_prompt():
-  return 'Extract garment size chart measurements in inches as JSON: {"bottomwear_type": "<Capris or Pyjamas>", "sleeve_length": "<Short sleeve or Full-length sleeve>", "measurements": {"XS": {"bust": 37, "front_length": 25, "waist": 22, "hip": 38, "inseam": 28}, "S": {"bust": 39, "front_length": 25, "waist": 24, "hip": 40, "inseam": 28}, "M": {"bust": 41, "front_length": 26, "waist": 26, "hip": 42, "inseam": 28}, "L": {"bust": 43, "front_length": 26, "waist": 28, "hip": 45, "inseam": 29}, "XL": {"bust": 45, "front_length": 27, "waist": 30, "hip": 48, "inseam": 29}, "XXL": {"bust": 47, "front_length": 27, "waist": 32, "hip": 51, "inseam": 29}}}'
+  return (
+    'Read this garment size chart image carefully and extract all available measurements in INCHES (convert cm to inches by dividing by 2.54 if in cm). '
+    'Include every size shown (XS, S, M, L, XL, XXL/2XL, XXXL/3XL, or numeric waist sizes 28, 30, 32, 34, 36, 38, 40). '
+    'Use standard keys: "chest", "bust", "front_length", "shoulder", "sleeve_in", "waist", "hip", "bottom_length", "inseam". '
+    'Output ONLY valid JSON: {"bottomwear_type": "<Capris or Pyjamas or Trousers>", "sleeve_length": "<Short sleeve or Full-length sleeve>", "measurements": {"S": {"chest": 40, "bust": 39, "front_length": 28, "shoulder": 17, "waist": 30, "hip": 40, "bottom_length": 39, "inseam": 28}}}'
+  )
 
 def pl_call_gemini_api(prompt, image_bytes, img_name):
   if not GEMINI_API_KEY or not image_bytes: return None
@@ -1741,23 +1854,40 @@ def pl_call_groq_api(prompt, image_bytes, img_name):
   return None
 
 def pl_fallback_ocr_size_chart(image_bytes):
-  return {'bottomwear_type': 'Pyjamas', 'sleeve_length': 'Short sleeve', 'measurements': {'XS': {'bust': 37, 'front_length': 25, 'waist': 22, 'hip': 38, 'inseam': 28}, 'S': {'bust': 39, 'front_length': 25, 'waist': 24, 'hip': 40, 'inseam': 28}, 'M': {'bust': 41, 'front_length': 26, 'waist': 26, 'hip': 42, 'inseam': 28}, 'L': {'bust': 43, 'front_length': 26, 'waist': 28, 'hip': 45, 'inseam': 29}, 'XL': {'bust': 45, 'front_length': 27, 'waist': 30, 'hip': 48, 'inseam': 29}, 'XXL': {'bust': 47, 'front_length': 27, 'waist': 32, 'hip': 51, 'inseam': 29}, '2XL': {'bust': 47, 'front_length': 27, 'waist': 32, 'hip': 51, 'inseam': 29}}}
+  return {'bottomwear_type': 'Pyjamas', 'sleeve_length': 'Short sleeve', 'measurements': dict(BASE_ALPHA_GARMENT_CHART)}
 
-def pl_multi_ai_vision_detect(image_bytes, img_name, folder_hint=""):
+def pl_multi_ai_vision_detect(image_bytes, img_name, folder_hint="", all_img_tuples=None):
   prompt = pl_get_garment_vision_prompt(folder_hint=folder_hint)
+  px_src = all_img_tuples if all_img_tuples else image_bytes
   for fn, provider in [(pl_call_gemini_api, "Gemini"), (pl_call_nvidia_api, "NVIDIA"), (pl_call_groq_api, "Groq")]:
     res = fn(prompt, image_bytes, img_name)
     if res and isinstance(res, dict) and res.get('color'):
-      res['color'] = canonicalize_ai_color(res.get('color'), folder_name=folder_hint, image_bytes=image_bytes)
+      res['color'] = canonicalize_ai_color(res.get('color'), folder_name=folder_hint, image_bytes=px_src)
       return res, provider
-  return {'color': detect_color(folder_hint, image_bytes=image_bytes)}, "Pixel/Folder-Fallback"
+  return {'color': detect_color(folder_hint, image_bytes=px_src)}, "Pixel/Folder-Fallback"
 
 def pl_multi_ai_size_chart_detect(image_bytes, img_name):
+  if not image_bytes: return pl_fallback_ocr_size_chart(None), "Smart-Default"
+  sc_cache = st.session_state.setdefault('size_chart_cache', {})
+  h = hashlib.md5(image_bytes).hexdigest()
+  if h in sc_cache: return sc_cache[h], "Cached-AI"
   prompt = pl_get_size_chart_prompt()
   for fn, provider in [(pl_call_gemini_api, "Gemini"), (pl_call_nvidia_api, "NVIDIA"), (pl_call_groq_api, "Groq")]:
     res = fn(prompt, image_bytes, img_name)
-    if res and isinstance(res, dict) and res.get('measurements'): return res, provider
-  return pl_fallback_ocr_size_chart(image_bytes), "OCR-Fallback"
+    if res and isinstance(res, dict) and res.get('measurements'):
+      sc_cache[h] = res
+      return res, provider
+  return pl_fallback_ocr_size_chart(image_bytes), "Smart-Fallback"
+
+def extract_all_size_charts_universal(pl_size_charts):
+  size_chart_measurements = {}
+  if not pl_size_charts: return size_chart_measurements
+  for fld, sc_info in pl_size_charts.items():
+    sc_res, _ = pl_multi_ai_size_chart_detect(sc_info['bytes'], sc_info['filename'])
+    if sc_res:
+      size_chart_measurements[fld] = sc_res
+      if 'default' not in size_chart_measurements: size_chart_measurements['default'] = sc_res
+  return size_chart_measurements
 
 def pl_read_and_analyze_template(wb):
   info = {'sheets': wb.sheetnames, 'styles_sheet': None, 'category_breadcrumb': '', 'detected_gender': 'Women', 'detected_category': 'Apparel', 'col_to_dropdowns': {}, 'headers': {}, 'mandatory_cols': []}
@@ -1850,10 +1980,10 @@ def pl_run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detecte
   col_pkg_h, col_pkg_l, col_pkg_w, col_pkg_luom, col_pkg_wt, col_pkg_wtuom = find_col(['*packageDimensionsHeight']), find_col(['*packageDimensionsLength']), find_col(['*packageDimensionsWidth']), find_col(['*packageDimensionsLengthUOM']), find_col(['*packageDimensionsWeight']), find_col(['*packageDimensionsWeightUOM'])
   col_add_info1, col_comp_count, col_country, col_highlight, col_mfg_by, col_mkt_by, col_net_qty, col_pkg_contains = find_col(['Additional Information 1']), find_col(['*Component Count']), find_col(['*Country of Origin']), find_col(['Highlight']), find_col(['Manufactured By']), find_col(['*Marketed By']), find_col(['*Net Quantity']), find_col(['*Package Contains'])
   col_color_fam, col_color_shade, col_fab_detail, col_fab_type, col_pattern, col_pri_color, col_size_format, col_size_group, col_wash_care, col_plus_size, col_prod_name, col_sleeve_len, col_waist_type, col_top_type, col_bottom_type, col_style_type = find_col(['*Color Family']), find_col(['*Color Shade']), find_col(['Fabric Detail']), find_col(['*Fabric Type']), find_col(['*Pattern']), find_col(['*Primary Color']), find_col(['*Size Format']), find_col(['*Size Group']), find_col(['*Wash Care']), find_col(['*Plus Size Store']), find_col(['*Product Name']), find_col(['Sleeve Length']), find_col(['Waist Type']), find_col(['*Topwear Type']), find_col(['Bottomwear Type']), find_col(['*Style Type'])
-  col_meas_type, col_to_fit_bust, col_bust, col_front_len, col_to_fit_waist, col_waist, col_to_fit_hip, col_hip, col_inseam = find_col(['*Measurement Type']), find_col(['*To Fit Bust']), find_col(['*Bust']), find_col(['*Front Length']), find_col(['*To Fit Waist']), find_col(['*Waist']), find_col(['*To Fit Hip']), find_col(['*Hips']), find_col(['*Inseam'])
+  col_meas_type, col_to_fit_bust, col_bust, col_front_len, col_to_fit_waist, col_waist, col_to_fit_hip, col_hip, col_inseam = find_col(['*Measurement Type']), find_col(['*To Fit Bust']), find_col(['*Bust']), find_col(['*Front Length']), find_col(['*To Fit Waist']), find_col(['*Waist']), find_col(['*To Fit Hip']), find_col(['*Hips', 'Hips', '*Hip']), find_col(['*Inseam', 'Inseam', '*Inseam Length'])
+  col_chest, col_shoulder, col_outseam = find_col(['*Chest', 'Chest', '*To Fit Chest']), find_col(['*Shoulder', 'Shoulder', '*Across Shoulder']), find_col(['*Outseam Length', 'Outseam Length', '*Length'])
 
-  img_cols = [find_col(['*MODEL' if i == 1 else f'MODEL{i}']) for i in range(1, 15)]
-  img_cols = [c for c in img_cols if c]
+  img_cols = [c for c in [find_col(['*MODEL' if i == 1 else f'MODEL{i}']) for i in range(1, 15)] if c]
   dims_data, hsn_val = pl_get_dimensions_and_weight(cat_detected), pl_resolve_hsn_code(ctx.get('hsn'), cat_detected)
 
   curr_r = header_row + 1
@@ -1869,9 +1999,8 @@ def pl_run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detecte
 
   for fld, img_tuples in zip_images_data.items():
     base_sku, style_code = pl_clean_sku_name(fld), pl_extract_style_code(fld)
-    first_img_bytes = img_tuples[0][1] if img_tuples else None
     ai_data = ctx.get('vision_results', {}).get(base_sku, {})
-    det_col = canonicalize_ai_color(extract_explicit_color_from_text(fld) or ai_data.get('color') or pl_detect_color_from_name(fld, image_bytes=first_img_bytes), folder_name=fld, image_bytes=first_img_bytes)
+    det_col = canonicalize_ai_color(extract_explicit_color_from_text(fld) or ai_data.get('color') or pl_detect_color_from_name(fld, image_bytes=img_tuples), folder_name=fld, image_bytes=img_tuples)
     col_fam = pl_map_color_to_family(det_col)
     mat_val = ai_data.get('material') or "Cotton"
     fab_detail = ai_data.get('fabric_detail') or f"100% {mat_val}"
@@ -1879,18 +2008,17 @@ def pl_run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detecte
     sc_data = detected_size_charts.get(fld) or detected_size_charts.get('default') or {}
     sleeve_val = sc_data.get('sleeve_length') or ai_data.get('sleeve_length') or "Short sleeve"
     bottom_val = sc_data.get('bottomwear_type') or ("Capris" if "capri" in fld.lower() else "Pyjamas")
-    measurements = sc_data.get('measurements') or {}
     desc_text, high_text, add_text = pl_build_dynamic_seo_content(cat_detected, gender_detected, ctx.get('brand', ''), mat_val, pattern_val, ctx.get('keywords', ''))
     img_urls = list(ctx.get('live_links_cache', {}).get(fld, []))
-    if ctx.get('size_chart_urls', {}).get(fld) and ctx['size_chart_urls'][fld] not in img_urls: img_urls.append(ctx['size_chart_urls'][fld])
+    sc_url = (ctx.get('size_chart_urls') or {}).get(fld) or ctx.get('size_chart_cdn_url')
+    if sc_url and sc_url not in img_urls: img_urls.append(sc_url)
 
-    preview.append({'Style Code': style_code, 'Base SKU': base_sku, 'Category': cat_detected, 'Color': det_col, 'Color Family': col_fam, 'Fabric': mat_val, 'Pattern': pattern_val, 'Images Count': len(img_urls)})
+    preview.append({'Style Code': style_code, 'Base SKU': base_sku, 'Category': cat_detected, 'Color': det_col, 'Color Family': col_fam, 'Fabric': mat_val, 'Pattern': pattern_val, 'Size Chart': 'Yes (ZIP)' if sc_data else 'Smart Auto', 'Images Count': len(img_urls)})
 
     for sz in sizes:
       clean_sz = pl_clean_sku_name(sz)
       full_sku, ean_val = f"{base_sku}-{clean_sz}", pl_generate_safe_ean(base_sku, clean_sz)
-      sz_meas = measurements.get(clean_sz) or measurements.get(clean_sz.upper()) or measurements.get({'2XL': 'XXL', 'XXL': '2XL'}.get(clean_sz.upper())) or {}
-      bust_val, front_len_val, waist_val, hip_val, inseam_val = sz_meas.get('bust', 37), sz_meas.get('front_length', 25), sz_meas.get('waist', 22), sz_meas.get('hip', 38), sz_meas.get('inseam', 28)
+      meas = resolve_complete_measurements_for_size(clean_sz, cat_detected, sc_data, gender_detected)
 
       set_val(curr_r, col_style, style_code, fill=HIGHLIGHT_FILL, font=HIGHLIGHT_FONT)
       set_val(curr_r, col_desc, desc_text); set_val(curr_r, col_sku, full_sku)
@@ -1910,9 +2038,10 @@ def pl_run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detecte
       set_val(curr_r, col_pattern, pattern_val, dropdown=True); set_val(curr_r, col_pri_color, det_col, dropdown=True); set_val(curr_r, col_size_format, "UNI", dropdown=True); set_val(curr_r, col_size_group, "Regular", dropdown=True)
       set_val(curr_r, col_wash_care, "Machine wash", dropdown=True); set_val(curr_r, col_plus_size, "No", dropdown=True); set_val(curr_r, col_prod_name, "Knitted Top", dropdown=True)
       set_val(curr_r, col_sleeve_len, sleeve_val, dropdown=True); set_val(curr_r, col_waist_type, "Flexi waist", dropdown=True); set_val(curr_r, col_top_type, "Top", dropdown=True); set_val(curr_r, col_bottom_type, bottom_val, dropdown=True); set_val(curr_r, col_style_type, "2-Piece Sets", dropdown=True)
-      if col_meas_type:
-        set_val(curr_r, col_meas_type, "Garment Measurement", dropdown=True); set_val(curr_r, col_to_fit_bust, bust_val); set_val(curr_r, col_bust, bust_val); set_val(curr_r, col_front_len, front_len_val)
-        set_val(curr_r, col_to_fit_waist, waist_val + 2); set_val(curr_r, col_waist, waist_val); set_val(curr_r, col_to_fit_hip, hip_val); set_val(curr_r, col_hip, hip_val); set_val(curr_r, col_inseam, inseam_val)
+      if col_meas_type: set_val(curr_r, col_meas_type, "Garment Measurement", dropdown=True)
+      set_val(curr_r, col_to_fit_bust, meas['to_fit_bust']); set_val(curr_r, col_bust, meas['bust']); set_val(curr_r, col_front_len, meas['front_length'])
+      set_val(curr_r, col_to_fit_waist, meas['to_fit_waist']); set_val(curr_r, col_waist, meas['waist']); set_val(curr_r, col_to_fit_hip, meas['to_fit_hip']); set_val(curr_r, col_hip, meas['hip']); set_val(curr_r, col_inseam, meas['inseam'])
+      set_val(curr_r, col_chest, meas['chest']); set_val(curr_r, col_shoulder, meas['shoulder']); set_val(curr_r, col_outseam, meas['bottom_length'])
       for idx_img, url in enumerate(img_urls):
         if idx_img < len(img_cols): ws.cell(curr_r, img_cols[idx_img]).value = url
       curr_r += 1; total_added += 1
@@ -1962,7 +2091,7 @@ def render_convert_ui():
 def render_listing_ui():
   is_ajio, is_meesho = (marketplace == "Ajio"), (marketplace == "Meesho")
   if 'pl_vision_results' not in st.session_state: st.session_state['pl_vision_results'] = {}
-  st.success(f"✨ **{marketplace} Listing Engine Active** — Multi-AI Vision (Gemini ➜ NVIDIA ➜ Groq + Pixel Color Verification) | Descriptions <= 200 Chars | Highlighted Style Code / Model Name")
+  st.success(f"✨ **{marketplace} Listing Engine Active** — White-Balanced AI+Pixel Color Guard | Universal Size Chart & Smart Measurement Imputation")
 
   pl_folders, pl_zip_images, pl_size_charts = [], {}, {}
   st.subheader("1. Product Images, SKUs & Size Chart (ZIP Upload)")
@@ -1980,7 +2109,11 @@ def render_listing_ui():
         else:
           st.success(f"✅ ZIP ke andar Total **{len(pl_folders)}** Product Folders (SKUs) Detect Hue:")
           st.code(", ".join([clean_sku_name(f) for f in pl_folders]))
-        if pl_size_charts: st.info(f"📐 **{len(pl_size_charts)} Size Charts Detect Hue:** {', '.join(set(v['filename'] for v in pl_size_charts.values()))}")
+        if pl_size_charts:
+          unique_sc_names = sorted(set(v['filename'] for v in pl_size_charts.values()))
+          st.info(f"📐 **Size Chart Detected & Applied to {len(pl_size_charts)} SKUs:** `{', '.join(unique_sc_names)}`")
+        elif pl_folders:
+          st.caption("📐 ZIP me alag se size chart image nahi mili — Smart Garment Measurement Intelligence automatically use hogi.")
       except Exception as e: st.error(f"ZIP error: {e}")
   with col_in2:
     st.write("##### 🌐 Live CDN & Cloud Hosting")
@@ -2068,25 +2201,25 @@ def render_listing_ui():
       sizes_list = [s.strip() for s in sizes_input.split(',') if s.strip()]
       try:
         tpl_file.seek(0)
+        size_chart_measurements = {}
+        if pl_size_charts:
+          with st.spinner("📐 Size Chart read karke measurements extract & missing values calculate ho rahi hain..."):
+            size_chart_measurements = extract_all_size_charts_universal(pl_size_charts)
+
         if is_ajio:
-          ctx = {'sizes': sizes_list, 'brand': brand_name.strip(), 'mrp': mrp_value.strip(), 'mfg': mfg_address.strip(), 'hsn': hsn_code.strip(), 'keywords': custom_keywords.strip(), 'td': int(default_td), 'live_links_cache': {}, 'size_chart_urls': {}, 'vision_results': st.session_state['pl_vision_results']}
-          with st.spinner("🤖 1/3: AI Vision: Colors, Fabric & Sleeve length detect ho rahe hain..."):
+          ctx = {'sizes': sizes_list, 'brand': brand_name.strip(), 'mrp': mrp_value.strip(), 'mfg': mfg_address.strip(), 'hsn': hsn_code.strip(), 'keywords': custom_keywords.strip(), 'td': int(default_td), 'live_links_cache': {}, 'size_chart_urls': {}, 'size_chart_cdn_url': None, 'zip_images_data': pl_zip_images, 'size_chart_measurements': size_chart_measurements, 'vision_results': st.session_state['pl_vision_results']}
+          with st.spinner("🤖 1/2: AI Vision + White-Balance Pixel Check se Color, Fabric & Sleeve detect ho rahe hain..."):
             for fld in pl_folders:
               base_sku = pl_clean_sku_name(fld)
               if base_sku not in ctx['vision_results'] and pl_zip_images.get(fld):
-                v_res, provider = pl_multi_ai_vision_detect(pl_zip_images[fld][0][1], pl_zip_images[fld][0][0], folder_hint=fld)
+                v_res, provider = pl_multi_ai_vision_detect(pl_zip_images[fld][0][1], pl_zip_images[fld][0][0], folder_hint=fld, all_img_tuples=pl_zip_images[fld])
                 if v_res: v_res['ai_source'] = provider; ctx['vision_results'][base_sku] = v_res
-          size_chart_measurements = {}
-          with st.spinner("📐 2/3: AI Vision size charts ko read karke measurements extract kar raha hai..."):
-            for fld, sc_info in pl_size_charts.items():
-              sc_res, _ = pl_multi_ai_size_chart_detect(sc_info['bytes'], sc_info['filename'])
-              if sc_res:
-                size_chart_measurements[fld] = sc_res
-                if 'default' not in size_chart_measurements: size_chart_measurements['default'] = sc_res
-          with st.spinner("🌐 3/3: Images ko Live CDN par upload kiya ja raha hai..."):
+          with st.spinner("🌐 2/2: Images ko Live CDN par upload kiya ja raha hai..."):
             for fld, sc_info in pl_size_charts.items():
               url = pl_upload_to_imgbb_cached(sc_info['bytes'], IMGBB_PERMANENT_KEY, img_cache)
-              if url: ctx['size_chart_urls'][fld] = url
+              if url:
+                ctx['size_chart_urls'][fld] = url
+                if not ctx['size_chart_cdn_url']: ctx['size_chart_cdn_url'] = url
             for fld, img_tuples in pl_zip_images.items():
               ctx['live_links_cache'][fld] = []
               for iname, ibytes in img_tuples:
@@ -2106,20 +2239,21 @@ def render_listing_ui():
           vr = {k: v for k, v in st.session_state.get('vision_results', {}).items() if k in valid_keys}
           missing = {f: pl_zip_images[f] for f in pl_folders if clean_sku_name(f) not in vr and pl_zip_images.get(f)}
           if missing:
-            with st.spinner("🤖 AI Vision: Fabric, Sleeves, Pattern aur Color scan ho raha hai (Gemini ➜ NVIDIA ➜ Groq)..."):
+            with st.spinner("🤖 AI Vision + White-Balance Pixel Check: Fabric, Sleeves, Pattern aur Color scan ho raha hai..."):
               new_res, failed = run_vision_detection(missing)
               vr.update(new_res)
             if new_res: st.success(f"🤖 AI Vision: {len(new_res)} SKUs auto-detected!" + (f" | Fallback used for: {', '.join(failed)}" if failed else ""))
-            else: st.warning("🤖 AI se result nahi mila — Python intelligence use hoga.")
           st.session_state['vision_results'] = vr
 
-          ctx = {'folders': folders, 'sizes': sizes_list, 'brand': brand_name.strip(), 'mrp': mrp_value.strip(), 'mfg': mfg_address.strip(), 'hsn': hsn_code.strip(), 'keywords': custom_keywords.strip(), 'dropbox': dropbox_url.strip(), 'live_links_cache': {}, 'folder_images_count': {f: (len(pl_zip_images[f]) if f in pl_zip_images else 4) for f in folders}, 'size_chart_cdn_url': None, 'quantity': int(sc_quantity), 'selling_price': str(sc_selling_price).strip(), 'sc_parent_model': str(sc_parent_model).strip(), 'meesho_return_price': str(meesho_return_price).strip(), 'meesho_mfg_name': str(meesho_mfg_name).strip(), 'meesho_mfg_pin': str(meesho_mfg_pin).strip(), 'meesho_gst': int(meesho_gst), 'meesho_weight': str(meesho_weight).strip(), 'td': int(default_td), 'default_category': None, 'vision_results': vr}
+          ctx = {'folders': folders, 'sizes': sizes_list, 'brand': brand_name.strip(), 'mrp': mrp_value.strip(), 'mfg': mfg_address.strip(), 'hsn': hsn_code.strip(), 'keywords': custom_keywords.strip(), 'dropbox': dropbox_url.strip(), 'live_links_cache': {}, 'size_chart_urls': {}, 'folder_images_count': {f: (len(pl_zip_images[f]) if f in pl_zip_images else 4) for f in folders}, 'size_chart_cdn_url': None, 'zip_images_data': pl_zip_images, 'size_chart_measurements': size_chart_measurements, 'quantity': int(sc_quantity), 'selling_price': str(sc_selling_price).strip(), 'sc_parent_model': str(sc_parent_model).strip(), 'meesho_return_price': str(meesho_return_price).strip(), 'meesho_mfg_name': str(meesho_mfg_name).strip(), 'meesho_mfg_pin': str(meesho_mfg_pin).strip(), 'meesho_gst': int(meesho_gst), 'meesho_weight': str(meesho_weight).strip(), 'td': int(default_td), 'default_category': None, 'vision_results': vr}
 
           if auto_cdn and pl_zip_images:
             with st.spinner("Images ko live CDN par upload kiya ja raha hai..."):
               for fld, sc_info in pl_size_charts.items():
                 u = upload_to_imgbb_cached(sc_info['bytes'], IMGBB_PERMANENT_KEY, img_cache)
-                if u and not ctx['size_chart_cdn_url']: ctx['size_chart_cdn_url'] = u
+                if u:
+                  ctx['size_chart_urls'][fld] = u
+                  if not ctx['size_chart_cdn_url']: ctx['size_chart_cdn_url'] = u
               for fld, img_tuples in pl_zip_images.items():
                 ctx['live_links_cache'][fld] = []
                 for iname, ibytes in img_tuples:
