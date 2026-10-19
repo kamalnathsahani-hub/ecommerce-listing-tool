@@ -4623,6 +4623,7 @@ def _mime_for(name):
 
 def render_listing_ui():
     is_ajio = (marketplace == "Ajio")
+    is_meesho = (marketplace == "Meesho")
     if 'pl_vision_results' not in st.session_state:
         st.session_state['pl_vision_results'] = {}
 
@@ -4691,6 +4692,23 @@ def render_listing_ui():
         except Exception as e:
             st.warning(f"Template parsing warning: {e}")
 
+    if tpl_file and is_meesho:
+        try:
+            wb_mcheck = openpyxl.load_workbook(tpl_file, data_only=True)
+            m_info = analyze_meesho_template(wb_mcheck)
+            tpl_file.seek(0)
+            if m_info:
+                c_m1, c_m2, c_m3 = st.columns(3)
+                with c_m1: st.metric("Meesho Template Sheet", m_info['sheet_name'])
+                with c_m2: st.metric("Total Columns", len(m_info['headers']))
+                with c_m3: st.metric("Compulsory Fields (*)", len(m_info['compulsory_cols']))
+                st.info(
+                    f"📌 **Detected Template:** `{m_info['banner']}` | "
+                    f"**Recommended Wrong/Defective Return Price:** `Meesho Price - Rs.{m_info['rec_return_diff']}`"
+                )
+        except Exception as e:
+            st.warning(f"Meesho template check warning: {e}")
+
     st.divider()
 
     # ---------------- 3. BRAND, MRP, LEGAL & SIZES ----------------
@@ -4708,16 +4726,16 @@ def render_listing_ui():
             value=preset_val, key=f"pl_sizes_{size_preset}"
         )
         brand_name = st.text_input("Brand Name:", value="", key="pl_brand",
-                                   placeholder="e.g. PUMA (Khali chhodne par unbranded rahega)")
+                                   placeholder="e.g. Poshax / PUMA (Khali chhodne par unbranded rahega)")
         mrp_value = st.text_input("MRP (optional):", value="", key="pl_mrp",
-                                  placeholder="e.g. 1999 (Khali chhodne par Yellow Highlight hoga)")
+                                  placeholder="e.g. 999 (Khali chhodne par Yellow Highlight hoga)")
         hsn_code = st.text_input("HSN Code (optional):", value="", key="pl_hsn",
-                                 placeholder="e.g. 61083100 (Khali chhodne par category ke mutabiq auto-fill hoga)")
+                                 placeholder="e.g. 62052000 (Khali chhodne par category ke mutabiq auto-fill hoga)")
 
     with c_b2:
         mfg_address = st.text_area(
             "Manufactured By & Marketed By (Complete Address with Pincode):", value="", key="pl_mfg",
-            placeholder="e.g. Surat, Gujarat\n(Pura address pincode ke sath daalein)", height=130
+            placeholder="e.g. PLOT NO 41, DEVAM AMB, RING ROAD -300FTRO PARK, NEAR VEDANT EMBRO PARK, Kosad, Surat - 394107", height=130
         )
         custom_keywords = st.text_area(
             "SEO & Trending Keywords (Optional):", value="", key="pl_kw",
@@ -4725,6 +4743,8 @@ def render_listing_ui():
         )
 
     sc_quantity, sc_selling_price, sc_parent_model = 0, "", ""
+    meesho_return_price, meesho_mfg_name, meesho_mfg_pin, meesho_gst, meesho_weight = "", "JB Fashion", "394107", 5, ""
+
     if marketplace == "Amazon - Seller Central":
         with st.expander("🛒 Seller Central Extra Fields (Optional)", expanded=False):
             c_sc1, c_sc2, c_sc3 = st.columns(3)
@@ -4735,6 +4755,31 @@ def render_listing_ui():
             with c_sc3:
                 sc_parent_model = st.text_input("Common Parent SKU / Model Name (Optional):", key="pl_sc_parent",
                                                 placeholder="e.g. H-63-66 (Blank = Model Name from VC / folder)")
+
+    if is_meesho:
+        with st.expander("🛍️ Meesho Pricing, GST & Manufacturer/Packer Fields", expanded=True):
+            cm1, cm2, cm3, cm4 = st.columns(4)
+            with cm1:
+                sc_selling_price = st.text_input("Meesho Price (Selling Price):", value="499", key="pl_meesho_price",
+                                                 placeholder="e.g. 499")
+            with cm2:
+                meesho_return_price = st.text_input(
+                    "Wrong/Defective Return Price (Blank = Auto):", value="", key="pl_meesho_ret_price",
+                    placeholder="Auto (Meesho Price - 28/34)"
+                )
+            with cm3:
+                meesho_gst = st.selectbox("GST %:", [5, 12, 18], index=0, key="pl_meesho_gst")
+            with cm4:
+                sc_quantity = st.number_input("Inventory (Stock):", min_value=0, value=0, key="pl_meesho_inv")
+
+            cm5, cm6, cm7 = st.columns(3)
+            with cm5:
+                meesho_mfg_name = st.text_input("Manufacturer & Packer Name:", value="JB Fashion", key="pl_meesho_mfg_name")
+            with cm6:
+                meesho_mfg_pin = st.text_input("Manufacturer & Packer Pincode:", value="394107", key="pl_meesho_mfg_pin")
+            with cm7:
+                meesho_weight = st.text_input("Net Weight (gms) [Blank = Auto 300/350]:", value="", key="pl_meesho_wt",
+                                              placeholder="e.g. 300")
 
     st.divider()
 
@@ -4818,12 +4863,17 @@ def render_listing_ui():
 
                     ctx = {
                         'folders': folders, 'sizes': sizes_list, 'brand': brand_name.strip(),
-                        'mrp': mrp_value.strip(), 'mfg': mfg_address.strip(),
+                        'mrp': mrp_value.strip(), 'mfg': mfg_address.strip(), 'hsn': hsn_code.strip(),
                         'keywords': custom_keywords.strip(), 'dropbox': dropbox_url.strip(),
                         'live_links_cache': {},
-                        'folder_images_count': {f: (len(pl_zip_images[f]) if f in pl_zip_images else 5) for f in folders},
+                        'folder_images_count': {f: (len(pl_zip_images[f]) if f in pl_zip_images else 4) for f in folders},
                         'size_chart_cdn_url': None, 'quantity': int(sc_quantity),
                         'selling_price': str(sc_selling_price).strip(), 'sc_parent_model': str(sc_parent_model).strip(),
+                        'meesho_return_price': str(meesho_return_price).strip(),
+                        'meesho_mfg_name': str(meesho_mfg_name).strip(),
+                        'meesho_mfg_pin': str(meesho_mfg_pin).strip(),
+                        'meesho_gst': int(meesho_gst),
+                        'meesho_weight': str(meesho_weight).strip(),
                         'td': int(default_td), 'default_category': None, 'vision_results': vr,
                     }
 
@@ -4847,6 +4897,9 @@ def render_listing_ui():
                     elif marketplace == "Amazon - Seller Central":
                         out, preview, added = run_seller_central(tpl_file, ctx)
                         st.success(f"🎉 Amazon Seller Central template (`Template` sheet) filled! Total {added} rows (Parent + Child, Model Name Yellow Highlighted).")
+                    elif marketplace == "Meesho":
+                        out, preview, added, m_sheet = run_meesho(tpl_file, ctx, pl_size_charts)
+                        st.success(f"🎉 Meesho template (`{m_sheet}`) filled! Total **{added}** variants add hue.")
                     else:
                         out, preview, added = run_generic_marketplace(tpl_file, ctx, marketplace)
                         st.success(f"🎉 {marketplace} template filled! Total {added} variants.")
@@ -4854,15 +4907,17 @@ def render_listing_ui():
                     if out:
                         if preview:
                             st.dataframe(preview, use_container_width=True)
+                        base_name, ext = os.path.splitext(tpl_file.name)
+                        out_ext = ext if ext.lower() in ['.xlsm', '.xlsx'] else '.xlsx'
+                        dl_name = f"{base_name}_FILLED{out_ext}" if is_meesho else tpl_file.name
                         st.download_button("📥 Download Filled File", data=out,
-                                           file_name=tpl_file.name, mime=_mime_for(tpl_file.name), type="primary")
+                                           file_name=dl_name, mime=_mime_for(dl_name), type="primary")
             except ValueError as ve:
                 st.error(str(ve))
             except Exception as e:
                 st.error(f"Error: {e}")
                 with st.expander("Technical details"):
                     st.code(traceback.format_exc())
-
 
 # ======================================================================
 #   🔁 CONVERT MODE - sirf Vendor Central ➜ Seller Central
