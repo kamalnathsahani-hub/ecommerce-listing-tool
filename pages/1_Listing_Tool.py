@@ -7,7 +7,7 @@ from PIL import Image
 
 st.set_page_config(page_title="Multi-Marketplace Auto Listing Generator", layout="wide")
 if st.button("⬅️ Back to Home"): st.switch_page("app.py")
-st.title("📦 Multi-Marketplace Auto Listing Generator (Universal Pro V29 - Zero-Error Ajio QC Edition)")
+st.title("📦 Multi-Marketplace Auto Listing Generator (Universal Pro V29 - Ajio Error-Proof)")
 st.caption("Ajio | Amazon VC | VC➜SC | Amazon SC | Flipkart | Meesho | Myntra + 🤖 AI Vision, Smart Size Chart & HSN Auto-Highlight")
 
 def _get_secret(name, default=""):
@@ -15,12 +15,12 @@ def _get_secret(name, default=""):
  except Exception: val = os.environ.get(name, default)
  return str(val or default).strip()
 
-IMGBB_PERMANENT_KEY = _get_secret("IMGBB_API_KEY", "137be55d19cf3d6a7ec051e369137041")
-GEMINI_API_KEY = _get_secret("GEMINI_API_KEY", "AQ.Ab8RN6Lb4kCeCRQtjVtw5MYcz7Wl0x4dBRvNxsYCAD9TYoUk2Q")
+IMGBB_PERMANENT_KEY = _get_secret("IMGBB_API_KEY", "")
+GEMINI_API_KEY = _get_secret("GEMINI_API_KEY", "")
 GEMINI_VISION_MODEL = _get_secret("GEMINI_VISION_MODEL", "gemini-2.0-flash")
-NVIDIA_API_KEY = _get_secret("NVIDIA_API_KEY", "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")
+NVIDIA_API_KEY = _get_secret("NVIDIA_API_KEY", "")
 NVIDIA_MODEL = _get_secret("NVIDIA_MODEL", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning")
-GROQ_API_KEY = _get_secret("GROQ_API_KEY", "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")
+GROQ_API_KEY = _get_secret("GROQ_API_KEY", "")
 GROQ_VISION_MODEL = _get_secret("GROQ_VISION_MODEL", "llama-3.2-11b-vision-preview")
 
 _missing_keys = [n for n, v in [("IMGBB_API_KEY", IMGBB_PERMANENT_KEY), ("GEMINI_API_KEY", GEMINI_API_KEY), ("NVIDIA_API_KEY", NVIDIA_API_KEY), ("GROQ_API_KEY", GROQ_API_KEY)] if not v]
@@ -42,6 +42,7 @@ CONVERT_MODE = marketplace.startswith("Convert:")
 
 HIGHLIGHT_FILL = PatternFill(start_color="FFF200", end_color="FFF200", fill_type="solid")
 HIGHLIGHT_FONT = Font(bold=True)
+ERROR_FILL = PatternFill(start_color="FF8080", end_color="FF8080", fill_type="solid")
 SET_FILLS = [PatternFill(start_color=h, end_color=h, fill_type="solid") for h in ["FFF200", "B3E5FC", "C8E6C9", "FFE0B2", "E1BEE7", "F8BBD0", "B2DFDB", "FFCCBC", "DCEDC8", "D1C4E9"]]
 DESC_MAX_LEN = 200
 
@@ -381,7 +382,6 @@ def resolve_complete_measurements_for_size(sz, cat="shirt", sc_data=None, gender
   return None
 
  chest, bust = _g(['chest', 'chest_size', 'garment_chest', 'to_fit_chest']), _g(['bust', 'bust_size', 'to_fit_bust'])
- to_fit_chest_ext = _g(['to_fit_chest', 'body_chest', 'chest'])
  front_len, shoulder = _g(['front_length', 'length', 'top_length', 'shirt_length']), _g(['shoulder', 'shoulder_size', 'across_shoulder'])
  sleeve_in, waist = _g(['sleeve', 'sleeve_length', 'sleeve_in']), _g(['waist', 'waist_size', 'to_fit_waist'])
  hip, bottom_len, inseam = _g(['hip', 'hips', 'hip_size', 'to_fit_hip']), _g(['bottom_length', 'outseam', 'trouser_length']), _g(['inseam', 'inseam_length'])
@@ -400,9 +400,8 @@ def resolve_complete_measurements_for_size(sz, cat="shirt", sc_data=None, gender
  elif inseam and not bottom_len: bottom_len = round(inseam + 11.0, 1)
 
  fc, fb, ffl, fsh, fsl, fw, fh, fbl, fin = chest or base['chest'], bust or base['bust'], front_len or base['front_length'], shoulder or base['shoulder'], sleeve_in or base['sleeve_in'], waist or base['waist'], hip or base['hip'], bottom_len or base['bottom_length'], inseam or base['inseam']
- f_tfc = to_fit_chest_ext or fc
  fmt = lambda x: int(round(x)) if abs(x - round(x)) < 1e-6 else round(float(x), 1)
- return {'chest': fmt(fc), 'to_fit_chest': fmt(f_tfc), 'bust': fmt(fb), 'to_fit_bust': fmt(fb), 'front_length': fmt(ffl), 'shoulder': fmt(fsh), 'sleeve_in': fmt(fsl), 'waist': fmt(fw), 'to_fit_waist': fmt(fw + (2 if is_women else 0)), 'hip': fmt(fh), 'to_fit_hip': fmt(fh), 'bottom_length': fmt(fbl), 'length': fmt(fbl if cat_low in ('trousers', 'cargo', 'joggers', 'jeans', 'pants') else ffl), 'inseam': fmt(fin)}
+ return {'chest': fmt(fc), 'bust': fmt(fb), 'to_fit_bust': fmt(fb), 'front_length': fmt(ffl), 'shoulder': fmt(fsh), 'sleeve_in': fmt(fsl), 'waist': fmt(fw), 'to_fit_waist': fmt(fw + (2 if is_women else 0)), 'hip': fmt(fh), 'to_fit_hip': fmt(fh), 'bottom_length': fmt(fbl), 'length': fmt(fbl if cat_low in ('trousers', 'cargo', 'joggers', 'jeans', 'pants') else ffl), 'inseam': fmt(fin)}
 
 POCKET_BY_CATEGORY = {'hoodie': 'Kangaroo Pocket', 'sweatshirt': 'Kangaroo Pocket', 'cargo': 'Cargo Pocket', 'jeans': 'Five Pocket', 'trousers': 'Slash Pocket', 'pants': 'Slash Pocket', 'joggers': 'Side Pocket', 'shorts': 'Side Pocket', 'jacket': 'Welt Pocket', 'raincoat': 'Side Pocket', 'shirt': 'Chest Pocket', 'tshirt': 'No Pocket', 'polo tshirt': 'No Pocket', 'kurta': 'Side Pocket', 'kurti': 'No Pocket', 'co-ord set': 'Side Pocket', 'women night dress': 'Side Pocket', 'gown': 'No Pocket', 'dress': 'No Pocket', 'under garments': 'No Pocket', 'socks': 'No Pocket', 'top': 'No Pocket', 'skirt': 'No Pocket', 'apparel': 'Side Pocket'}
 def get_pocket_for_cat(cat): return POCKET_BY_CATEGORY.get(cat, 'Side Pocket')
@@ -699,7 +698,8 @@ def build_sc_title(brand, cat, full_sku, user_kw="", limit=150, gender="Women"):
  b = f"{brand} " if brand else ""
  label = CATEGORY_LABELS.get(cat, str(cat).title() if cat else "Casual Wear")
  kws = _user_kw_list(user_kw)
- base = f"{b}{'Women\'s' if gender == 'Women' else 'Men\'s'} {label} for Casual Wear"
+ g_word = "Women's" if gender == "Women" else "Men's"
+ base = f"{b}{g_word} {label} for Casual Wear"
  for n in range(min(3, len(kws)), -1, -1):
   t = f"{base} | {', '.join(kws[:n])} ({full_sku})" if n else f"{base} ({full_sku})"
   if len(t) <= limit: return t
@@ -1622,4 +1622,773 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
  sc_condition_col = sc_key_to_col.get('condition_type#1.value') or sc_lbl_occ_to_col.get(('item condition', 1))
  sc_fulfillment_col = sc_key_to_col.get('fulfillment_availability#1.fulfillment_channel_code') or sc_lbl_occ_to_col.get(('fulfillment channel code (in)', 1))
  sc_quantity_col = sc_key_to_col.get('fulfillment_availability#1.quantity') or sc_lbl_occ_to_col.get(('quantity (in)', 1)) or sc_lbl_occ_to_col.get(('quantity', 1))
- sc_shipping_tpl_col = sc_key_to_col.get('merchant_shipping_group#1.value') or sc_lbl_occ_to
+ sc_shipping_tpl_col = sc_key_to_col.get('merchant_shipping_group#1.value') or sc_lbl_occ_to_col.get(('shipping template (in)', 1))
+
+ parent_inherited_sc_cols = {c for c, lbl in sc_col_to_lbl.items() if lbl in PARENT_INHERITED_LABELS}
+ curr_r = sc_data_r
+ while curr_r <= ws_sc.max_row and ws_sc.cell(curr_r, sc_sku_col).value not in (None, ''): curr_r += 1
+
+ vc_listing_sheets = [wb_vc[s] for s in wb_vc.sheetnames if _is_valid_vc_listing_sheet(wb_vc[s])] or [pick_template_sheet(wb_vc)]
+ deduped_sku_order, deduped_sku_store, sheets_summary = [], {}, []
+
+ for ws_vc in vc_listing_sheets:
+  vc_lbl_r, vc_key_r, vc_data_r = _detect_amz_sheet_rows(ws_vc, 3, 4, 7)
+  vc_to_sc_col, vc_lbl_counts = {}, {}
+  vc_sku_col = vc_model_name_col = vc_asin_col = vc_prod_type_col = vc_item_type_col = vc_title_col = None
+  for c in range(1, ws_vc.max_column + 1):
+   lbl = str(ws_vc.cell(vc_lbl_r, c).value or '').strip().lower()
+   key = str(ws_vc.cell(vc_key_r, c).value or '').strip() if vc_key_r else ''
+   nk = _norm_amazon_key(key)
+   if vc_sku_col is None and (nk in ('vendor_sku#1.value', 'contribution_sku#1.value') or lbl in ('vendor sku', 'sku', 'seller sku')): vc_sku_col = c
+   if vc_model_name_col is None and (nk == 'model_name#1.value' or lbl == 'model name'): vc_model_name_col = c
+   if vc_asin_col is None and (nk in ('merchant_suggested_asin#1.value', 'external_product_id#1.value') or lbl in ('merchant suggested asin', 'external product id')): vc_asin_col = c
+   if vc_prod_type_col is None and (nk == 'product_type#1.value' or lbl in ('product type', 'feed product type')): vc_prod_type_col = c
+   if vc_item_type_col is None and (nk == 'item_type_name#1.value' or lbl in ('item type name', 'item type keyword')): vc_item_type_col = c
+   if vc_title_col is None and (nk == 'item_name#1.value' or lbl in ('item name', 'title', 'product name')): vc_title_col = c
+   nk_target = VC_TO_SC_KEY_ALIASES.get(nk, nk)
+   occ = 1
+   if lbl: occ = vc_lbl_counts.get(lbl, 0) + 1; vc_lbl_counts[lbl] = occ
+   sc_c = sc_key_to_col.get(nk_target) if nk_target else None
+   if not sc_c:
+    for grp in VC_TO_SC_KEY_FALLBACK_GROUPS:
+     if nk_target in grp:
+      sc_c = next((sc_key_to_col[alt_k] for alt_k in grp if alt_k in sc_key_to_col), None)
+      if sc_c: break
+    if not sc_c:
+     lbl_target = VC_TO_SC_LABEL_ALIASES.get(lbl, lbl)
+     sc_c = sc_lbl_occ_to_col.get((lbl_target, occ)) or (sc_lbl_occ_to_col.get((lbl_target, 1)) if occ == 1 else None)
+   if sc_c: vc_to_sc_col.setdefault(c, []).append(sc_c)
+
+  if vc_sku_col is None: vc_sku_col = 2
+  sheet_raw_rows, sheet_unique_skus, sheet_duplicates_merged = 0, set(), 0
+  for r_vc in range(vc_data_r, ws_vc.max_row + 1):
+   sku_val = ws_vc.cell(r_vc, vc_sku_col).value
+   if sku_val in (None, ''): continue
+   sku_str = str(sku_val).strip()
+   if sku_str.lower() in ('vendor sku', 'sku', 'seller sku', 'example'): continue
+   sheet_raw_rows += 1
+   sku_norm_key = sku_str.lower()
+   non_empty_vc_cells = sum(1 for c_chk in range(1, ws_vc.max_column + 1) if ws_vc.cell(r_vc, c_chk).value not in (None, ''))
+   mapped_cells = {}
+   for vc_c, sc_cols_list in vc_to_sc_col.items():
+    val = ws_vc.cell(r_vc, vc_c).value
+    if val not in (None, ''):
+     for sc_c in sc_cols_list: mapped_cells[sc_c] = _limit_desc_200(val) if sc_c == sc_desc_col else val
+   if vc_asin_col and sc_prod_id_val_col:
+    asin_val = ws_vc.cell(r_vc, vc_asin_col).value
+    if asin_val not in (None, ''): mapped_cells[sc_prod_id_val_col] = str(asin_val).strip()
+   raw_pt_val = ws_vc.cell(r_vc, vc_prod_type_col).value if vc_prod_type_col else ''
+   raw_itn_val = ws_vc.cell(r_vc, vc_item_type_col).value if vc_item_type_col else ''
+   raw_title_val = ws_vc.cell(r_vc, vc_title_col).value if vc_title_col else ''
+   model_name_val = ws_vc.cell(r_vc, vc_model_name_col).value if vc_model_name_col else None
+   has_explicit_model = model_name_val not in (None, '') and str(model_name_val).strip() != ''
+   model_str = str(model_name_val).strip() if has_explicit_model else _derive_parent_model_from_sku(sku_str, ws_vc.title)
+
+   if sku_norm_key not in deduped_sku_store:
+    deduped_sku_order.append(sku_norm_key); sheet_unique_skus.add(sku_norm_key)
+    deduped_sku_store[sku_norm_key] = {'sku_str': sku_str, 'model_str': model_str, 'has_explicit_model': has_explicit_model, 'mapped_cells': mapped_cells, 'sheet_title': ws_vc.title, 'raw_pt_val': raw_pt_val or '', 'raw_itn_val': raw_itn_val or '', 'raw_title_val': raw_title_val or '', 'fill_score': non_empty_vc_cells}
+   else:
+    sheet_duplicates_merged += 1
+    existing = deduped_sku_store[sku_norm_key]
+    existing['mapped_cells'] = _merge_vc_duplicate_cell_maps(existing['mapped_cells'], mapped_cells, existing['fill_score'], non_empty_vc_cells)
+    if has_explicit_model and (not existing['has_explicit_model'] or non_empty_vc_cells > existing['fill_score']): existing['model_str'] = model_str; existing['has_explicit_model'] = True
+    if raw_pt_val not in (None, '') and (not existing['raw_pt_val'] or non_empty_vc_cells > existing['fill_score']): existing['raw_pt_val'] = raw_pt_val
+    if raw_itn_val not in (None, '') and (not existing['raw_itn_val'] or non_empty_vc_cells > existing['fill_score']): existing['raw_itn_val'] = raw_itn_val
+    if raw_title_val not in (None, '') and (not existing['raw_title_val'] or non_empty_vc_cells > existing['fill_score']): existing['raw_title_val'] = raw_title_val
+    if non_empty_vc_cells > existing['fill_score']: existing['fill_score'] = non_empty_vc_cells; existing['sheet_title'] = ws_vc.title; existing['sku_str'] = sku_str
+
+  if sheet_raw_rows > 0:
+   sheets_summary.append({'VC Sheet': ws_vc.title, 'Total Rows Scanned': sheet_raw_rows, 'Unique SKUs Kept': len(sheet_unique_skus), 'Duplicate/Blank Rows Merged': sheet_duplicates_merged, 'SC Product Type(s)': "Auto"})
+
+ vc_rows_data, model_first_child_cells, sheet_pts_map = [], {}, {}
+ for sku_norm_key in deduped_sku_order:
+  entry = deduped_sku_store[sku_norm_key]
+  sku_str, model_str, mapped_cells, sh_title = entry['sku_str'], entry['model_str'], entry['mapped_cells'], entry['sheet_title']
+  if sc_desc_col and sc_desc_col in mapped_cells: mapped_cells[sc_desc_col] = _limit_desc_200(mapped_cells[sc_desc_col])
+  resolved_pt = resolve_sc_product_type_for_row(ws_sc, sc_prod_type_col, raw_prod_type=entry['raw_pt_val'], sheet_name=sh_title, item_type=entry['raw_itn_val'], model_name=model_str, item_name=entry['raw_title_val'] or sku_str)
+  if sc_prod_type_col and resolved_pt:
+   mapped_cells[sc_prod_type_col] = resolved_pt
+   sheet_pts_map.setdefault(sh_title, set()).add(str(resolved_pt))
+  if model_str and (model_str not in model_first_child_cells or len(mapped_cells) > len(model_first_child_cells[model_str])): model_first_child_cells[model_str] = mapped_cells
+  vc_rows_data.append((sku_str, model_str, mapped_cells, sh_title))
+
+ for s_item in sheets_summary:
+  pts = sheet_pts_map.get(s_item['VC Sheet'])
+  if pts: s_item['SC Product Type(s)'] = ", ".join(sorted(pts))
+ if not vc_rows_data: return None, [], 0, []
+
+ action_val = "Create or Replace (Full Update)"
+ parent_val = pick_dropdown_value(ws_sc, sc_parentage_col, "Parent", "Parent") if sc_parentage_col else "Parent"
+ child_val = pick_dropdown_value(ws_sc, sc_parentage_col, "Child", "Child") if sc_parentage_col else "Child"
+ var_theme_val, asin_type_val, cond_new_val, fulfillment_default_val, qty_zero_val, shipping_tpl_val = "SIZE/COLOR", "ASIN", "New", "Fulfillment by Merchant (Default)", 0, "Migrated Template"
+ parent_position = ctx.get('parent_position', 'before_group')
+ seen_models, unique_models_ordered, model_to_sheet = set(), [], {}
+ for _, m_str, _, sh_title in vc_rows_data:
+  if m_str and m_str not in seen_models: seen_models.add(m_str); unique_models_ordered.append(m_str); model_to_sheet[m_str] = sh_title
+
+ preview, total_written = [], 0
+ def apply_common_fixed_fields(row_idx):
+  if sc_action_col: ws_sc.cell(row_idx, sc_action_col).value = action_val
+  if sc_var_theme_col: ws_sc.cell(row_idx, sc_var_theme_col).value = var_theme_val
+  if sc_condition_col: ws_sc.cell(row_idx, sc_condition_col).value = cond_new_val
+  if sc_fulfillment_col: ws_sc.cell(row_idx, sc_fulfillment_col).value = fulfillment_default_val
+  if sc_quantity_col: ws_sc.cell(row_idx, sc_quantity_col).value = qty_zero_val
+
+ def write_parent_row(model_sku):
+  nonlocal curr_r, total_written
+  ref_cells = model_first_child_cells.get(model_sku) or (vc_rows_data[0][2] if vc_rows_data else {})
+  for sc_c in parent_inherited_sc_cols:
+   if sc_c in ref_cells and ref_cells[sc_c] not in (None, ''): ws_sc.cell(curr_r, sc_c).value = ref_cells[sc_c]
+  ws_sc.cell(curr_r, sc_sku_col).value = model_sku
+  if sc_prod_type_col and sc_prod_type_col in ref_cells: ws_sc.cell(curr_r, sc_prod_type_col).value = ref_cells[sc_prod_type_col]
+  if sc_parentage_col: ws_sc.cell(curr_r, sc_parentage_col).value = parent_val
+  if sc_model_name_col:
+   ws_sc.cell(curr_r, sc_model_name_col).value = model_sku; ws_sc.cell(curr_r, sc_model_name_col).fill = HIGHLIGHT_FILL; ws_sc.cell(curr_r, sc_model_name_col).font = HIGHLIGHT_FONT
+  parent_title = _build_parent_title_from_child(ref_cells.get(sc_title_col, ''), model_sku) if sc_title_col else ""
+  if sc_title_col: ws_sc.cell(curr_r, sc_title_col).value = parent_title
+  apply_common_fixed_fields(curr_r)
+  preview.append({'Row': curr_r, 'Source VC Sheet': model_to_sheet.get(model_sku, ''), 'SKU': model_sku, 'Product Type': ref_cells.get(sc_prod_type_col, '') if sc_prod_type_col else '', 'Listing Action': action_val, 'Parentage Level': parent_val, 'Parent SKU': '', 'Variation Theme': var_theme_val, 'Product Id Type': '', 'Product Id': '', 'Shipping Template': '', 'Model Name': model_sku, 'Item Name': parent_title})
+  curr_r += 1; total_written += 1
+
+ def write_child_row(child_sku, model_str, mapped_cells, src_sheet_name=""):
+  nonlocal curr_r, total_written
+  for sc_c, val in mapped_cells.items(): ws_sc.cell(curr_r, sc_c).value = val
+  ws_sc.cell(curr_r, sc_sku_col).value = child_sku
+  if sc_parentage_col: ws_sc.cell(curr_r, sc_parentage_col).value = child_val
+  if sc_parent_sku_col and model_str: ws_sc.cell(curr_r, sc_parent_sku_col).value = model_str
+  if sc_model_name_col:
+   if model_str: ws_sc.cell(curr_r, sc_model_name_col).value = model_str
+   ws_sc.cell(curr_r, sc_model_name_col).fill = HIGHLIGHT_FILL; ws_sc.cell(curr_r, sc_model_name_col).font = HIGHLIGHT_FONT
+  if sc_prod_id_type_col: ws_sc.cell(curr_r, sc_prod_id_type_col).value = asin_type_val
+  if sc_shipping_tpl_col: ws_sc.cell(curr_r, sc_shipping_tpl_col).value = shipping_tpl_val
+  apply_common_fixed_fields(curr_r)
+  preview.append({'Row': curr_r, 'Source VC Sheet': src_sheet_name, 'SKU': child_sku, 'Product Type': mapped_cells.get(sc_prod_type_col, '') if sc_prod_type_col else '', 'Listing Action': action_val, 'Parentage Level': child_val, 'Parent SKU': model_str, 'Variation Theme': var_theme_val, 'Product Id Type': asin_type_val, 'Product Id': mapped_cells.get(sc_prod_id_val_col, '') if sc_prod_id_val_col else '', 'Shipping Template': shipping_tpl_val, 'Model Name': model_str, 'Item Name': mapped_cells.get(sc_title_col, '') if sc_title_col else ''})
+  curr_r += 1; total_written += 1
+
+ if parent_position == 'top':
+  for m_sku in unique_models_ordered: write_parent_row(m_sku)
+  for c_sku, m_str, m_cells, sh_title in vc_rows_data: write_child_row(c_sku, m_str, m_cells, sh_title)
+ elif parent_position == 'bottom':
+  for c_sku, m_str, m_cells, sh_title in vc_rows_data: write_child_row(c_sku, m_str, m_cells, sh_title)
+  for m_sku in unique_models_ordered: write_parent_row(m_sku)
+ else:
+  inserted_parents = set()
+  for c_sku, m_str, m_cells, sh_title in vc_rows_data:
+   if m_str and m_str not in inserted_parents: inserted_parents.add(m_str); write_parent_row(m_str)
+   write_child_row(c_sku, m_str, m_cells, sh_title)
+
+ output = io.BytesIO()
+ wb_sc.save(output); output.seek(0)
+ return output.getvalue(), preview, total_written, sheets_summary
+
+PL_COLOR_TOKENS = {'black', 'white', 'blue', 'lightblue', 'darkblue', 'skyblue', 'iceblue', 'navy', 'navyblue', 'green', 'olive', 'pista', 'sea-green', 'purple', 'lavender', 'pink', 'red', 'maroon', 'beige', 'biege', 'brown', 'coffee', 'khaki', 'grey', 'gray', 'charcoal', 'yellow', 'orange', 'peach', 'teal', 'wine', 'cream', 'rust', 'gold', 'silver'}
+PL_COLOR_ABBR = {'black': 'Blk', 'white': 'Wht', 'blue': 'Blu', 'lightblue': 'LBlu', 'darkblue': 'DBlu', 'skyblue': 'SBlu', 'iceblue': 'IBlu', 'navy': 'Nvy', 'green': 'Grn', 'olive': 'Olv', 'pista': 'Pst', 'sea-green': 'SGrn', 'purple': 'Prp', 'lavender': 'Lav', 'pink': 'Pnk', 'red': 'Red', 'maroon': 'Mrn', 'beige': 'Beg', 'biege': 'Beg', 'brown': 'Brn', 'coffee': 'Cfe', 'khaki': 'Khk', 'grey': 'Gry', 'gray': 'Gry', 'charcoal': 'Chr', 'yellow': 'Ylw', 'orange': 'Orn', 'peach': 'Pch', 'teal': 'Tel', 'wine': 'Win', 'cream': 'Crm', 'ribbin': 'Rbn', 'teddy': 'Tdy'}
+
+def pl_clean_sku_name(name): return clean_sku_name(name)
+def pl_norm_h(s): return _norm_h(s)
+
+def pl_extract_style_code(folder_name):
+ clean = pl_clean_sku_name(folder_name)
+ parts = clean.split('-')
+ for i in range(len(parts) - 1, 0, -1):
+  low_p = parts[i].lower()
+  if low_p in PL_COLOR_TOKENS or low_p in COLOR_MISSPELLINGS: return '-'.join(parts[:i])
+ return '-'.join(parts[:-1]) if (len(parts) >= 2 and not parts[-1].isdigit()) else clean
+
+def pl_generate_safe_ean(clean_style, clean_sz):
+ sz_suffix = f"-{clean_sz}"
+ candidate = f"{clean_style}{sz_suffix}"
+ if len(candidate) <= 18: return candidate
+ new_parts = [PL_COLOR_ABBR[p.lower()] if p.lower() in PL_COLOR_ABBR else (str(int(p)) if p.isdigit() else p) for p in clean_style.split('-')]
+ for sep in ("-", ""):
+  cand = sep.join(new_parts) + sz_suffix
+  if len(cand) <= 18: return cand
+ return ("".join(new_parts))[:18 - len(sz_suffix)] + sz_suffix
+
+PL_COLOR_FAMILY_MAP = {'maroon': 'Red', 'red': 'Red', 'wine': 'Red', 'darkred': 'Red', 'navy': 'Navy', 'navyblue': 'Navy', 'blue': 'Blue', 'lightblue': 'Blue', 'darkblue': 'Blue', 'iceblue': 'Blue', 'skyblue': 'Blue', 'teal': 'Teal', 'black': 'Black', 'charcoal': 'Grey', 'grey': 'Grey', 'gray': 'Grey', 'lightgrey': 'Grey', 'darkgrey': 'Grey', 'white': 'White', 'offwhite': 'Off White', 'green': 'Green', 'olive': 'Olive', 'pista': 'Sea Green', 'sea green': 'Sea Green', 'brown': 'Brown', 'coffee': 'Brown', 'beige': 'Beige', 'biege': 'Beige', 'khaki': 'Khaki', 'yellow': 'Yellow', 'mustard': 'Yellow', 'orange': 'Orange', 'peach': 'Peach', 'pink': 'Pink', 'purple': 'Purple', 'lavender': 'Purple'}
+
+def pl_detect_color_from_name(text, image_bytes=None): return detect_color(text, image_bytes=image_bytes)
+def pl_map_color_to_family(col_name):
+ canon = _canonicalize_color(col_name)
+ return PL_COLOR_FAMILY_MAP.get(str(canon or '').strip().lower(), canon or "Black")
+
+def pl_get_dimensions_and_weight(category):
+ d = get_smart_weight_and_dims(category)
+ return {'art_l': d['cm_l'], 'art_w': d['cm_w'], 'art_h': d['cm_h'], 'art_luom': 'CM', 'art_wt': d['item_wt'], 'art_wtuom': 'GRAM', 'pkg_l': d['cm_l'], 'pkg_w': d['cm_w'], 'pkg_h': d['cm_h'], 'pkg_luom': 'CM', 'pkg_wt': d['pkg_wt'], 'pkg_wtuom': 'GRAM'}
+
+def pl_resolve_hsn_code(user_hsn, category, text_hint=""): return resolve_hsn_with_flag(user_hsn, category, text_hint)
+
+def pl_get_size_chart_prompt():
+ return (
+  'Read this garment size chart image carefully and extract all available measurements in INCHES (convert cm to inches by dividing by 2.54 if in cm). '
+  'Include every size shown (XS, S, M, L, XL, XXL/2XL, XXXL/3XL, or numeric waist sizes 28, 30, 32, 34, 36, 38, 40). '
+  'Use standard keys: "chest", "bust", "front_length", "shoulder", "sleeve_in", "waist", "hip", "bottom_length", "inseam". '
+  'Output ONLY valid JSON: {"bottomwear_type": "<Capris or Pyjamas or Trousers>", "sleeve_length": "<Short sleeve or Full-length sleeve>", "measurements": {"S": {"chest": 40, "bust": 39, "front_length": 28, "shoulder": 17, "waist": 30, "hip": 40, "bottom_length": 39, "inseam": 28}}}'
+ )
+
+def pl_fallback_ocr_size_chart(image_bytes):
+ return {'bottomwear_type': 'Pyjamas', 'sleeve_length': 'Short sleeve', 'measurements': dict(BASE_ALPHA_GARMENT_CHART)}
+
+def pl_multi_ai_vision_detect(image_bytes, img_name, folder_hint="", all_img_tuples=None):
+ return multi_ai_vision_detect(image_bytes, img_name, folder_hint=folder_hint, all_img_tuples=all_img_tuples)
+
+def pl_multi_ai_size_chart_detect(image_bytes, img_name):
+ if not image_bytes: return pl_fallback_ocr_size_chart(None), "Smart-Default"
+ sc_cache = st.session_state.setdefault('size_chart_cache', {})
+ h = hashlib.md5(image_bytes).hexdigest()
+ if h in sc_cache: return sc_cache[h], "Cached-AI"
+ prompt = pl_get_size_chart_prompt()
+ for fn, provider in [(pl_call_gemini_api, "Gemini"), (pl_call_nvidia_api, "NVIDIA"), (pl_call_groq_api, "Groq")]:
+  res = fn(prompt, image_bytes, img_name)
+  if res and isinstance(res, dict) and res.get('measurements'):
+   sc_cache[h] = res; return res, provider
+ return pl_fallback_ocr_size_chart(image_bytes), "Smart-Fallback"
+
+def extract_all_size_charts_universal(pl_size_charts):
+ size_chart_measurements = {}
+ if not pl_size_charts: return size_chart_measurements
+ for fld, sc_info in pl_size_charts.items():
+  sc_res, _ = pl_multi_ai_size_chart_detect(sc_info['bytes'], sc_info['filename'])
+  if sc_res:
+   size_chart_measurements[fld] = sc_res
+   if 'default' not in size_chart_measurements: size_chart_measurements['default'] = sc_res
+ return size_chart_measurements
+
+def pl_read_and_analyze_template(wb):
+ info = {'sheets': wb.sheetnames, 'styles_sheet': None, 'category_breadcrumb': '', 'detected_gender': 'Women', 'detected_category': 'Apparel', 'col_to_dropdowns': {}, 'headers': {}, 'mandatory_cols': []}
+ if 'Seller Information Sheet' in wb.sheetnames:
+  target = wb['Seller Information Sheet'].cell(2, 1).value
+  if target and str(target).strip() in wb.sheetnames: info['styles_sheet'] = str(target).strip()
+ if not info['styles_sheet']:
+  info['styles_sheet'] = next((s for s in wb.sheetnames if 'styles' in s.lower() and 'instruction' not in s.lower()), wb.sheetnames[0])
+ ws_styles = wb[info['styles_sheet']]
+ breadcrumb_val = ws_styles.cell(1, 1).value
+ if breadcrumb_val:
+  info['category_breadcrumb'] = str(breadcrumb_val).strip()
+  parts = [p.strip() for p in info['category_breadcrumb'].split('->')]
+  if len(parts) > 0: info['detected_gender'] = parts[0]
+  if len(parts) > 1: info['detected_category'] = parts[-1]
+ header_row = 3
+ keywords = ['style', 'sku', 'mrp', 'price', 'size', 'image', 'brand', 'description']
+ for r in range(1, min(7, ws_styles.max_row + 1)):
+  vals = [str(ws_styles.cell(r, c).value or '').lower() for c in range(1, ws_styles.max_column + 1)]
+  if sum(1 for v in vals if any(k in v for k in keywords)) > 3: header_row = r; break
+ info['header_row'] = header_row
+ info['headers'] = {c: str(ws_styles.cell(header_row, c).value or '').strip() for c in range(1, ws_styles.max_column + 1)}
+ info['mandatory_cols'] = [c for c, h in info['headers'].items() if h.startswith('*')]
+ defined_ranges = {name.lower(): (getattr(dn, 'attr_text', '') or getattr(dn, 'value', '') or '') for name, dn in wb.defined_names.items()} if hasattr(wb, 'defined_names') else {}
+ col_to_dropdowns = {}
+ try:
+  for dv in ws_styles.data_validations.dataValidation:
+   if dv.type == 'list' and dv.formula1:
+    f1 = str(dv.formula1).strip().replace('"', '')
+    vals = []
+    if ',' in f1: vals = [x.strip() for x in f1.split(',') if x.strip()]
+    elif f1.lower() in defined_ranges and '!' in defined_ranges[f1.lower()]:
+     s_name, cell_range = defined_ranges[f1.lower()].split('!')
+     s_name = s_name.strip("'")
+     if s_name in wb.sheetnames:
+      for row in wb[s_name][cell_range.replace('$', '')]:
+       if not isinstance(row, tuple): row = (row,)
+       for cell in row:
+        if cell.value is not None and str(cell.value).strip(): vals.append(str(cell.value).strip())
+    for rng in dv.sqref.ranges:
+     for col_idx in range(rng.min_col, rng.max_col + 1): col_to_dropdowns[col_idx] = vals
+ except Exception: pass
+ info['col_to_dropdowns'] = col_to_dropdowns
+ return info
+
+def pl_pick_dropdown_value_safe(info, col_idx, desired, fallback=None):
+ if not col_idx: return desired or fallback
+ options = info.get('col_to_dropdowns', {}).get(col_idx)
+ if not options: return desired if desired is not None else fallback
+ cand = str(desired if desired is not None else (fallback or '')).strip()
+ if not cand: return None
+ cl = cand.lower()
+ for o in options:
+  if str(o).strip().lower() == cl: return o
+ for o in options:
+  if cl in str(o).strip().lower() or str(o).strip().lower() in cl: return o
+ close = difflib.get_close_matches(cand, options, n=1, cutoff=0.4)
+ return close[0] if close else options[0]
+
+def pl_upload_to_imgbb_cached(image_bytes, api_key, cache): return upload_to_imgbb_cached(image_bytes, api_key, cache)
+
+# =====================================================================
+#  AJIO ERROR FIX HELPERS (V29)
+#  Fixes: *Fit mandatory | Length dropdown | *StandardSize (2XL->XXL) | *To Fit Chest mandatory
+#  + Collar / Sleeve / Style Type dropdown mapping + pre-upload validator
+# =====================================================================
+AJIO_SIZE_ALIASES = {
+ '2XL': ['XXL', '2XL'], 'XXL': ['XXL', '2XL'],
+ '3XL': ['3XL', 'XXXL'], 'XXXL': ['3XL', 'XXXL'],
+ '4XL': ['4XL', 'XXXXL'], 'XXXXL': ['4XL', 'XXXXL'],
+ '5XL': ['5XL', 'XXXXXL'], 'XXXXXL': ['5XL', 'XXXXXL'],
+ 'FREE': ['Free Size', 'FREE', 'Free', 'ONE SIZE'], 'FREESIZE': ['Free Size', 'FREE', 'Free', 'ONE SIZE'],
+}
+
+def _pl_opts(info, col_idx):
+ return (info.get('col_to_dropdowns') or {}).get(col_idx) or []
+
+def _pl_find_option(options, *cands):
+ norm = {re.sub(r'\s+', '', str(o)).lower(): o for o in options}
+ for c in cands:
+  if c in (None, ''): continue
+  k = re.sub(r'\s+', '', str(c)).lower()
+  if k in norm: return norm[k]
+ return None
+
+def pl_alias_option(value, options):
+ sv = str(value).strip()
+ hit = _pl_find_option(options, sv, *AJIO_SIZE_ALIASES.get(sv.upper(), []))
+ if hit: return hit
+ try:
+  n = float(sv)
+  nums = [(abs(float(o) - n), o) for o in options if re.fullmatch(r'\d+(\.\d+)?', str(o).strip())]
+  if nums:
+   nums.sort(key=lambda x: x[0])
+   if nums[0][0] <= 0.01: return nums[0][1]
+ except Exception: pass
+ close = difflib.get_close_matches(sv, [str(o) for o in options], n=1, cutoff=0.75)
+ return close[0] if close else None
+
+def pl_pick_standard_size(info, col_idx, size):
+ options = _pl_opts(info, col_idx)
+ if not options: return size
+ return pl_alias_option(size, options) or size
+
+def pl_resolve_fit(info, col_idx, ai_fit, cat):
+ ai = str(ai_fit or '').lower()
+ if 'slim' in ai: want = 'Slim Fit'
+ elif 'oversize' in ai: want = 'Oversized Fit'
+ elif 'loose' in ai: want = 'Loose Fit'
+ elif 'relax' in ai: want = 'Relaxed Fit'
+ elif 'regular' in ai or 'standard' in ai: want = 'Regular Fit'
+ else: want = 'Relaxed Fit' if str(cat).lower() in ('cargo', 'hoodie', 'sweatshirt', 'joggers', 'co-ord set') else 'Regular Fit'
+ options = _pl_opts(info, col_idx)
+ if not options: return want
+ return _pl_find_option(options, want, want.replace(' Fit', ''), 'Regular Fit', 'Regular') or options[0]
+
+def pl_resolve_length(info, col_idx, front_len, bottom_len, is_bottom):
+ options = _pl_opts(info, col_idx)
+ num = bottom_len if is_bottom else front_len
+ if not options: return num
+ if all(_to_num(o) is not None for o in options):
+  return pl_alias_option(num, options) or options[0]
+ if is_bottom: want = 'Short' if num <= 24 else ('Medium' if num <= 34 else 'Long')
+ else: want = 'Crop' if num < 24 else ('Short' if num < 27 else ('Medium' if num <= 31 else 'Long'))
+ return _pl_find_option(options, want, 'Medium', 'Regular') or options[0]
+
+def pl_resolve_collar(info, col_idx, ai_collar, folder_name=""):
+ options = _pl_opts(info, col_idx)
+ text = f"{ai_collar or ''} {folder_name or ''}".lower()
+ want = None
+ for key, val in [('mandarin', 'Mandarin'), ('cuban', 'Cuban'), ('aloha', 'Cuban'), ('button-down', 'Button-down'), ('button down', 'Button-down'), ('spread', 'Spread'), ('band', 'Band'), ('stand', 'Stand'), ('peter pan', 'Peter Pan'), ('hood', 'Hooded'), ('lapel', 'Lapel'), ('polo', 'Point')]:
+  if key in text: want = val; break
+ if not want: return None
+ return _pl_find_option(options, want) if options else want
+
+def pl_resolve_sleeve(info, col_idx, sleeve_text):
+ t = str(sleeve_text or '').lower()
+ if 'sleeveless' in t: want = 'Sleeveless'
+ elif '3/4' in t or 'three' in t: want = '3/4th'
+ elif 'long' in t or 'full' in t: want = 'Full-Length'
+ else: want = 'Short'
+ options = _pl_opts(info, col_idx)
+ if not options: return want
+ return _pl_find_option(options, want, want.replace('-Length', ''), 'Short') or options[0]
+
+def pl_resolve_style_type(info, col_idx, folder_name, cat):
+ options = _pl_opts(info, col_idx)
+ low = f"{folder_name} {cat}".lower()
+ if options and _pl_find_option(options, 'Classic'):
+  if 'utility' in low: want = 'Utility'
+  elif any(w in low for w in ('kurta', 'mandarin', 'indian')): want = 'Indian'
+  elif any(w in low for w in ('shacket', 'jacket', 'overshirt')): want = 'Shackets'
+  elif any(w in low for w in ('knit', 'rib', 'polo')): want = 'Knitted'
+  else: want = 'Classic'
+  return _pl_find_option(options, want, 'Classic')
+ return pl_pick_dropdown_value_safe(info, col_idx, "2-Piece Sets", "2-Piece Sets")
+
+def pl_validate_and_autofix_rows(ws, info, first_row, last_row):
+ log, dd = [], info.get('col_to_dropdowns') or {}
+ headers = info.get('headers') or {}
+ mand = set(info.get('mandatory_cols') or [])
+ for r in range(first_row, last_row + 1):
+  for c, opts in dd.items():
+   if not opts: continue
+   cell = ws.cell(r, c); v = cell.value
+   if v in (None, ''): continue
+   if str(v).strip() in [str(o).strip() for o in opts]: continue
+   fixed = pl_alias_option(v, opts)
+   if fixed is not None:
+    log.append({'Row': r, 'Column': headers.get(c, c), 'Old': v, 'New': fixed, 'Result': '✅ Auto-fixed'})
+    cell.value = fixed
+   else:
+    cell.fill = ERROR_FILL
+    log.append({'Row': r, 'Column': headers.get(c, c), 'Old': v, 'New': '', 'Result': '❌ Not in dropdown (highlighted red)'})
+  for c in mand:
+   if ws.cell(r, c).value in (None, ''):
+    ws.cell(r, c).fill = ERROR_FILL
+    log.append({'Row': r, 'Column': headers.get(c, c), 'Old': '', 'New': '', 'Result': '❌ Mandatory blank (highlighted red)'})
+ return log
+
+def pl_build_dynamic_seo_content(category, gender, brand, fabric, pattern, keywords=""):
+ g_title = "Women's" if str(gender).lower().startswith('w') else ("Men's" if str(gender).lower().startswith('m') else "Unisex")
+ b_prefix = f"{brand} " if brand else ""
+ cat_label = category.title() if category else "Apparel"
+ kw_str = keywords if keywords else "relaxed fit and all-day comfort"
+ desc = f"{b_prefix}{g_title} {cat_label} in breathable {fabric} fabric with an elegant {pattern.lower()} pattern. Designed for {kw_str} and effortless daily wear."
+ highlight = f"Premium breathable {fabric} fabric | Comfortable {g_title.lower()} fit | Elegant {pattern.lower()} design | Durable stitching | Easy machine wash"
+ add_info = "Wash Care: Machine wash cold with similar colors. Do not bleach. Warm iron if needed."
+ return _limit_desc_200(desc), highlight[:500], add_info[:500]
+
+def pl_run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detected_size_charts, ctx):
+ name = getattr(template_file_or_bytes, 'name', 'template.xlsx')
+ wb = openpyxl.load_workbook(template_file_or_bytes, keep_vba=name.lower().endswith('.xlsm'))
+ info = pl_read_and_analyze_template(wb)
+ ws = wb[info['styles_sheet']]
+ headers, header_row = info['headers'], info['header_row']
+
+ def find_col(candidates):
+  for cand in candidates:
+   c_norm = pl_norm_h(cand)
+   for c, h in headers.items():
+    if pl_norm_h(h) == c_norm: return c
+  return None
+
+ cat_detected, gender_detected = info['detected_category'], info['detected_gender']
+ col_style, col_desc, col_sku, col_brand, col_ean, col_td, col_mrp, col_hsn = find_col(['*Style Code', 'Style Code']), find_col(['*Style Description', 'Style Description']), find_col(['*Item SKU', 'Item SKU', 'SKU']), find_col(['*Brand', 'Brand']), find_col(['*EAN', 'EAN', 'Barcode']), find_col(['*TD', 'TD']), find_col(['*MRP', 'MRP', 'Maximum Retail Price']), find_col(['*HSN', 'HSN', 'HSN Code'])
+ col_prod_grp, col_fash_grp, col_season_cd, col_season_yr, col_size, col_std_size = find_col(['*Product Groups', 'Product Groups']), find_col(['*Fashion Groups', 'Fashion Groups']), find_col(['*Season Code', 'Season Code']), find_col(['*Season Year', 'Season Year']), find_col(['*Size', 'Size']), find_col(['*StandardSize', 'StandardSize', 'Standard Size'])
+ col_art_h, col_art_l, col_art_w, col_art_luom, col_art_wt, col_art_wtuom = find_col(['*articleDimensionsUnitHeight']), find_col(['*articleDimensionsUnitLength']), find_col(['*articleDimensionsUnitWidth']), find_col(['*articleDimensionsUnitLengthUOM']), find_col(['*articleDimensionsUnitWeight']), find_col(['*articleDimensionsUnitWeightUOM'])
+ col_pkg_h, col_pkg_l, col_pkg_w, col_pkg_luom, col_pkg_wt, col_pkg_wtuom = find_col(['*packageDimensionsHeight']), find_col(['*packageDimensionsLength']), find_col(['*packageDimensionsWidth']), find_col(['*packageDimensionsLengthUOM']), find_col(['*packageDimensionsWeight']), find_col(['*packageDimensionsWeightUOM'])
+ col_add_info1, col_comp_count, col_country, col_highlight, col_mfg_by, col_mkt_by, col_net_qty, col_pkg_contains = find_col(['Additional Information 1']), find_col(['*Component Count']), find_col(['*Country of Origin']), find_col(['Highlight']), find_col(['Manufactured By']), find_col(['*Marketed By']), find_col(['*Net Quantity']), find_col(['*Package Contains'])
+ col_color_fam, col_color_shade, col_fab_detail, col_fab_type, col_pattern, col_pri_color, col_size_format, col_size_group, col_wash_care, col_plus_size, col_prod_name, col_sleeve_len, col_waist_type, col_top_type, col_bottom_type, col_style_type = find_col(['*Color Family']), find_col(['*Color Shade', 'Color Shade']), find_col(['Fabric Detail']), find_col(['*Fabric Type']), find_col(['*Pattern']), find_col(['*Primary Color']), find_col(['*Size Format']), find_col(['*Size Group', 'Size Group']), find_col(['*Wash Care']), find_col(['*Plus Size Store']), find_col(['*Product Name']), find_col(['Sleeve Length', '*Sleeve Length', 'Sleeve', '*Sleeve']), find_col(['Waist Type']), find_col(['*Topwear Type']), find_col(['Bottomwear Type']), find_col(['*Style Type'])
+ col_meas_type, col_to_fit_bust, col_bust, col_front_len, col_to_fit_waist, col_waist, col_to_fit_hip, col_hip, col_inseam = find_col(['*Measurement Type']), find_col(['*To Fit Bust']), find_col(['*Bust']), find_col(['*Front Length']), find_col(['*To Fit Waist']), find_col(['*Waist']), find_col(['*To Fit Hip']), find_col(['*Hips', 'Hips', '*Hip']), find_col(['*Inseam', 'Inseam', '*Inseam Length'])
+ col_chest, col_shoulder, col_outseam = find_col(['*Chest', 'Chest']), find_col(['*Shoulder', 'Shoulder', '*Across Shoulder']), find_col(['*Outseam Length', 'Outseam Length'])
+ col_to_fit_chest = find_col(['*To Fit Chest', 'To Fit Chest'])
+ col_fit = find_col(['*Fit', 'Fit', '*Fit Type', 'Fit Type'])
+ col_length_dd = None if col_outseam else find_col(['*Length', 'Length'])
+ col_collar = find_col(['Collar', '*Collar'])
+
+ img_cols = [c for c in [find_col(['*MODEL' if i == 1 else f'MODEL{i}']) for i in range(1, 15)] if c]
+
+ curr_r = header_row + 1
+ while ws.cell(curr_r, col_style or 1).value is not None: curr_r += 1
+ first_new_row = curr_r
+ is_bottom_tpl = bool(col_waist) and not col_chest
+ total_added, preview, sizes = 0, [], (ctx.get('sizes') or ['S', 'M', 'L', 'XL', '2XL'])
+ season_year = str(datetime.now().year)
+
+ def set_val(r, c, val, dropdown=False, fill=None, font=None):
+  if not c: return
+  cell = ws.cell(r, c)
+  if val not in (None, ''): cell.value = pl_pick_dropdown_value_safe(info, c, val, val) if dropdown else val
+  if fill: cell.fill = fill
+  if font: cell.font = font
+
+ for fld, img_tuples in zip_images_data.items():
+  base_sku, style_code = pl_clean_sku_name(fld), pl_extract_style_code(fld)
+  ai_data = ctx.get('vision_results', {}).get(base_sku, {})
+  sku_cat = ai_data.get('category') or cat_detected
+  dims_data = pl_get_dimensions_and_weight(sku_cat)
+  det_col = canonicalize_ai_color(extract_explicit_color_from_text(fld) or ai_data.get('color') or pl_detect_color_from_name(fld, image_bytes=img_tuples), folder_name=fld, image_bytes=img_tuples)
+  col_fam = pl_map_color_to_family(det_col)
+  mat_val = ai_data.get('material') or "Cotton"
+  fab_detail = ai_data.get('fabric_detail') or f"100% {mat_val}"
+  pattern_val = ai_data.get('pattern') or ("Quilted" if "quilt" in fld.lower() else "Solid")
+  ai_season_cd = ai_data.get('season_code') or resolve_season(base_sku, sku_cat, ctx)
+  ai_prod_grp = ai_data.get('product_group') or resolve_product_group(base_sku, sku_cat, ctx)
+  sc_data = detected_size_charts.get(fld) or detected_size_charts.get('default') or {}
+  sleeve_val = sc_data.get('sleeve_length') or ai_data.get('sleeve_length') or "Short sleeve"
+  bottom_val = sc_data.get('bottomwear_type') or ("Capris" if "capri" in fld.lower() else "Pyjamas")
+  desc_text, high_text, add_text = pl_build_dynamic_seo_content(cat_detected, gender_detected, ctx.get('brand', ''), mat_val, pattern_val, ctx.get('keywords', ''))
+  img_urls = list(ctx.get('live_links_cache', {}).get(fld, []))
+  sc_url = (ctx.get('size_chart_urls') or {}).get(fld) or ctx.get('size_chart_cdn_url')
+  if sc_url and sc_url not in img_urls: img_urls.append(sc_url)
+  hsn_val, hsn_is_auto = pl_resolve_hsn_code(ctx.get('hsn'), sku_cat, fld)
+
+  preview.append({'Style Code': style_code, 'Base SKU': base_sku, 'Category': cat_detected, 'Color': det_col, 'HSN': f"{hsn_val} (Auto-Highlighted)" if hsn_is_auto else hsn_val, 'Season': f"{ai_season_cd} ({season_year})", 'Product Group': ai_prod_grp, 'Weight (g)': f"{dims_data['art_wt']}/{dims_data['pkg_wt']}"})
+
+  for sz in sizes:
+   clean_sz = pl_clean_sku_name(sz)
+   full_sku, ean_val = f"{base_sku}-{clean_sz}", pl_generate_safe_ean(base_sku, clean_sz)
+   meas = resolve_complete_measurements_for_size(clean_sz, cat_detected, sc_data, gender_detected)
+
+   set_val(curr_r, col_style, style_code, fill=HIGHLIGHT_FILL, font=HIGHLIGHT_FONT)
+   set_val(curr_r, col_desc, desc_text); set_val(curr_r, col_sku, full_sku)
+   set_val(curr_r, col_brand, ctx.get('brand', '')); set_val(curr_r, col_ean, ean_val); set_val(curr_r, col_td, ctx.get('td', 50))
+   if col_mrp:
+    if ctx.get('mrp'): ws.cell(curr_r, col_mrp).value = int(ctx['mrp']) if str(ctx['mrp']).isdigit() else ctx['mrp']
+    else: ws.cell(curr_r, col_mrp).fill = HIGHLIGHT_FILL; ws.cell(curr_r, col_mrp).font = HIGHLIGHT_FONT
+   set_val(curr_r, col_hsn, hsn_val, fill=(HIGHLIGHT_FILL if hsn_is_auto else None), font=(HIGHLIGHT_FONT if hsn_is_auto else None))
+   set_val(curr_r, col_prod_grp, ai_prod_grp, dropdown=True); set_val(curr_r, col_fash_grp, "Fashion", dropdown=True)
+   set_val(curr_r, col_season_cd, ai_season_cd, dropdown=True); set_val(curr_r, col_season_yr, season_year)
+   set_val(curr_r, col_size, clean_sz)
+   set_val(curr_r, col_std_size, pl_pick_standard_size(info, col_std_size, clean_sz))
+   set_val(curr_r, col_art_h, dims_data['art_h']); set_val(curr_r, col_art_l, dims_data['art_l']); set_val(curr_r, col_art_w, dims_data['art_w']); set_val(curr_r, col_art_luom, dims_data['art_luom']); set_val(curr_r, col_art_wt, dims_data['art_wt']); set_val(curr_r, col_art_wtuom, dims_data['art_wtuom'])
+   set_val(curr_r, col_pkg_h, dims_data['pkg_h']); set_val(curr_r, col_pkg_l, dims_data['pkg_l']); set_val(curr_r, col_pkg_w, dims_data['pkg_w']); set_val(curr_r, col_pkg_luom, dims_data['pkg_luom']); set_val(curr_r, col_pkg_wt, dims_data['pkg_wt']); set_val(curr_r, col_pkg_wtuom, dims_data['pkg_wtuom'])
+   set_val(curr_r, col_add_info1, add_text); set_val(curr_r, col_comp_count, 1); set_val(curr_r, col_country, "India", dropdown=True); set_val(curr_r, col_highlight, high_text)
+   set_val(curr_r, col_mfg_by, ctx.get('mfg') or None, fill=(HIGHLIGHT_FILL if not ctx.get('mfg') else None))
+   set_val(curr_r, col_mkt_by, ctx.get('mfg') or None, fill=(HIGHLIGHT_FILL if not ctx.get('mfg') else None))
+   set_val(curr_r, col_net_qty, 1); set_val(curr_r, col_pkg_contains, "1")
+   set_val(curr_r, col_color_fam, col_fam, dropdown=True); set_val(curr_r, col_color_shade, "Light", dropdown=True); set_val(curr_r, col_fab_detail, fab_detail); set_val(curr_r, col_fab_type, mat_val, dropdown=True)
+   set_val(curr_r, col_pattern, pattern_val, dropdown=True); set_val(curr_r, col_pri_color, det_col, dropdown=True); set_val(curr_r, col_size_format, "UNI", dropdown=True); set_val(curr_r, col_size_group, "Regular", dropdown=True)
+   set_val(curr_r, col_wash_care, "Machine wash", dropdown=True); set_val(curr_r, col_plus_size, "No", dropdown=True); set_val(curr_r, col_prod_name, "Knitted Top", dropdown=True)
+   set_val(curr_r, col_sleeve_len, pl_resolve_sleeve(info, col_sleeve_len, sleeve_val) if col_sleeve_len else None)
+   set_val(curr_r, col_waist_type, "Flexi waist", dropdown=True); set_val(curr_r, col_top_type, "Top", dropdown=True); set_val(curr_r, col_bottom_type, bottom_val, dropdown=True)
+   set_val(curr_r, col_style_type, pl_resolve_style_type(info, col_style_type, fld, sku_cat) if col_style_type else None)
+   if col_meas_type: set_val(curr_r, col_meas_type, "Garment Measurement", dropdown=True)
+   set_val(curr_r, col_to_fit_bust, meas['to_fit_bust']); set_val(curr_r, col_bust, meas['bust']); set_val(curr_r, col_front_len, meas['front_length'])
+   set_val(curr_r, col_to_fit_waist, meas['to_fit_waist']); set_val(curr_r, col_waist, meas['waist']); set_val(curr_r, col_to_fit_hip, meas['to_fit_hip']); set_val(curr_r, col_hip, meas['hip']); set_val(curr_r, col_inseam, meas['inseam'])
+   set_val(curr_r, col_chest, meas['chest']); set_val(curr_r, col_shoulder, meas['shoulder']); set_val(curr_r, col_outseam, meas['bottom_length'])
+   # ---- V29 Ajio error fixes ----
+   set_val(curr_r, col_to_fit_chest, meas['chest'])
+   if col_fit: set_val(curr_r, col_fit, pl_resolve_fit(info, col_fit, ai_data.get('fit_type'), sku_cat))
+   if col_length_dd: set_val(curr_r, col_length_dd, pl_resolve_length(info, col_length_dd, meas['front_length'], meas['bottom_length'], is_bottom_tpl))
+   if col_collar: set_val(curr_r, col_collar, pl_resolve_collar(info, col_collar, ai_data.get('neck_collar'), fld))
+   for idx_img, url in enumerate(img_urls):
+    if idx_img < len(img_cols): ws.cell(curr_r, img_cols[idx_img]).value = url
+   curr_r += 1; total_added += 1
+
+ ctx['fix_log'] = pl_validate_and_autofix_rows(ws, info, first_new_row, curr_r - 1)
+
+ output = io.BytesIO()
+ wb.save(output); output.seek(0)
+ return output.getvalue(), preview, total_added, info['styles_sheet']
+
+def _mime_for(name):
+ return "application/vnd.ms-excel.sheet.macroEnabled.12" if str(name).lower().endswith('.xlsm') else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+def render_convert_ui():
+ st.subheader("🔄 Convert: Amazon Vendor Central ➜ Amazon Seller Central")
+ c1, c2 = st.columns(2)
+ with c1: vc_file = st.file_uploader("1️⃣ Filled Vendor Central File (.xlsx / .xlsm):", type=["xlsx", "xlsm"], key="vc_src")
+ with c2: sc_file = st.file_uploader("2️⃣ Blank Seller Central Template (.xlsx / .xlsm):", type=["xlsx", "xlsm"], key="sc_dst")
+ parent_pos_choice = st.radio("Parent Row Position:", options=["Har Model Group ke Pehle (Recommended)", "Sabse Upar (Top Rows me)", "Sabse Niche (Bottom Rows me)"], index=0, horizontal=True)
+ pos_map = {"Har Model Group ke Pehle (Recommended)": "before_group", "Sabse Upar (Top Rows me)": "top", "Sabse Niche (Bottom Rows me)": "bottom"}
+
+ if st.button("🔄 Convert VC ➜ SC & Generate File", type="primary"):
+  if not vc_file or not sc_file: st.error("Dono files upload karein!")
+  else:
+   try:
+    ctx = {'quantity': 0, 'selling_price': '', 'mrp': '', 'sc_parent_model': '', 'parent_position': pos_map[parent_pos_choice]}
+    with st.spinner("Converting Vendor Central rows to Seller Central `Template` sheet..."):
+     out, preview, count, sheets_summary = convert_vc_to_sc(vc_file, sc_file, ctx)
+    if not count or out is None: st.warning("⚠️ VC file me koi data row nahi mili.")
+    else:
+     st.success(f"🎉 Converted **{count}** total rows into Seller Central `Template` sheet!")
+     if sheets_summary: st.dataframe(sheets_summary, use_container_width=True)
+     if preview: st.dataframe(preview, use_container_width=True)
+     base, ext = os.path.splitext(sc_file.name)
+     dl_name = f"{base}_from_VC{ext}"
+     st.download_button(f"📥 Download Converted Seller Central File ({dl_name})", data=out, file_name=dl_name, mime=_mime_for(dl_name))
+   except Exception as e:
+    st.error(f"Error: {e}")
+    with st.expander("Technical details"): st.code(traceback.format_exc())
+
+def render_listing_ui():
+ is_ajio, is_meesho = (marketplace == "Ajio"), (marketplace == "Meesho")
+ if 'pl_vision_results' not in st.session_state: st.session_state['pl_vision_results'] = {}
+ st.success(f"✨ **{marketplace} Listing Engine Active** — White-Balanced AI+Pixel Color Guard | Universal Size Chart | Auto-HSN Catch & Highlight | 350g–450g Actual & Volumetric Weight")
+
+ pl_folders, pl_zip_images, pl_size_charts = [], {}, {}
+ st.subheader("1. Product Images, SKUs & Size Chart (ZIP Upload)")
+ col_in1, col_in2 = st.columns(2)
+ with col_in1:
+  st.write("##### 📁 Product Folders Ka ZIP Upload")
+  zip_file = st.file_uploader("Product Folders (.zip):", type=["zip"], key="pl_zip_in")
+  if zip_file:
+   try:
+    folder_to_imgs, found_charts = parse_product_zip(zip_file)
+    pl_size_charts.update(found_charts)
+    pl_folders = sorted(folder_to_imgs.keys())
+    for fld in pl_folders: pl_zip_images[fld] = folder_to_imgs[fld]
+    if not pl_folders: st.warning("⚠️ ZIP me koi product folder nahi mila.")
+    else:
+     st.success(f"✅ ZIP ke andar Total **{len(pl_folders)}** Product Folders (SKUs) Detect Hue:")
+     st.code(", ".join([clean_sku_name(f) for f in pl_folders]))
+    if pl_size_charts:
+     unique_sc_names = sorted(set(v['filename'] for v in pl_size_charts.values()))
+     st.info(f"📐 **Size Chart Detected & Applied to {len(pl_size_charts)} SKUs:** `{', '.join(unique_sc_names)}`")
+    elif pl_folders:
+     st.caption("📐 ZIP me alag se size chart image nahi mili — Smart Garment Measurement Intelligence automatically use hogi.")
+   except Exception as e: st.error(f"ZIP error: {e}")
+ with col_in2:
+  st.write("##### 🌐 Live CDN & Cloud Hosting")
+  auto_cdn = st.checkbox("Images ko auto CDN links (ImgBB) me convert karein", value=True, key="pl_auto_cdn")
+  st.caption("⚡ Direct CDN Link Active: ImgBB se direct public URLs auto-generate honge.")
+
+ dropbox_url, manual_skus = "", ""
+ if not is_ajio:
+  with st.expander("📎 Optional: Dropbox Link / Manual SKUs (ZIP na ho to)"):
+   dropbox_url = st.text_input("Dropbox Shared Folder Link (Optional):", key="pl_dropbox", placeholder="https://www.dropbox.com/scl/fo/xyz/...")
+   manual_skus = st.text_area("Manual SKUs List (Agar ZIP nahi hai):", key="pl_manual_skus", placeholder="SKU-1\nSKU-2", height=90)
+
+ st.divider()
+ st.subheader("2. Marketplace Template Upload")
+ tpl_file = st.file_uploader(f"{marketplace} Template (.xlsx / .xlsm):", type=["xlsx", "xlsm"], key="pl_tpl_in")
+
+ if tpl_file and is_ajio:
+  try:
+   wb_check = openpyxl.load_workbook(tpl_file, data_only=True)
+   t_info = pl_read_and_analyze_template(wb_check)
+   tpl_file.seek(0)
+   c_t1, c_t2, c_t3 = st.columns(3)
+   with c_t1: st.metric("Target Styles Sheet", t_info['styles_sheet'])
+   with c_t2: st.metric("Template Columns", len(t_info['headers']))
+   with c_t3: st.metric("Mandatory Columns (*)", len(t_info['mandatory_cols']))
+   if t_info['category_breadcrumb']: st.info(f"📌 **Category Breadcrumb:** `{t_info['category_breadcrumb']}`")
+  except Exception as e: st.warning(f"Template parsing warning: {e}")
+
+ if tpl_file and is_meesho:
+  try:
+   wb_mcheck = openpyxl.load_workbook(tpl_file, data_only=True)
+   m_info = analyze_meesho_template(wb_mcheck)
+   tpl_file.seek(0)
+   if m_info:
+    c_m1, c_m2, c_m3 = st.columns(3)
+    with c_m1: st.metric("Meesho Template Sheet", m_info['sheet_name'])
+    with c_m2: st.metric("Total Columns", len(m_info['headers']))
+    with c_m3: st.metric("Compulsory Fields (*)", len(m_info['compulsory_cols']))
+    st.info(f"📌 **Detected Template:** `{m_info['banner']}` | **Recommended Wrong/Defective Return Price:** `Meesho Price - Rs.{m_info['rec_return_diff']}`")
+  except Exception as e: st.warning(f"Meesho template check warning: {e}")
+
+ st.divider()
+ st.subheader("3. Brand, MRP, Legal & Sizes")
+ c_b1, c_b2 = st.columns([1, 2])
+ with c_b1:
+  size_preset = st.radio("Sizes Preset Chunein (Choose Size Format):", ["Alpha Sizes (S, M, L, XL, 2XL)", "Numeric / Waist Sizes (28, 30, 32, 34, 36, 38)"], index=0, key="pl_size_preset")
+  preset_val = "S, M, L, XL, 2XL" if size_preset.startswith("Alpha") else "28, 30, 32, 34, 36, 38"
+  sizes_input = st.text_input("Sizes (comma-separated): Apne mutabiq add ya kam karein", value=preset_val, key=f"pl_sizes_{size_preset}")
+  brand_name = st.text_input("Brand Name:", value="", key="pl_brand", placeholder="e.g. Poshax / PUMA")
+  mrp_value = st.text_input("MRP (optional):", value="", key="pl_mrp", placeholder="e.g. 999 (Khali chhodne par Yellow Highlight hoga)")
+  hsn_code = st.text_input("HSN Code (optional):", value="", key="pl_hsn", placeholder="e.g. 62034200 (Khali chhodne par Auto-Catch + Yellow Highlight hoga)")
+ with c_b2:
+  mfg_address = st.text_area("Manufactured By & Marketed By (Complete Address with Pincode):", value="", key="pl_mfg", placeholder="e.g. JB Fashion, PLOT NO 41, DEVAM AMB, RING ROAD -300FTRO PARK, NEAR VEDANT EMBRO PARK, Kosad, Surat - 394107", height=130)
+  custom_keywords = st.text_area("SEO & Trending Keywords (Optional):", value="", key="pl_kw", placeholder="e.g. casual streetwear, relaxed fit, durable quality", height=70)
+
+ sc_quantity, sc_selling_price, sc_ship_template = 0, "", ""
+ meesho_return_price, meesho_gst, mp_gst = "", 5, 5
+
+ if marketplace == "Amazon - Seller Central":
+  with st.expander("🛒 Amazon Seller Central Specific Fields (AI Auto-Groups Similar Images into Color-Coded Parent 1, Parent 2...)", expanded=True):
+   c_sc1, c_sc2, c_sc3 = st.columns(3)
+   with c_sc1: sc_selling_price = st.text_input("Selling Price INR (optional):", value="", key="pl_sc_price", placeholder="e.g. 899")
+   with c_sc2: sc_quantity = st.number_input("Default Stock Quantity:", min_value=0, value=0, key="pl_sc_qty")
+   with c_sc3: sc_ship_template = st.text_input("Shipping Template:", value="", key="pl_sc_ship", placeholder="e.g. Migrated Template")
+ elif is_meesho:
+  with st.expander("🛍️ Meesho Specific Pricing & GST Fields", expanded=True):
+   cm1, cm2, cm3, cm4 = st.columns(4)
+   with cm1: sc_selling_price = st.text_input("Meesho Price (Selling Price):", value="", key="pl_meesho_price", placeholder="e.g. 499 (Blank = Yellow Highlight)")
+   with cm2: meesho_return_price = st.text_input("Wrong/Defective Return Price (Blank = Auto):", value="", key="pl_meesho_ret_price", placeholder="e.g. Auto (Meesho Price - 28/34)")
+   with cm3: meesho_gst = st.selectbox("GST %:", [5, 12, 18], index=0, key="pl_meesho_gst")
+   with cm4: sc_quantity = st.number_input("Inventory (Stock):", min_value=0, value=0, key="pl_meesho_inv")
+ elif marketplace == "Flipkart":
+  with st.expander("🟡 Flipkart Specific Pricing & Tax Fields", expanded=True):
+   cf1, cf2, cf3 = st.columns(3)
+   with cf1: sc_selling_price = st.text_input("Selling Price INR (optional):", value="", key="pl_fk_price", placeholder="e.g. 699")
+   with cf2: sc_quantity = st.number_input("Stock / Inventory Count:", min_value=0, value=0, key="pl_fk_inv")
+   with cf3: mp_gst = st.selectbox("GST %:", [5, 12, 18], index=0, key="pl_fk_gst")
+ elif marketplace == "Myntra":
+  with st.expander("🌸 Myntra Specific Pricing Field (Season, Year, Occasion & Fit Auto-Selected by AI)", expanded=True):
+   sc_selling_price = st.text_input("Article / Selling Price (optional):", value="", key="pl_my_price", placeholder="e.g. 799")
+
+ st.divider()
+
+ if st.button("🚀 Perfect Listing File Generate Karein", type="primary", key="pl_generate"):
+  manual_list = [s.strip() for s in manual_skus.split('\n') if s.strip()] if not is_ajio else []
+  if not tpl_file: st.error("Kripya Marketplace Template Excel file upload karein!")
+  elif not pl_folders and not manual_list: st.error("Kripya Product ZIP file upload karein!")
+  else:
+   sizes_list = [s.strip() for s in sizes_input.split(',') if s.strip()]
+   try:
+    tpl_file.seek(0)
+    size_chart_measurements = extract_all_size_charts_universal(pl_size_charts) if pl_size_charts else {}
+    if is_ajio:
+     ctx = {'sizes': sizes_list, 'brand': brand_name.strip(), 'mrp': mrp_value.strip(), 'mfg': mfg_address.strip(), 'hsn': hsn_code.strip(), 'keywords': custom_keywords.strip(), 'td': int(default_td), 'live_links_cache': {}, 'size_chart_urls': {}, 'size_chart_cdn_url': None, 'zip_images_data': pl_zip_images, 'size_chart_measurements': size_chart_measurements, 'vision_results': st.session_state['pl_vision_results']}
+     with st.spinner("🤖 AI Vision + White-Balance Pixel Check & CDN Upload chal raha hai..."):
+      for fld in pl_folders:
+       base_sku = pl_clean_sku_name(fld)
+       if base_sku not in ctx['vision_results'] and pl_zip_images.get(fld):
+        v_res, provider = pl_multi_ai_vision_detect(pl_zip_images[fld][0][1], pl_zip_images[fld][0][0], folder_hint=fld, all_img_tuples=pl_zip_images[fld])
+        if v_res: v_res['ai_source'] = provider; ctx['vision_results'][base_sku] = v_res
+      for fld, sc_info in pl_size_charts.items():
+       url = pl_upload_to_imgbb_cached(sc_info['bytes'], IMGBB_PERMANENT_KEY, img_cache)
+       if url:
+        ctx['size_chart_urls'][fld] = url
+        if not ctx['size_chart_cdn_url']: ctx['size_chart_cdn_url'] = url
+      for fld, img_tuples in pl_zip_images.items():
+       ctx['live_links_cache'][fld] = []
+       for iname, ibytes in img_tuples:
+        url = pl_upload_to_imgbb_cached(ibytes, IMGBB_PERMANENT_KEY, img_cache)
+        if url: ctx['live_links_cache'][fld].append(url)
+     out_bytes, preview_data, total_added, target_sheet = pl_run_perfect_ajio_listing(tpl_file, pl_zip_images, size_chart_measurements, ctx)
+     st.success(f"🎉 Listing complete! Total **{total_added}** variants add hue (`{target_sheet}`).")
+     fix_log = ctx.get('fix_log') or []
+     if fix_log:
+      bad = [x for x in fix_log if x['Result'].startswith('❌')]
+      (st.error if bad else st.info)(f"🛠️ Pre-upload check: {len(fix_log) - len(bad)} auto-fixed, {len(bad)} need manual fix (red cells in Excel).")
+      with st.expander("Validation log (Ajio upload se pehle ka check)"): st.dataframe(fix_log, use_container_width=True)
+     else:
+      st.caption("✅ Pre-upload check: sab dropdown aur mandatory fields valid hain.")
+     if preview_data: st.dataframe(preview_data, use_container_width=True)
+     base_name, ext = os.path.splitext(tpl_file.name)
+     out_ext = ext if ext.lower() in ['.xlsm', '.xlsx'] else '.xlsx'
+     out_name = f"{base_name}_PERFECT_LISTED{out_ext}"
+     st.download_button("📥 Download Filled Marketplace File", data=out_bytes, file_name=out_name, mime=_mime_for(out_name), type="primary")
+    else:
+     folders = pl_folders if pl_folders else manual_list
+     valid_keys = {clean_sku_name(f) for f in folders}
+     vr = {k: v for k, v in st.session_state.get('vision_results', {}).items() if k in valid_keys}
+     missing = {f: pl_zip_images[f] for f in pl_folders if clean_sku_name(f) not in vr and pl_zip_images.get(f)}
+     if missing:
+      with st.spinner("🤖 AI Vision + White-Balance Pixel Check scan ho raha hai..."):
+       new_res, failed = run_vision_detection(missing)
+       vr.update(new_res)
+     st.session_state['vision_results'] = vr
+
+     ctx = {'folders': folders, 'sizes': sizes_list, 'brand': brand_name.strip(), 'mrp': mrp_value.strip(), 'mfg': mfg_address.strip(), 'hsn': hsn_code.strip(), 'keywords': custom_keywords.strip(), 'dropbox': dropbox_url.strip(), 'live_links_cache': {}, 'size_chart_urls': {}, 'folder_images_count': {f: (len(pl_zip_images[f]) if f in pl_zip_images else 4) for f in folders}, 'size_chart_cdn_url': None, 'zip_images_data': pl_zip_images, 'size_chart_measurements': size_chart_measurements, 'quantity': int(sc_quantity), 'selling_price': str(sc_selling_price).strip(), 'sc_ship_template': str(sc_ship_template).strip(), 'meesho_return_price': str(meesho_return_price).strip(), 'meesho_gst': int(meesho_gst), 'mp_gst': int(mp_gst), 'td': int(default_td), 'default_category': None, 'vision_results': vr}
+
+     if auto_cdn and pl_zip_images:
+      with st.spinner("Images ko live CDN par upload kiya ja raha hai..."):
+       for fld, sc_info in pl_size_charts.items():
+        u = upload_to_imgbb_cached(sc_info['bytes'], IMGBB_PERMANENT_KEY, img_cache)
+        if u:
+         ctx['size_chart_urls'][fld] = u
+         if not ctx['size_chart_cdn_url']: ctx['size_chart_cdn_url'] = u
+       for fld, img_tuples in pl_zip_images.items():
+        ctx['live_links_cache'][fld] = []
+        for iname, ibytes in img_tuples:
+         u = upload_to_imgbb_cached(ibytes, IMGBB_PERMANENT_KEY, img_cache)
+         if u: ctx['live_links_cache'][fld].append(u)
+
+     out, preview, added = None, [], 0
+     if marketplace == "Amazon - Vendor Central":
+      out, preview, added = run_vendor_central(tpl_file, ctx)
+      st.success(f"🎉 Amazon Vendor Central template filled! Total {added} variants.")
+     elif marketplace == "Amazon - Seller Central":
+      out, preview, added = run_seller_central(tpl_file, ctx)
+      st.success(f"🎉 Amazon Seller Central template (`Template` sheet) filled! Total {added} rows.")
+     elif marketplace == "Meesho":
+      out, preview, added, m_sheet = run_meesho(tpl_file, ctx, pl_size_charts)
+      st.success(f"🎉 Meesho template (`{m_sheet}`) filled! Total **{added}** variants add hue.")
+     else:
+      out, preview, added = run_generic_marketplace(tpl_file, ctx, marketplace)
+      st.success(f"🎉 {marketplace} template filled! Total {added} variants.")
+
+     if out:
+      if preview: st.dataframe(preview, use_container_width=True)
+      base_name, ext = os.path.splitext(tpl_file.name)
+      out_ext = ext if ext.lower() in ['.xlsm', '.xlsx'] else '.xlsx'
+      dl_name = f"{base_name}_FILLED{out_ext}" if is_meesho else tpl_file.name
+      st.download_button("📥 Download Filled File", data=out, file_name=dl_name, mime=_mime_for(dl_name), type="primary")
+   except ValueError as ve: st.error(str(ve))
+   except Exception as e:
+    st.error(f"Error: {e}")
+    with st.expander("Technical details"): st.code(traceback.format_exc())
+
+if CONVERT_MODE:
+ render_convert_ui()
+else:
+ render_listing_ui()
