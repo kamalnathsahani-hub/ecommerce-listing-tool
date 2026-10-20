@@ -68,7 +68,7 @@ BRAND_CONFIGS = {
     },
     "ZURITY": {
         "tax_pct": 5.0, "margin_type": "fixed", "margin_pct": 31.0,
-        "ams_pct": 6.0, "office_exp": 40.0, "consult_pct": 5.0,
+        "ams_pct": 7.0, "office_exp": 50.0, "consult_pct": 5.0,
         "deduct_consult": True, "vendor_code": "PC9NG", "sc_code": "GZEZ"
     },
     "URBAN": {
