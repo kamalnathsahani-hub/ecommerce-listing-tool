@@ -59,7 +59,7 @@ BRAND_CONFIGS = {
     "QNIM": {
         "tax_pct": 5.0, "margin_type": "fixed", "margin_pct": 30.0,
         "ams_pct": 4.0, "office_exp": 40.0, "consult_pct": 5.0,
-        "deduct_consult": True, "vendor_code": "", "sc_code": "QNIM"
+        "deduct_consult": True, "vendor_code": "KR8S7", "sc_code": "GCYB"
     },
     "WEREFLEX": {
         "tax_pct": 5.0, "margin_type": "fixed", "margin_pct": 30.0,
