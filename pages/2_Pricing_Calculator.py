@@ -16,7 +16,8 @@ SECRET_PASSWORD = "MYSECRET123"
 if not st.session_state.get("pricing_access", False):
     st.warning("🔒 Ye tool private hai. Isey use karne ke liye Access Code dalein.")
     
-    pwd = st.text_input("Enter Access Code:", type="password")
+    # autocomplete="off" lagane se Chrome strong password generate nahi karega
+    pwd = st.text_input("Enter Access Code:", type="password", autocomplete="off")
     col_btn1, col_btn2 = st.columns([1, 5])
     with col_btn1:
         if st.button("Unlock Tool 🔓", use_container_width=True):
