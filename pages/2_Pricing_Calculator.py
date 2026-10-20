@@ -45,7 +45,7 @@ with top_col2:
         st.rerun()
 
 st.title("💰 Multi-Brand Pricing & Amazon TP Calculator")
-st.caption("Auto-calculate ASP for ~10% Goal Margin | Live Formula Calculator Sheet + Vendor Cost & DF Attributes Master")
+st.caption("Auto-calculate ASP for >=10% Goal Margin | Live Formula Calculator Sheet + Vendor Cost & DF Attributes Master")
 
 # ==========================================
 # 1. BRAND PRESET CONFIGURATIONS
@@ -134,7 +134,7 @@ with col_b2:
     st.info(f"🏢 **Codes Auto-Selected:**\n- `vendor_code`: **{target_vendor_code or 'N/A'}**\n- `sc_vendor_name`: **{target_sc_vendor_str}**")
 
 with col_b3:
-    target_goal_pct = st.number_input("🎯 Target Goal Margin %", value=10.0, step=0.5, format="%.2f")
+    target_goal_pct = st.number_input("🎯 Target Minimum Margin %", value=10.0, step=0.5, format="%.2f")
 
 st.markdown("##### ⚙️ Brand Parameters:")
 p_col1, p_col2, p_col3, p_col4, p_col5, p_col6 = st.columns(6)
@@ -216,7 +216,7 @@ def get_margin_pct_for_asp(asp, slab_info):
             return slab_info["s1"]
     return 0.30
 
-def calculate_row_metrics(asp, cost, tax_r, slab_info, ams_r, off_exp, cons_r, deduct_c):
+def calculate_row_metrics(asp, cost, tax_r, slab_info, ams_r, off_exp, cons_r, deduct_c, goal_pct=10.0):
     asp_wo_tax = asp / (1.0 + tax_r)
     m_pct = get_margin_pct_for_asp(asp, slab_info)
     margin_val = asp_wo_tax * m_pct
@@ -234,7 +234,7 @@ def calculate_row_metrics(asp, cost, tax_r, slab_info, ams_r, off_exp, cons_r, d
     else:
         margin_pct_final = round((final_profit / final_tp) * 100.0, 2) if final_tp > 0 else 0.0
         
-    status = "OK" if margin_pct_final >= 10.0 else "LOW"
+    status = "OK" if margin_pct_final >= goal_pct else "LOW"
     return {
         "ASP": asp,
         "Product Cost": cost,
@@ -255,17 +255,28 @@ def calculate_row_metrics(asp, cost, tax_r, slab_info, ams_r, off_exp, cons_r, d
     }
 
 def find_best_asp(cost, tax_r, slab_info, ams_r, off_exp, cons_r, deduct_c, endings, goal_pct=10.0):
-    candidates = []
+    valid_candidates = []
+    all_candidates = []
     for base in range(100, 9900, 100):
         for end in endings:
             cand_asp = base + end
-            res = calculate_row_metrics(cand_asp, cost, tax_r, slab_info, ams_r, off_exp, cons_r, deduct_c)
+            res = calculate_row_metrics(cand_asp, cost, tax_r, slab_info, ams_r, off_exp, cons_r, deduct_c, goal_pct)
             m_pct = res["Margin %"]
             diff = abs(m_pct - goal_pct)
-            candidates.append((diff, m_pct >= goal_pct, cand_asp, res))
+            all_candidates.append((diff, cand_asp, res))
+            
+            # Condition: Margin % hamesha goal_pct (10%) ya usse upar hona chahiye
+            if m_pct >= goal_pct:
+                valid_candidates.append((m_pct - goal_pct, cand_asp, res))
     
-    candidates.sort(key=lambda x: x[0])
-    return candidates[0][3]
+    if valid_candidates:
+        # Jo >= goal_pct me goal ke sabse kareeb ho use pick karein
+        valid_candidates.sort(key=lambda x: (x[0], x[1]))
+        return valid_candidates[0][2]
+    
+    # Fallback agar koi bhi candidate >= goal_pct na mile
+    all_candidates.sort(key=lambda x: x[0])
+    return all_candidates[0][2]
 
 # ==========================================
 # 4. EXCEL WORKBOOK GENERATORS
@@ -386,12 +397,12 @@ def generate_calculator_workbook(df_results, brand_name, tax_r, slab_info, ams_r
         ws.cell(r, 13, f'=IF(OR($B{r}="",$C{r}=""),"",ROUND(H{r}*$B$8,2))')
         ws.cell(r, 14, f'=IF(OR($B{r}="",$C{r}=""),"",L{r}-M{r})')
         
-        if deduct_consult:
+        if deduct_c:
             ws.cell(r, 15, f'=IF(OR($B{r}="",$C{r}=""),"",N{r}/H{r}*100)')
         else:
             ws.cell(r, 15, f'=IF(OR($B{r}="",$C{r}=""),"",L{r}/H{r}*100)')
             
-        ws.cell(r, 16, f'=IF(OR($B{r}="",$C{r}=""),"",IF(O{r}>=10,"OK","LOW"))')
+        ws.cell(r, 16, f'=IF(OR($B{r}="",$C{r}=""),"",IF(ROUND(O{r},2)>=10,"OK","LOW"))')
 
         if slab_info["type"] == "slab_3":
             ws.cell(r, 17, f'=IF(OR($B{r}="",$C{r}=""),"",IF($B{r}>=$F$7,$G$7,IF($B{r}>=$F$6,$G$6,$G$5)))')
@@ -695,7 +706,8 @@ with tab1:
                         ams_r=ams_pct,
                         off_exp=office_exp,
                         cons_r=consult_pct,
-                        deduct_c=deduct_consult
+                        deduct_c=deduct_consult,
+                        goal_pct=target_goal_pct
                     )
                     final_rows.append({
                         "ASIN": r["ASIN"],
@@ -757,19 +769,19 @@ with tab2:
 
     rc1, rc2, rc3 = st.columns(3)
     with rc1:
-        test_cost = st.number_input("Enter Product Cost (₹)", value=205.0, step=5.0)
+        test_cost = st.number_input("Enter Product Cost (₹)", value=280.0, step=5.0)
     with rc2:
         auto_best = find_best_asp(
             test_cost, tax_pct, slab_params, ams_pct, office_exp, consult_pct, deduct_consult, allowed_endings, target_goal_pct
         )
         test_asp = st.number_input(
-            f"ASP (Auto-picked for ~{target_goal_pct}% Margin: ₹{auto_best['ASP']})",
+            f"ASP (Auto-picked for >={target_goal_pct}% Margin: ₹{auto_best['ASP']})",
             value=int(auto_best["ASP"]),
             step=10
         )
     with rc3:
         test_res = calculate_row_metrics(
-            test_asp, test_cost, tax_pct, slab_params, ams_pct, office_exp, consult_pct, deduct_consult
+            test_asp, test_cost, tax_pct, slab_params, ams_pct, office_exp, consult_pct, deduct_consult, target_goal_pct
         )
         st.metric(
             label="Final Cost (Amazon TP) [2 Decimals]",
