@@ -2283,8 +2283,7 @@ def render_convert_ui():
                     if preview: st.dataframe(preview, use_container_width=True)
                     base, ext = os.path.splitext(sc_file.name)
                     dl_name = f"{base}_from_VC{ext}"
-                    st.download_button(f"📥 Download Converted Seller Central File ({dl_name})", data=out, file_name=dl_name, mime=_mime
-                    st.download_button(f"📥 Download Converted Seller Central File ({dl_name})", data=out, file_name=dl_name, mime=_mime_for(dl_name))
+                    st.download_button(f"📥 Download Converted Seller Central File ({dl_name})", data=out, file_name=dl_name, mime=_mime                    st.download_button(f"📥 Download Converted Seller Central File ({dl_name})", data=out, file_name=dl_name, mime=_mime_for(dl_name))
             except Exception as e:
                 st.error(f"Error: {e}")
                 with st.expander("Technical details"): st.code(traceback.format_exc())
