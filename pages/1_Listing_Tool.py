@@ -2284,3 +2284,206 @@ def render_convert_ui():
                     base, ext = os.path.splitext(sc_file.name)
                     dl_name = f"{base}_from_VC{ext}"
                     st.download_button(f"📥 Download Converted Seller Central File ({dl_name})", data=out, file_name=dl_name, mime=_mime
+                    st.download_button(f"📥 Download Converted Seller Central File ({dl_name})", data=out, file_name=dl_name, mime=_mime_for(dl_name))
+            except Exception as e:
+                st.error(f"Error: {e}")
+                with st.expander("Technical details"): st.code(traceback.format_exc())
+
+def render_listing_ui():
+    is_ajio, is_meesho = (marketplace == "Ajio"), (marketplace == "Meesho")
+    if 'pl_vision_results' not in st.session_state: st.session_state['pl_vision_results'] = {}
+    st.success(f"✨ **{marketplace} Listing Engine Active** — Dropdown-Safe AI Vision | Universal Size Chart | Auto-HSN Highlight | 350g–450g Weight")
+
+    pl_folders, pl_zip_images, pl_size_charts = [], {}, {}
+    st.subheader("1. Product Images, SKUs & Size Chart (ZIP Upload)")
+    col_in1, col_in2 = st.columns(2)
+    with col_in1:
+        st.write("##### 📁 Product Folders Ka ZIP Upload")
+        zip_file = st.file_uploader("Product Folders (.zip):", type=["zip"], key="pl_zip_in")
+        if zip_file:
+            try:
+                folder_to_imgs, found_charts = parse_product_zip(zip_file)
+                pl_size_charts.update(found_charts)
+                pl_folders = sorted(folder_to_imgs.keys())
+                for fld in pl_folders: pl_zip_images[fld] = folder_to_imgs[fld]
+                if not pl_folders: st.warning("⚠️ ZIP me koi product folder nahi mila.")
+                else:
+                    st.success(f"✅ ZIP ke andar Total **{len(pl_folders)}** Product Folders (SKUs) Detect Hue:")
+                    st.code(", ".join([clean_sku_name(f) for f in pl_folders]))
+                if pl_size_charts:
+                    unique_sc_names = sorted(set(v['filename'] for v in pl_size_charts.values()))
+                    st.info(f"📐 **Size Chart Detected & Applied to {len(pl_size_charts)} SKUs:** `{', '.join(unique_sc_names)}`")
+                elif pl_folders:
+                    st.caption("📐 ZIP me alag se size chart image nahi mili — Smart Garment Measurement Intelligence automatically use hogi.")
+            except Exception as e: st.error(f"ZIP error: {e}")
+    with col_in2:
+        st.write("##### 🌐 Live CDN & Cloud Hosting")
+        auto_cdn = st.checkbox("Images ko auto CDN links (ImgBB) me convert karein", value=True, key="pl_auto_cdn")
+        st.caption("⚡ Direct CDN Link Active: ImgBB se direct public URLs auto-generate honge.")
+
+    dropbox_url, manual_skus = "", ""
+    if not is_ajio:
+        with st.expander("📎 Optional: Dropbox Link / Manual SKUs (ZIP na ho to)"):
+            dropbox_url = st.text_input("Dropbox Shared Folder Link (Optional):", key="pl_dropbox", placeholder="https://www.dropbox.com/scl/fo/xyz/...")
+            manual_skus = st.text_area("Manual SKUs List (Agar ZIP nahi hai):", key="pl_manual_skus", placeholder="SKU-1\nSKU-2", height=90)
+
+    st.divider()
+    st.subheader("2. Marketplace Template Upload")
+    tpl_file = st.file_uploader(f"{marketplace} Template (.xlsx / .xlsm):", type=["xlsx", "xlsm"], key="pl_tpl_in")
+
+    if tpl_file and is_ajio:
+        try:
+            wb_check = openpyxl.load_workbook(tpl_file, data_only=True)
+            t_info = pl_read_and_analyze_template(wb_check)
+            tpl_file.seek(0)
+            c_t1, c_t2, c_t3 = st.columns(3)
+            with c_t1: st.metric("Target Styles Sheet", t_info['styles_sheet'])
+            with c_t2: st.metric("Template Columns", len(t_info['headers']))
+            with c_t3: st.metric("Mandatory Columns (*)", len(t_info['mandatory_cols']))
+            if t_info['category_breadcrumb']: st.info(f"📌 **Category Breadcrumb:** `{t_info['category_breadcrumb']}`")
+        except Exception as e: st.warning(f"Template parsing warning: {e}")
+
+    if tpl_file and is_meesho:
+        try:
+            wb_mcheck = openpyxl.load_workbook(tpl_file, data_only=True)
+            m_info = analyze_meesho_template(wb_mcheck)
+            tpl_file.seek(0)
+            if m_info:
+                c_m1, c_m2, c_m3 = st.columns(3)
+                with c_m1: st.metric("Meesho Template Sheet", m_info['sheet_name'])
+                with c_m2: st.metric("Total Columns", len(m_info['headers']))
+                with c_m3: st.metric("Compulsory Fields (*)", len(m_info['compulsory_cols']))
+                st.info(f"📌 **Detected Template:** `{m_info['banner']}` | **Recommended Wrong/Defective Return Price:** `Meesho Price - Rs.{m_info['rec_return_diff']}`")
+        except Exception as e: st.warning(f"Meesho template check warning: {e}")
+
+    st.divider()
+    st.subheader("3. Brand, MRP, Legal & Sizes")
+    c_b1, c_b2 = st.columns([1, 2])
+    with c_b1:
+        size_preset = st.radio("Sizes Preset Chunein (Choose Size Format):", ["Alpha Sizes (S, M, L, XL, 2XL)", "Numeric / Waist Sizes (28, 30, 32, 34, 36, 38)"], index=0, key="pl_size_preset")
+        preset_val = "S, M, L, XL, 2XL" if size_preset.startswith("Alpha") else "28, 30, 32, 34, 36, 38"
+        sizes_input = st.text_input("Sizes (comma-separated):", value=preset_val, key=f"pl_sizes_{size_preset}")
+        brand_name = st.text_input("Brand Name:", value="", key="pl_brand", placeholder="e.g. Poshax / PUMA")
+        mrp_value = st.text_input("MRP (optional):", value="", key="pl_mrp", placeholder="e.g. 999 (Blank = Yellow Highlight)")
+        hsn_code = st.text_input("HSN Code (optional):", value="", key="pl_hsn", placeholder="e.g. 62034200 (Blank = Auto-Catch + Highlight)")
+    with c_b2:
+        mfg_address = st.text_area("Manufactured By & Marketed By (Complete Address with Pincode):", value="", key="pl_mfg", placeholder="e.g. JB Fashion, PLOT NO 41, DEVAM AMB, Surat - 394107", height=130)
+        custom_keywords = st.text_area("SEO & Trending Keywords (Optional):", value="", key="pl_kw", placeholder="e.g. casual streetwear, relaxed fit", height=70)
+
+    sc_quantity, sc_selling_price, sc_ship_template = 0, "", ""
+    meesho_return_price, meesho_gst, mp_gst = "", 5, 5
+
+    if marketplace == "Amazon - Seller Central":
+        with st.expander("🛒 Amazon Seller Central Specific Fields", expanded=True):
+            c_sc1, c_sc2, c_sc3 = st.columns(3)
+            with c_sc1: sc_selling_price = st.text_input("Selling Price INR (optional):", value="", key="pl_sc_price")
+            with c_sc2: sc_quantity = st.number_input("Default Stock Quantity:", min_value=0, value=0, key="pl_sc_qty")
+            with c_sc3: sc_ship_template = st.text_input("Shipping Template:", value="", key="pl_sc_ship", placeholder="e.g. Migrated Template")
+    elif is_meesho:
+        with st.expander("🛍️ Meesho Specific Pricing & GST Fields", expanded=True):
+            cm1, cm2, cm3, cm4 = st.columns(4)
+            with cm1: sc_selling_price = st.text_input("Meesho Price (Selling Price):", value="", key="pl_meesho_price")
+            with cm2: meesho_return_price = st.text_input("Wrong/Defective Return Price (Blank = Auto):", value="", key="pl_meesho_ret_price")
+            with cm3: meesho_gst = st.selectbox("GST %:", [5, 12, 18], index=0, key="pl_meesho_gst")
+            with cm4: sc_quantity = st.number_input("Inventory (Stock):", min_value=0, value=0, key="pl_meesho_inv")
+    elif marketplace == "Flipkart":
+        with st.expander("🟡 Flipkart Specific Pricing & Tax Fields", expanded=True):
+            cf1, cf2, cf3 = st.columns(3)
+            with cf1: sc_selling_price = st.text_input("Selling Price INR (optional):", value="", key="pl_fk_price")
+            with cf2: sc_quantity = st.number_input("Stock / Inventory Count:", min_value=0, value=0, key="pl_fk_inv")
+            with cf3: mp_gst = st.selectbox("GST %:", [5, 12, 18], index=0, key="pl_fk_gst")
+    elif marketplace == "Myntra":
+        with st.expander("🌸 Myntra Specific Pricing Field", expanded=True):
+            sc_selling_price = st.text_input("Article / Selling Price (optional):", value="", key="pl_my_price")
+
+    st.divider()
+
+    if st.button("🚀 Perfect Listing File Generate Karein", type="primary", key="pl_generate"):
+        manual_list = [s.strip() for s in manual_skus.split('\n') if s.strip()] if not is_ajio else []
+        if not tpl_file: st.error("Kripya Marketplace Template Excel file upload karein!")
+        elif not pl_folders and not manual_list: st.error("Kripya Product ZIP file upload karein!")
+        else:
+            sizes_list = [s.strip() for s in sizes_input.split(',') if s.strip()]
+            try:
+                tpl_file.seek(0)
+                size_chart_measurements = extract_all_size_charts_universal(pl_size_charts) if pl_size_charts else {}
+                if is_ajio:
+                    ctx = {'sizes': sizes_list, 'brand': brand_name.strip(), 'mrp': mrp_value.strip(), 'mfg': mfg_address.strip(), 'hsn': hsn_code.strip(), 'keywords': custom_keywords.strip(), 'td': int(default_td), 'live_links_cache': {}, 'size_chart_urls': {}, 'size_chart_cdn_url': None, 'zip_images_data': pl_zip_images, 'size_chart_measurements': size_chart_measurements, 'vision_results': st.session_state['pl_vision_results']}
+                    with st.spinner("🤖 AI Vision + Universal Dropdown Alignment chal raha hai..."):
+                        for fld in pl_folders:
+                            base_sku = pl_clean_sku_name(fld)
+                            if base_sku not in ctx['vision_results'] and pl_zip_images.get(fld):
+                                v_res, provider = pl_multi_ai_vision_detect(pl_zip_images[fld][0][1], pl_zip_images[fld][0][0], folder_hint=fld, all_img_tuples=pl_zip_images[fld])
+                                if v_res: v_res['ai_source'] = provider; ctx['vision_results'][base_sku] = v_res
+                        for fld, sc_info in pl_size_charts.items():
+                            url = pl_upload_to_imgbb_cached(sc_info['bytes'], IMGBB_PERMANENT_KEY, img_cache)
+                            if url:
+                                ctx['size_chart_urls'][fld] = url
+                                if not ctx['size_chart_cdn_url']: ctx['size_chart_cdn_url'] = url
+                        for fld, img_tuples in pl_zip_images.items():
+                            ctx['live_links_cache'][fld] = []
+                            for iname, ibytes in img_tuples:
+                                url = pl_upload_to_imgbb_cached(ibytes, IMGBB_PERMANENT_KEY, img_cache)
+                                if url: ctx['live_links_cache'][fld].append(url)
+                    out_bytes, preview_data, total_added, target_sheet = pl_run_perfect_ajio_listing(tpl_file, pl_zip_images, size_chart_measurements, ctx)
+                    st.success(f"🎉 Listing complete! Total **{total_added}** variants add hue (`{target_sheet}`).")
+                    if preview_data: st.dataframe(preview_data, use_container_width=True)
+                    base_name, ext = os.path.splitext(tpl_file.name)
+                    out_ext = ext if ext.lower() in ['.xlsm', '.xlsx'] else '.xlsx'
+                    out_name = f"{base_name}_PERFECT_LISTED{out_ext}"
+                    st.download_button("📥 Download Filled Marketplace File", data=out_bytes, file_name=out_name, mime=_mime_for(out_name), type="primary")
+                else:
+                    folders = pl_folders if pl_folders else manual_list
+                    valid_keys = {clean_sku_name(f) for f in folders}
+                    vr = {k: v for k, v in st.session_state.get('vision_results', {}).items() if k in valid_keys}
+                    missing = {f: pl_zip_images[f] for f in pl_folders if clean_sku_name(f) not in vr and pl_zip_images.get(f)}
+                    if missing:
+                        with st.spinner("🤖 AI Vision scanning..."):
+                            new_res, failed = run_vision_detection(missing)
+                            vr.update(new_res)
+                    st.session_state['vision_results'] = vr
+
+                    ctx = {'folders': folders, 'sizes': sizes_list, 'brand': brand_name.strip(), 'mrp': mrp_value.strip(), 'mfg': mfg_address.strip(), 'hsn': hsn_code.strip(), 'keywords': custom_keywords.strip(), 'dropbox': dropbox_url.strip(), 'live_links_cache': {}, 'size_chart_urls': {}, 'folder_images_count': {f: (len(pl_zip_images[f]) if f in pl_zip_images else 4) for f in folders}, 'size_chart_cdn_url': None, 'zip_images_data': pl_zip_images, 'size_chart_measurements': size_chart_measurements, 'quantity': int(sc_quantity), 'selling_price': str(sc_selling_price).strip(), 'sc_ship_template': str(sc_ship_template).strip(), 'meesho_return_price': str(meesho_return_price).strip(), 'meesho_gst': int(meesho_gst), 'mp_gst': int(mp_gst), 'td': int(default_td), 'default_category': None, 'vision_results': vr}
+
+                    if auto_cdn and pl_zip_images:
+                        with st.spinner("Images ko live CDN par upload kiya ja raha hai..."):
+                            for fld, sc_info in pl_size_charts.items():
+                                u = upload_to_imgbb_cached(sc_info['bytes'], IMGBB_PERMANENT_KEY, img_cache)
+                                if u:
+                                    ctx['size_chart_urls'][fld] = u
+                                    if not ctx['size_chart_cdn_url']: ctx['size_chart_cdn_url'] = u
+                            for fld, img_tuples in pl_zip_images.items():
+                                ctx['live_links_cache'][fld] = []
+                                for iname, ibytes in img_tuples:
+                                    u = upload_to_imgbb_cached(ibytes, IMGBB_PERMANENT_KEY, img_cache)
+                                    if u: ctx['live_links_cache'][fld].append(u)
+
+                    out, preview, added = None, [], 0
+                    if marketplace == "Amazon - Vendor Central":
+                        out, preview, added = run_vendor_central(tpl_file, ctx)
+                        st.success(f"🎉 Amazon Vendor Central template filled! Total {added} variants.")
+                    elif marketplace == "Amazon - Seller Central":
+                        out, preview, added = run_seller_central(tpl_file, ctx)
+                        st.success(f"🎉 Amazon Seller Central template filled! Total {added} rows.")
+                    elif marketplace == "Meesho":
+                        out, preview, added, m_sheet = run_meesho(tpl_file, ctx, pl_size_charts)
+                        st.success(f"🎉 Meesho template (`{m_sheet}`) filled! Total **{added}** variants add hue.")
+                    else:
+                        out, preview, added = run_generic_marketplace(tpl_file, ctx, marketplace)
+                        st.success(f"🎉 {marketplace} template filled! Total {added} variants.")
+
+                    if out:
+                        if preview: st.dataframe(preview, use_container_width=True)
+                        base_name, ext = os.path.splitext(tpl_file.name)
+                        out_ext = ext if ext.lower() in ['.xlsm', '.xlsx'] else '.xlsx'
+                        dl_name = f"{base_name}_FILLED{out_ext}" if is_meesho else tpl_file.name
+                        st.download_button("📥 Download Filled File", data=out, file_name=dl_name, mime=_mime_for(dl_name), type="primary")
+            except ValueError as ve: st.error(str(ve))
+            except Exception as e:
+                st.error(f"Error: {e}")
+                with st.expander("Technical details"): st.code(traceback.format_exc())
+
+if CONVERT_MODE:
+    render_convert_ui()
+else:
+    render_listing_ui()
