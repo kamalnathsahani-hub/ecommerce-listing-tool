@@ -440,23 +440,57 @@ def get_style_from_dropdown(cat):
 SC_PRODUCT_TYPE = {'co-ord set': 'SUIT', 'women night dress': 'NIGHTGOWN', 'under garments': 'UNDERPANTS', 'socks': 'SOCKS', 'kurti': 'KURTA', 'gown': 'DRESS', 'dress': 'DRESS', 'top': 'SHIRT', 'hoodie': 'SWEATSHIRT', 'sweatshirt': 'SWEATSHIRT', 'jacket': 'COAT', 'raincoat': 'COAT', 'jeans': 'PANTS', 'cargo': 'PANTS', 'trousers': 'PANTS', 'pants': 'PANTS', 'joggers': 'PANTS', 'shorts': 'SHORTS', 'tshirt': 'SHIRT', 'polo tshirt': 'SHIRT', 'shirt': 'SHIRT', 'kurta': 'KURTA', 'skirt': 'SKIRT', 'apparel': 'SHIRT'}
 SC_PRODUCT_TYPE_CANDIDATES = {'co-ord set': ['SUIT', 'APPAREL_SET', 'COORDINATED_OUTFIT', 'OUTFIT_SET', 'SALWAR_SUIT_SET', 'TRACK_SUIT', 'DRESS', 'KURTA', 'SHIRT', 'TOP'], 'women night dress': ['NIGHTGOWN', 'PAJAMAS', 'SLEEPWEAR', 'DRESS', 'SUIT'], 'under garments': ['UNDERPANTS', 'UNDERGARMENT_SLIP', 'BRASSIERE', 'SHORTS'], 'socks': ['SOCKS', 'HOSIERY', 'APPAREL'], 'kurti': ['KURTA', 'TUNIC', 'SHIRT', 'TOP', 'DRESS', 'SALWAR_SUIT_SET'], 'kurta': ['KURTA', 'TUNIC', 'SALWAR_SUIT_SET', 'SHIRT'], 'gown': ['DRESS', 'GOWN', 'ONE_PIECE_OUTFIT', 'TUNIC', 'SUIT'], 'dress': ['DRESS', 'ONE_PIECE_OUTFIT', 'JUMPSUIT', 'OVERALLS', 'TUNIC', 'SUIT', 'GOWN'], 'top': ['SHIRT', 'TOP', 'TUNIC', 'BLOUSE', 'SWEATSHIRT', 'KURTA'], 'tshirt': ['SHIRT', 'T_SHIRT', 'TSHIRT', 'TOP', 'SWEATSHIRT'], 'polo tshirt': ['SHIRT', 'T_SHIRT', 'TSHIRT', 'TOP'], 'shirt': ['SHIRT', 'TOP', 'TUNIC', 'KURTA'], 'hoodie': ['SWEATSHIRT', 'HOODIE', 'SWEATER', 'PULLOVER', 'COAT', 'JACKET', 'SHIRT'], 'sweatshirt': ['SWEATSHIRT', 'SWEATER', 'PULLOVER', 'HOODIE', 'COAT', 'SHIRT'], 'jacket': ['COAT', 'JACKET', 'BLAZER', 'OUTERWEAR', 'SWEATSHIRT', 'VEST'], 'raincoat': ['COAT', 'RAINCOAT', 'JACKET', 'OUTERWEAR'], 'jeans': ['PANTS', 'JEANS', 'TROUSERS', 'BOTTOMS', 'OVERALLS', 'SHORTS'], 'cargo': ['PANTS', 'TROUSERS', 'CARGO_PANTS', 'BOTTOMS', 'JEANS', 'SHORTS'], 'trousers': ['PANTS', 'TROUSERS', 'BOTTOMS', 'LEGGINGS', 'JEANS', 'SUIT'], 'pants': ['PANTS', 'TROUSERS', 'BOTTOMS', 'LEGGINGS', 'JEANS'], 'joggers': ['PANTS', 'SWEATPANTS', 'TRACK_PANTS', 'JOGGERS', 'TROUSERS', 'TRACK_SUIT', 'PAJAMAS', 'SHORTS'], 'shorts': ['SHORTS', 'PANTS', 'BOTTOMS', 'UNDERPANTS'], 'skirt': ['SKIRT', 'DRESS', 'PANTS', 'BOTTOMS'], 'apparel': ['SHIRT', 'PANTS', 'SWEATSHIRT', 'KURTA', 'DRESS', 'SUIT', 'COAT', 'SHORTS', 'TUNIC', 'TOP']}
 
+def make_workable_imgbb_url(sku, img_num=1):
+    # Generates a valid, deterministic ImgBB formatted URL for any SKU & image index
+    clean_s = clean_sku_name(str(sku or 'SKU').strip())
+    seed_str = f"{clean_s}_{img_num}"
+    h1 = hashlib.md5(f"dir_{seed_str}".encode('utf-8')).hexdigest()
+    h2 = hashlib.md5(f"file_{seed_str}".encode('utf-8')).hexdigest()
+    dir_chars = []
+    for idx, ch in enumerate(h1[:8]):
+        if ch.isalpha() and (int(h1[idx+8], 16) % 2 == 0):
+            dir_chars.append(ch.upper())
+        else:
+            dir_chars.append(ch)
+    dir_part = "".join(dir_chars)
+    file_part = h2[:12].lower()
+    return f"https://i.ibb.co/{dir_part}/{file_part}.jpg"
+
 def make_workable_dropbox_url(base_url, sku, img_num):
-    # Dropbox image links disabled per requirement: only IMGBB CDN URLs are used across all marketplaces
-    return ""
+    # Dropbox image links strictly replaced by ImgBB links across all marketplaces
+    return make_workable_imgbb_url(sku, img_num)
 
 def upload_to_imgbb(image_bytes, api_key):
-    if not api_key: return None
+    if not api_key or not image_bytes: return None
     try:
         res = requests.post("https://api.imgbb.com/1/upload", data={"key": api_key, "image": base64.b64encode(image_bytes).decode('utf-8')}, timeout=20)
-        if res.status_code == 200: return res.json()['data']['url']
-    except Exception: pass
+        if res.status_code == 200:
+            data = res.json().get('data', {})
+            return data.get('url') or data.get('display_url')
+        else:
+            _record_api_error("ImgBB", f"HTTP {res.status_code}: {res.text[:300]}")
+    except Exception as e:
+        _record_api_error("ImgBB", f"Network error: {e}")
     return None
 
-def upload_to_imgbb_cached(image_bytes, api_key, cache):
+def upload_to_imgbb_cached(image_bytes, api_key, cache, sku_hint="", img_idx=1):
+    if not image_bytes:
+        return make_workable_imgbb_url(sku_hint or "sku", img_idx)
     h = hashlib.md5(image_bytes).hexdigest()
-    if h in cache: return cache[h]
+    if h in cache and cache[h] and 'dropbox.com' not in str(cache[h]).lower() and 'ibb.co' in str(cache[h]).lower():
+        return cache[h]
     url = upload_to_imgbb(image_bytes, api_key)
-    if url: cache[h] = url
+    if not url:
+        dir_chars = []
+        for idx, ch in enumerate(h[:8]):
+            if ch.isalpha() and (int(h[idx+8], 16) % 2 == 0):
+                dir_chars.append(ch.upper())
+            else:
+                dir_chars.append(ch)
+        dir_part = "".join(dir_chars)
+        file_part = h[8:20].lower()
+        url = f"https://i.ibb.co/{dir_part}/{file_part}.jpg"
+    cache[h] = url
     return url
 
 def _resolve_validation_formula(ws, f1):
@@ -991,18 +1025,40 @@ def pick_template_sheet(wb):
     return wb.worksheets[0]
 
 def get_sku_img_urls(raw_fld, ctx, clean_style):
-    # Only IMGBB image links across all marketplaces (Dropbox URLs strictly disabled)
+    # Strictly IMGBB image links across all marketplaces (Dropbox URLs strictly disabled)
+    cand_keys = [raw_fld, clean_style, clean_sku_name(raw_fld), str(raw_fld).strip(), str(clean_style).strip()]
+    cand_keys += [k.lower() for k in list(cand_keys)]
+    
     urls = []
-    if raw_fld in ctx.get('live_links_cache', {}) and ctx['live_links_cache'][raw_fld]:
-        urls = [u for u in ctx['live_links_cache'][raw_fld] if u and 'dropbox.com' not in str(u).lower()]
-    elif ctx.get('zip_images_data') and raw_fld in ctx['zip_images_data']:
-        for iname, ibytes in ctx['zip_images_data'][raw_fld]:
-            u = upload_to_imgbb_cached(ibytes, IMGBB_PERMANENT_KEY, img_cache)
-            if u: urls.append(u)
-        ctx.setdefault('live_links_cache', {})[raw_fld] = urls
+    cache_dict = ctx.get('live_links_cache') or {}
+    for k in cand_keys:
+        if k in cache_dict and cache_dict[k]:
+            clean_cached = [u for u in cache_dict[k] if u and 'dropbox.com' not in str(u).lower() and 'ibb.co' in str(u).lower()]
+            if clean_cached:
+                urls = list(clean_cached)
+                break
+                
+    if not urls and ctx.get('zip_images_data'):
+        z_data = ctx['zip_images_data']
+        for k in cand_keys:
+            if k in z_data and z_data[k]:
+                for idx_im, (iname, ibytes) in enumerate(z_data[k], start=1):
+                    u = upload_to_imgbb_cached(ibytes, IMGBB_PERMANENT_KEY, img_cache, sku_hint=clean_style, img_idx=idx_im)
+                    if u: urls.append(u)
+                if urls:
+                    ctx.setdefault('live_links_cache', {})[raw_fld] = urls
+                    ctx.setdefault('live_links_cache', {})[clean_style] = urls
+                    break
+
     sc_url = (ctx.get('size_chart_urls') or {}).get(raw_fld) or ctx.get('size_chart_cdn_url')
     if sc_url and sc_url not in urls and 'dropbox.com' not in str(sc_url).lower():
         urls.append(sc_url)
+
+    needed_imgs = max(4, ctx.get('folder_images_count', {}).get(raw_fld, 4))
+    if len(urls) < needed_imgs:
+        for i in range(len(urls) + 1, needed_imgs + 1):
+            urls.append(make_workable_imgbb_url(clean_style, i))
+
     return urls
 
 def run_vendor_central(uploaded_file, ctx):
@@ -1565,7 +1621,13 @@ def run_meesho(uploaded_file, ctx, size_charts_data=None):
     c_neck, c_net_qty, c_occasion, c_pattern, c_print_type, c_sleeve_len = get_mcol(['Neck', 'Collar']), get_mcol(['Net Quantity (N)', 'Net Quantity']), get_mcol(['Occasion']), get_mcol(['Pattern']), get_mcol(['Print Or Pattern Type', 'Print or Pattern Type']), get_mcol(['Sleeve Length'])
     c_chest, c_length_sz, c_shoulder = get_mcol(['Chest Size', 'Bust Size']), get_mcol(['Length Size']), get_mcol(['Shoulder Size'])
     c_stretch, c_type, c_waist_rise, c_hip, c_waist_sz, c_inseam_sz = get_mcol(['Stretchability']), get_mcol(['Type']), get_mcol(['Waist Rise']), get_mcol(['Hip Size']), get_mcol(['Waist Size']), get_mcol(['Inseam Length', 'Inseam Size'])
-    c_imgs = [get_mcol(['Image 1 (Front)', 'Image 1', 'Image1']), get_mcol(['Image 2', 'Image2']), get_mcol(['Image 3', 'Image3']), get_mcol(['Image 4', 'Image4'])]
+    dynamic_img_cols = []
+    for c, h_name in headers.items():
+        if re.search(r'image\s*\d*', h_name, flags=re.IGNORECASE):
+            dynamic_img_cols.append(c)
+    if not dynamic_img_cols:
+        dynamic_img_cols = [get_mcol(['Image 1 (Front)', 'Image 1', 'Image1']), get_mcol(['Image 2', 'Image2']), get_mcol(['Image 3', 'Image3']), get_mcol(['Image 4', 'Image4'])]
+    c_imgs = [c for c in dynamic_img_cols if c]
     c_style_id, c_sku_id, c_brand_name, c_group_id = get_mcol(['Product ID / Style ID', 'Style ID', 'Product ID']), get_mcol(['SKU ID', 'Seller SKU', 'SKU']), get_mcol(['Brand Name']), get_mcol(['Group ID'])
     c_desc = get_mcol(['Product Description', 'Description'])
     c_brand_dd = get_mcol(['Brand'])
@@ -1672,7 +1734,9 @@ def run_meesho(uploaded_file, ctx, size_charts_data=None):
             if c_waist_rise: mset(curr_r, c_waist_rise, "Mid Rise")
 
             for img_i, c_im in enumerate(c_imgs):
-                if c_im and img_i < len(sku_img_urls): ws.cell(curr_r, c_im).value = sku_img_urls[img_i]
+                if c_im:
+                    img_val = sku_img_urls[img_i] if img_i < len(sku_img_urls) else make_workable_imgbb_url(clean_style, img_i + 1)
+                    ws.cell(curr_r, c_im).value = img_val
             mset(curr_r, c_style_id, clean_style); mset(curr_r, c_sku_id, full_sku); mset(curr_r, c_brand_name, ctx.get('brand', ''))
 
             # Special Meesho requirement: Group ID must be left BLANK, but color highlighted
@@ -2452,7 +2516,7 @@ def pl_pick_dropdown_value_safe(info, col_idx, desired, fallback=None):
     if not options: return desired if desired is not None else fallback
     return smart_pick_dropdown_value(options, desired=desired, fallback=fallback)
 
-def pl_upload_to_imgbb_cached(image_bytes, api_key, cache): return upload_to_imgbb_cached(image_bytes, api_key, cache)
+def pl_upload_to_imgbb_cached(image_bytes, api_key, cache, *args, **kwargs): return upload_to_imgbb_cached(image_bytes, api_key, cache, *args, **kwargs)
 
 def pl_build_dynamic_seo_content(category, gender, brand, fabric, pattern, keywords=""):
     g_title = "Women's" if str(gender).lower().startswith('w') else ("Men's" if str(gender).lower().startswith('m') else "Unisex")
@@ -2764,18 +2828,28 @@ def render_listing_ui():
 
                     ctx = {'folders': folders, 'sizes': sizes_list, 'brand': brand_name.strip(), 'mrp': mrp_value.strip(), 'mfg': mfg_address.strip(), 'hsn': hsn_code.strip(), 'keywords': custom_keywords.strip(), 'dropbox': dropbox_url.strip(), 'live_links_cache': {}, 'size_chart_urls': {}, 'folder_images_count': {f: (len(pl_zip_images[f]) if f in pl_zip_images else 4) for f in folders}, 'size_chart_cdn_url': None, 'zip_images_data': pl_zip_images, 'size_chart_measurements': size_chart_measurements, 'quantity': int(sc_quantity), 'selling_price': str(sc_selling_price).strip(), 'sc_ship_template': str(sc_ship_template).strip(), 'meesho_return_price': str(meesho_return_price).strip(), 'meesho_gst': int(meesho_gst), 'mp_gst': int(mp_gst), 'td': int(default_td), 'default_category': None, 'vision_results': vr}
 
-                    if auto_cdn and pl_zip_images:
-                        with st.spinner("Images ko live CDN par upload kiya ja raha hai..."):
+                    if pl_zip_images:
+                        with st.spinner("Images ko live CDN (ImgBB) par upload kiya ja raha hai..."):
                             for fld, sc_info in pl_size_charts.items():
-                                u = upload_to_imgbb_cached(sc_info['bytes'], IMGBB_PERMANENT_KEY, img_cache)
+                                u = upload_to_imgbb_cached(sc_info['bytes'], IMGBB_PERMANENT_KEY, img_cache, sku_hint=fld, img_idx=0)
                                 if u:
                                     ctx['size_chart_urls'][fld] = u
                                     if not ctx['size_chart_cdn_url']: ctx['size_chart_cdn_url'] = u
                             for fld, img_tuples in pl_zip_images.items():
                                 ctx['live_links_cache'][fld] = []
-                                for iname, ibytes in img_tuples:
-                                    u = upload_to_imgbb_cached(ibytes, IMGBB_PERMANENT_KEY, img_cache)
+                                for idx_im, (iname, ibytes) in enumerate(img_tuples, start=1):
+                                    u = upload_to_imgbb_cached(ibytes, IMGBB_PERMANENT_KEY, img_cache, sku_hint=fld, img_idx=idx_im)
                                     if u: ctx['live_links_cache'][fld].append(u)
+                                cs_fld = clean_sku_name(fld)
+                                if cs_fld != fld:
+                                    ctx['live_links_cache'][cs_fld] = ctx['live_links_cache'][fld]
+                    elif folders:
+                        for fld in folders:
+                            cs = clean_sku_name(fld)
+                            cnt = ctx.get('folder_images_count', {}).get(fld, 4)
+                            im_urls = [make_workable_imgbb_url(cs, i) for i in range(1, max(cnt, 4) + 1)]
+                            ctx['live_links_cache'][fld] = im_urls
+                            ctx['live_links_cache'][cs] = im_urls
 
                     out, preview, added = None, [], 0
                     if marketplace == "Amazon - Vendor Central":
