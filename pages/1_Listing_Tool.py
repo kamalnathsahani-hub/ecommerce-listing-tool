@@ -441,8 +441,8 @@ SC_PRODUCT_TYPE = {'co-ord set': 'SUIT', 'women night dress': 'NIGHTGOWN', 'unde
 SC_PRODUCT_TYPE_CANDIDATES = {'co-ord set': ['SUIT', 'APPAREL_SET', 'COORDINATED_OUTFIT', 'OUTFIT_SET', 'SALWAR_SUIT_SET', 'TRACK_SUIT', 'DRESS', 'KURTA', 'SHIRT', 'TOP'], 'women night dress': ['NIGHTGOWN', 'PAJAMAS', 'SLEEPWEAR', 'DRESS', 'SUIT'], 'under garments': ['UNDERPANTS', 'UNDERGARMENT_SLIP', 'BRASSIERE', 'SHORTS'], 'socks': ['SOCKS', 'HOSIERY', 'APPAREL'], 'kurti': ['KURTA', 'TUNIC', 'SHIRT', 'TOP', 'DRESS', 'SALWAR_SUIT_SET'], 'kurta': ['KURTA', 'TUNIC', 'SALWAR_SUIT_SET', 'SHIRT'], 'gown': ['DRESS', 'GOWN', 'ONE_PIECE_OUTFIT', 'TUNIC', 'SUIT'], 'dress': ['DRESS', 'ONE_PIECE_OUTFIT', 'JUMPSUIT', 'OVERALLS', 'TUNIC', 'SUIT', 'GOWN'], 'top': ['SHIRT', 'TOP', 'TUNIC', 'BLOUSE', 'SWEATSHIRT', 'KURTA'], 'tshirt': ['SHIRT', 'T_SHIRT', 'TSHIRT', 'TOP', 'SWEATSHIRT'], 'polo tshirt': ['SHIRT', 'T_SHIRT', 'TSHIRT', 'TOP'], 'shirt': ['SHIRT', 'TOP', 'TUNIC', 'KURTA'], 'hoodie': ['SWEATSHIRT', 'HOODIE', 'SWEATER', 'PULLOVER', 'COAT', 'JACKET', 'SHIRT'], 'sweatshirt': ['SWEATSHIRT', 'SWEATER', 'PULLOVER', 'HOODIE', 'COAT', 'SHIRT'], 'jacket': ['COAT', 'JACKET', 'BLAZER', 'OUTERWEAR', 'SWEATSHIRT', 'VEST'], 'raincoat': ['COAT', 'RAINCOAT', 'JACKET', 'OUTERWEAR'], 'jeans': ['PANTS', 'JEANS', 'TROUSERS', 'BOTTOMS', 'OVERALLS', 'SHORTS'], 'cargo': ['PANTS', 'TROUSERS', 'CARGO_PANTS', 'BOTTOMS', 'JEANS', 'SHORTS'], 'trousers': ['PANTS', 'TROUSERS', 'BOTTOMS', 'LEGGINGS', 'JEANS', 'SUIT'], 'pants': ['PANTS', 'TROUSERS', 'BOTTOMS', 'LEGGINGS', 'JEANS'], 'joggers': ['PANTS', 'SWEATPANTS', 'TRACK_PANTS', 'JOGGERS', 'TROUSERS', 'TRACK_SUIT', 'PAJAMAS', 'SHORTS'], 'shorts': ['SHORTS', 'PANTS', 'BOTTOMS', 'UNDERPANTS'], 'skirt': ['SKIRT', 'DRESS', 'PANTS', 'BOTTOMS'], 'apparel': ['SHIRT', 'PANTS', 'SWEATSHIRT', 'KURTA', 'DRESS', 'SUIT', 'COAT', 'SHORTS', 'TUNIC', 'TOP']}
 
 def make_workable_dropbox_url(base_url, sku, img_num):
-    if not base_url: return f"https://www.dropbox.com/s/{sku}/{img_num}.jpg?raw=1"
-    return f"{base_url.split('?')[0].rstrip('/')}/{sku}/{img_num}.jpg?raw=1"
+    # Dropbox image links disabled per requirement: only IMGBB CDN URLs are used across all marketplaces
+    return ""
 
 def upload_to_imgbb(image_bytes, api_key):
     if not api_key: return None
@@ -991,13 +991,18 @@ def pick_template_sheet(wb):
     return wb.worksheets[0]
 
 def get_sku_img_urls(raw_fld, ctx, clean_style):
-    if raw_fld in ctx['live_links_cache'] and ctx['live_links_cache'][raw_fld]:
-        urls = list(ctx['live_links_cache'][raw_fld])
-    else:
-        cnt = ctx['folder_images_count'].get(raw_fld, 5)
-        urls = [make_workable_dropbox_url(ctx['dropbox'], clean_style, i) for i in range(1, cnt + 1)]
+    # Only IMGBB image links across all marketplaces (Dropbox URLs strictly disabled)
+    urls = []
+    if raw_fld in ctx.get('live_links_cache', {}) and ctx['live_links_cache'][raw_fld]:
+        urls = [u for u in ctx['live_links_cache'][raw_fld] if u and 'dropbox.com' not in str(u).lower()]
+    elif ctx.get('zip_images_data') and raw_fld in ctx['zip_images_data']:
+        for iname, ibytes in ctx['zip_images_data'][raw_fld]:
+            u = upload_to_imgbb_cached(ibytes, IMGBB_PERMANENT_KEY, img_cache)
+            if u: urls.append(u)
+        ctx.setdefault('live_links_cache', {})[raw_fld] = urls
     sc_url = (ctx.get('size_chart_urls') or {}).get(raw_fld) or ctx.get('size_chart_cdn_url')
-    if sc_url and sc_url not in urls: urls.append(sc_url)
+    if sc_url and sc_url not in urls and 'dropbox.com' not in str(sc_url).lower():
+        urls.append(sc_url)
     return urls
 
 def run_vendor_central(uploaded_file, ctx):
@@ -1515,11 +1520,20 @@ def _infer_meesho_garment_attributes(raw_fld, clean_style, cat, det_gen, det_col
 
     brand_str = f"{ctx['brand']} " if ctx.get('brand') else ""
     g_title, cat_label = ("Women's" if det_gen == "Women" else "Men's"), CATEGORY_LABELS.get(cat, "Casual Wear")
-    if cat == 'shirt': product_name = f"{brand_str}{g_title} {title_desc} Shirt".strip() if 'Double-Breasted' in title_desc else f"{brand_str}{g_title} {title_desc} {title_sleeve} Shirt".strip()
-    elif cat in ('trousers', 'cargo', 'joggers', 'jeans', 'shorts'):
-        fit_word = "Cargo" if cat == 'cargo' else ("Jogger" if cat == 'joggers' else "Regular Fit")
-        product_name = f"{brand_str}{g_title} {meesho_pattern} {fit_word} {cat_label}".strip()
-    else: product_name = f"{brand_str}{g_title} {title_desc} {cat_label}".strip()
+    if cat == 'shirt':
+        product_name = f"{brand_str}{g_title} {title_desc} Shirt".strip() if 'Double-Breasted' in title_desc else f"{brand_str}{g_title} {title_desc} {title_sleeve} Shirt".strip()
+    elif cat == 'cargo':
+        product_name = f"{brand_str}{g_title} {meesho_pattern} Cargo Pants".strip()
+    elif cat == 'joggers':
+        product_name = f"{brand_str}{g_title} {meesho_pattern} Jogger Pants".strip()
+    elif cat == 'jeans':
+        product_name = f"{brand_str}{g_title} {meesho_pattern} Relaxed Fit Jeans".strip()
+    elif cat == 'shorts':
+        product_name = f"{brand_str}{g_title} {meesho_pattern} Casual Shorts".strip()
+    elif cat in ('trousers', 'pants'):
+        product_name = f"{brand_str}{g_title} {meesho_pattern} Casual Trousers".strip()
+    else:
+        product_name = f"{brand_str}{g_title} {title_desc} {cat_label}".strip()
     return {'product_name': re.sub(r'\s+', ' ', product_name).strip(), 'color': meesho_color_desired, 'fabric': meesho_fabric, 'pattern': meesho_pattern, 'print_type': meesho_print_type, 'neck': meesho_neck, 'sleeve_length': meesho_sleeve}
 
 def run_meesho(uploaded_file, ctx, size_charts_data=None):
@@ -1553,7 +1567,10 @@ def run_meesho(uploaded_file, ctx, size_charts_data=None):
     c_stretch, c_type, c_waist_rise, c_hip, c_waist_sz, c_inseam_sz = get_mcol(['Stretchability']), get_mcol(['Type']), get_mcol(['Waist Rise']), get_mcol(['Hip Size']), get_mcol(['Waist Size']), get_mcol(['Inseam Length', 'Inseam Size'])
     c_imgs = [get_mcol(['Image 1 (Front)', 'Image 1', 'Image1']), get_mcol(['Image 2', 'Image2']), get_mcol(['Image 3', 'Image3']), get_mcol(['Image 4', 'Image4'])]
     c_style_id, c_sku_id, c_brand_name, c_group_id = get_mcol(['Product ID / Style ID', 'Style ID', 'Product ID']), get_mcol(['SKU ID', 'Seller SKU', 'SKU']), get_mcol(['Brand Name']), get_mcol(['Group ID'])
+    c_desc = get_mcol(['Product Description', 'Description'])
+    c_brand_dd = get_mcol(['Brand'])
     c_distress, c_hemline, c_length_opt, c_pockets, c_sleeve_style, c_waist_closure = get_mcol(['Distress']), get_mcol(['Hemline']), get_mcol(['Length']), get_mcol(['Number of Pockets']), get_mcol(['Sleeve Styling']), get_mcol(['Waist closure', 'Waist Closure'])
+    c_style_opt = get_mcol(['Style'])
 
     def mset(row_idx, col_idx, val, fill=None, font=None):
         if not col_idx: return
@@ -1604,9 +1621,10 @@ def run_meesho(uploaded_file, ctx, size_charts_data=None):
         sku_img_urls = get_sku_img_urls(raw_fld, ctx, clean_style)
         weight_val = get_smart_weight_and_dims(cat)['item_wt']
         hsn_desired, hsn_is_auto = resolve_hsn_with_flag(ctx.get('hsn'), cat, raw_fld)
-        generic_desired = "Trousers" if cat in ('trousers', 'cargo', 'joggers', 'pants') else ("Shirts" if cat == 'shirt' else CATEGORY_LABELS.get(cat, "Shirts"))
+        generic_desired = "Bottom Wear" if (c_waist_sz or cat in ('trousers', 'cargo', 'joggers', 'jeans', 'pants')) else ("Shirts" if cat == 'shirt' else CATEGORY_LABELS.get(cat, "Shirts"))
+        bullets_list, desc_text = build_freehand_bullets_and_desc(cat, ctx.get('brand', ''), det_gen, attrs['fabric'])
 
-        preview.append({'Sheet': ws.title, 'Product ID / Style ID': clean_style, 'Group ID': group_id_val, 'Product Name': attrs['product_name'], 'Color': smart_pick_dropdown_value(dropdown_map.get(c_color), attrs['color'], "Black"), 'HSN': f"{hsn_desired} (Auto-Highlighted)" if hsn_is_auto else hsn_desired, 'Weight (g)': weight_val, 'Size Chart Used': 'Yes (ZIP)' if sc_data else 'Smart Auto', 'Meesho Price': meesho_price_val or 'Highlight'})
+        preview.append({'Sheet': ws.title, 'Product ID / Style ID': clean_style, 'Group ID': 'Blank (Highlighted - Manual Pending)', 'Product Name': attrs['product_name'], 'Color': smart_pick_dropdown_value(dropdown_map.get(c_color), attrs['color'], "Black"), 'HSN': f"{hsn_desired} (Auto-Highlighted)" if hsn_is_auto else hsn_desired, 'Weight (g)': weight_val, 'Size Chart Used': 'Yes (ZIP)' if sc_data else 'Smart Auto', 'Meesho Price': meesho_price_val or 'Highlight'})
 
         for sz in ctx['sizes']:
             clean_sz = clean_sku_name(sz)
@@ -1655,15 +1673,46 @@ def run_meesho(uploaded_file, ctx, size_charts_data=None):
 
             for img_i, c_im in enumerate(c_imgs):
                 if c_im and img_i < len(sku_img_urls): ws.cell(curr_r, c_im).value = sku_img_urls[img_i]
-            mset(curr_r, c_style_id, clean_style); mset(curr_r, c_sku_id, full_sku); mset(curr_r, c_brand_name, ctx.get('brand', '')); mset(curr_r, c_group_id, group_id_val)
+            mset(curr_r, c_style_id, clean_style); mset(curr_r, c_sku_id, full_sku); mset(curr_r, c_brand_name, ctx.get('brand', ''))
+
+            # Special Meesho requirement: Group ID must be left BLANK, but color highlighted
+            if c_group_id:
+                ws.cell(curr_r, c_group_id).value = None
+                ws.cell(curr_r, c_group_id).fill = HIGHLIGHT_FILL
+                ws.cell(curr_r, c_group_id).font = HIGHLIGHT_FONT
+
+            if c_desc: mset(curr_r, c_desc, desc_text)
+            if c_brand_dd and ctx.get('brand'):
+                b_opts = dropdown_map.get(c_brand_dd, [])
+                matched_b = next((o for o in b_opts if str(o).strip().lower() == ctx['brand'].strip().lower()), None)
+                if matched_b: ws.cell(curr_r, c_brand_dd).value = matched_b
 
             if c_hemline: mset(curr_r, c_hemline, "Straight")
             if c_length_opt: mset(curr_r, c_length_opt, "Full Length" if is_bottom_sheet else "Regular")
-            if c_pockets: mset(curr_r, c_pockets, 2 if is_bottom_sheet else 1)
+            if c_pockets:
+                fld_low = f"{raw_fld} {clean_style}".lower()
+                if cat == 'cargo':
+                    p_cnt = '6' if any(k in fld_low for k in ['6-pocket', '6pocket', '6 pocket', 'six', '6p']) else '4'
+                elif cat == 'jeans':
+                    p_cnt = '5'
+                elif cat in ('trousers', 'pants'):
+                    p_cnt = '4'
+                elif cat == 'joggers':
+                    p_cnt = '2'
+                elif cat == 'shirt':
+                    p_cnt = '1'
+                else:
+                    p_cnt = '2' if is_bottom_sheet else '1'
+                mset(curr_r, c_pockets, p_cnt)
             if c_sleeve_style: mset(curr_r, c_sleeve_style, "Regular")
             if c_stretch: mset(curr_r, c_stretch, "No")
             if c_distress: mset(curr_r, c_distress, "Not Applicable")
-            if c_waist_closure: mset(curr_r, c_waist_closure, "Drawstring" if cat == 'joggers' else "Button")
+            if c_waist_closure:
+                mset(curr_r, c_waist_closure, "Drawstring" if cat in ('cargo', 'joggers') else "Button")
+            if c_style_opt:
+                fld_low = f"{raw_fld} {clean_style}".lower()
+                if 'korean' in fld_low: mset(curr_r, c_style_opt, "Korean")
+                elif 'japanese' in fld_low: mset(curr_r, c_style_opt, "Japanese")
             curr_r += 1; total_added += 1
 
     output = io.BytesIO()
