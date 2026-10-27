@@ -19,8 +19,8 @@ def _get_secret(name, default=""):
 
 # IMPORTANT: API keys must NOT be hard-coded in source code.
 # Put them in .streamlit/secrets.toml or environment variables.
-IMGBB_PERMANENT_KEY = _get_secret("IMGBB_API_KEY")
-GEMINI_API_KEY = _get_secret("GEMINI_API_KEY")
+IMGBB_PERMANENT_KEY = _get_secret("86fc928d36f7cdff5eac1656b544ed1d")
+GEMINI_API_KEY = _get_secret("AQ.Ab8RN6KFDAb6XSOoMHnV3aQO32woDihVjPGAD4OJUT2rNl2QSg")
 GEMINI_VISION_MODEL = _get_secret("GEMINI_VISION_MODEL", "gemini-2.0-flash")
 NVIDIA_API_KEY = _get_secret("NVIDIA_API_KEY")
 NVIDIA_MODEL = _get_secret("NVIDIA_MODEL", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning")
