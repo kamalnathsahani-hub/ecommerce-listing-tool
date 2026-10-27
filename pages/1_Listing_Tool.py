@@ -10,17 +10,74 @@ if st.button("⬅️ Back to Home"): st.switch_page("app.py")
 st.title("📦 Multi-Marketplace Auto Listing Generator (Universal Pro V28 - Unified Dashboard)")
 st.caption("Ajio | Amazon VC | VC➜SC | Amazon SC | Flipkart | Meesho | Myntra + 🤖 AI Vision, Smart Size Chart & HSN Auto-Highlight")
 
+def _load_local_secrets_fallback():
+    # Streamlit secrets.toml direct file loader fallback
+    # Useful if app runs from pages/ directory or st.secrets fails
+    sec_map = {}
+    candidate_paths = [
+        os.path.join(os.getcwd(), ".streamlit", "secrets.toml"),
+        os.path.join(os.getcwd(), "secrets.toml"),
+        os.path.join(os.path.dirname(__file__), ".streamlit", "secrets.toml") if "__file__" in globals() else "",
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), ".streamlit", "secrets.toml") if "__file__" in globals() else "",
+        os.path.expanduser("~/.streamlit/secrets.toml"),
+    ]
+    for p in candidate_paths:
+        if p and os.path.isfile(p):
+            try:
+                try:
+                    import tomllib
+                    with open(p, "rb") as f:
+                        sec_map.update(tomllib.load(f))
+                except Exception:
+                    with open(p, "r", encoding="utf-8") as f:
+                        for line in f:
+                            if "=" in line and not line.strip().startswith("#"):
+                                k, _, v = line.partition("=")
+                                sec_map[k.strip()] = v.strip().strip('"').strip("'")
+                if sec_map:
+                    break
+            except Exception:
+                pass
+    return sec_map
+
 def _get_secret(name, default=""):
+    # 1. Check st.secrets (Streamlit Cloud Dashboard / standard .streamlit/secrets.toml)
     try:
-        val = st.secrets[name]
+        if name in st.secrets:
+            val = st.secrets[name]
+            if val not in (None, ""):
+                return str(val).strip()
+        for k in st.secrets:
+            if str(k).strip().upper() == name.strip().upper():
+                val = st.secrets[k]
+                if val not in (None, ""):
+                    return str(val).strip()
     except Exception:
-        val = os.environ.get(name, default)
-    return str(val or default).strip()
+        pass
+
+    # 2. Check environment variables
+    for env_k in [name, name.upper(), name.lower()]:
+        env_val = os.environ.get(env_k)
+        if env_val not in (None, ""):
+            return str(env_val).strip()
+
+    # 3. Direct disk fallback for .streamlit/secrets.toml
+    try:
+        fallback_map = _load_local_secrets_fallback()
+        if name in fallback_map and fallback_map[name]:
+            return str(fallback_map[name]).strip()
+        for k, v in fallback_map.items():
+            if str(k).strip().upper() == name.strip().upper() and v:
+                return str(v).strip()
+    except Exception:
+        pass
+
+    return str(default or "").strip()
 
 # IMPORTANT: API keys must NOT be hard-coded in source code.
-# Put them in .streamlit/secrets.toml or environment variables.
-IMGBB_PERMANENT_KEY = _get_secret("86fc928d36f7cdff5eac1656b544ed1d")
-GEMINI_API_KEY = _get_secret("AQ.Ab8RN6KFDAb6XSOoMHnV3aQO32woDihVjPGAD4OJUT2rNl2QSg")
+# Put them in .streamlit/secrets.toml or Streamlit Cloud Settings > Secrets.
+IMGBB_PERMANENT_KEY = _get_secret("IMGBB_API_KEY")
+GEMINI_API_KEY = _get_secret("GEMINI_API_KEY")
 GEMINI_VISION_MODEL = _get_secret("GEMINI_VISION_MODEL", "gemini-2.0-flash")
 NVIDIA_API_KEY = _get_secret("NVIDIA_API_KEY")
 NVIDIA_MODEL = _get_secret("NVIDIA_MODEL", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning")
@@ -493,7 +550,7 @@ def upload_to_imgbb(image_bytes, api_key):
     if not image_bytes:
         return None
     keys_to_try = []
-    for k in [api_key, IMGBB_PERMANENT_KEY, "5faf7edf23f5135e5262c1895d456c6d"]:
+    for k in [api_key, IMGBB_PERMANENT_KEY]:
         k_clean = str(k or "").strip()
         if k_clean and k_clean not in keys_to_try:
             keys_to_try.append(k_clean)
