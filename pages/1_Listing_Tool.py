@@ -89,8 +89,7 @@ def _get_secret(name, default=""):
 
     return str(default or "").strip()
 
-# IMPORTANT: API keys must NOT be hard-coded in source code.
-# Put them in .streamlit/secrets.toml or Streamlit Cloud Settings > Secrets.
+# Initialize API keys with safe fallbacks (supports secrets.toml, env vars, UI overrides, or direct values)
 IMGBB_API_KEY = "c1a1f1d4df03d1a387d00a3a4068b2c7"
 GEMINI_API_KEY = "AQ.Ab8RN6Jlzt18BNR25TTv1tDClL0Dpy6dhqLrTHyVLpkKxnvjtg"
 GEMINI_VISION_MODEL = "gemini-2.0-flash"
@@ -98,6 +97,10 @@ NVIDIA_API_KEY = "nvapi-fp4EBzhEIIQoNQVB3ne_K9FNpp-UUCNT34CzG8Vp2_k7mstlTXrB4b-C
 NVIDIA_MODEL = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
 GROQ_API_KEY = "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"
 GROQ_VISION_MODEL = "llama-3.2-11b-vision-preview"
+
+# Ensure aliases are also defined in globals
+IMGBB_API_KEY = IMGBB_PERMANENT_KEY
+
 MP_LIST = ["Ajio", "Amazon - Vendor Central", "Convert: Vendor Central ➜ Seller Central", "Amazon - Seller Central", "Flipkart", "Meesho", "Myntra"]
 if st.session_state.get("pl_mp_sel", "Ajio") == "Ajio":
     col_m1, col_m2 = st.columns([2, 1])
@@ -112,7 +115,14 @@ st.divider()
 CONVERT_MODE = marketplace.startswith("Convert:")
 
 _api_errors = st.session_state.setdefault("api_errors", {})
-_missing_keys = [n for n, v in [("IMGBB_API_KEY", IMGBB_PERMANENT_KEY), ("GEMINI_API_KEY", GEMINI_API_KEY), ("NVIDIA_API_KEY", NVIDIA_API_KEY), ("GROQ_API_KEY", GROQ_API_KEY)] if not v]
+_missing_keys = [
+    n for n, v in [
+        ("IMGBB_API_KEY", globals().get("IMGBB_PERMANENT_KEY") or globals().get("IMGBB_API_KEY")),
+        ("GEMINI_API_KEY", globals().get("GEMINI_API_KEY")),
+        ("NVIDIA_API_KEY", globals().get("NVIDIA_API_KEY")),
+        ("GROQ_API_KEY", globals().get("GROQ_API_KEY")),
+    ] if not v
+]
 
 # Only show missing API keys warning if NOT in Convert mode (Convert mode doesn't need AI/ImgBB!)
 if _missing_keys and not CONVERT_MODE:
