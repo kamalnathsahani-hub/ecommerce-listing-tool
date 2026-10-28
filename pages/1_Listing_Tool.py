@@ -76,13 +76,13 @@ def _get_secret(name, default=""):
 
 # IMPORTANT: API keys must NOT be hard-coded in source code.
 # Put them in .streamlit/secrets.toml or Streamlit Cloud Settings > Secrets.
-IMGBB_PERMANENT_KEY = _get_secret("IMGBB_API_KEY")
-GEMINI_API_KEY = _get_secret("GEMINI_API_KEY")
-GEMINI_VISION_MODEL = _get_secret("GEMINI_VISION_MODEL", "gemini-2.0-flash")
-NVIDIA_API_KEY = _get_secret("NVIDIA_API_KEY")
-NVIDIA_MODEL = _get_secret("NVIDIA_MODEL", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning")
-GROQ_API_KEY = _get_secret("GROQ_API_KEY")
-GROQ_VISION_MODEL = _get_secret("GROQ_VISION_MODEL", "llama-3.2-11b-vision-preview")
+IMGBB_PERMANENT_KEY = "c1a1f1d4df03d1a387d00a3a4068b2c7"
+GEMINI_API_KEY = "AQ.Ab8RN6Jlzt18BNR25TTv1tDClL0Dpy6dhqLrTHyVLpkKxnvjtg"
+GEMINI_VISION_MODEL = "gemini-2.0-flash"
+NVIDIA_API_KEY = "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"
+NVIDIA_MODEL = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+GROQ_API_KEY = "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"
+GROQ_VISION_MODEL = "llama-3.2-11b-vision-preview"
 
 _api_errors = st.session_state.setdefault("api_errors", {})
 _missing_keys = [n for n, v in [("IMGBB_API_KEY", IMGBB_PERMANENT_KEY), ("GEMINI_API_KEY", GEMINI_API_KEY), ("NVIDIA_API_KEY", NVIDIA_API_KEY), ("GROQ_API_KEY", GROQ_API_KEY)] if not v]
