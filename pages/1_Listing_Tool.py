@@ -91,13 +91,13 @@ def _get_secret(name, default=""):
 
 # IMPORTANT: API keys must NOT be hard-coded in source code.
 # Put them in .streamlit/secrets.toml or Streamlit Cloud Settings > Secrets.
-IMGBB_PERMANENT_KEY = _get_secret("c1a1f1d4df03d1a387d00a3a4068b2c7")
-GEMINI_API_KEY = _get_secret("AQ.Ab8RN6Jlzt18BNR25TTv1tDClL0Dpy6dhqLrTHyVLpkKxnvjtg")
-GEMINI_VISION_MODEL = _get_secret("GEMINI_VISION_MODEL", "gemini-2.0-flash")
-NVIDIA_API_KEY = _get_secret("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")
-NVIDIA_MODEL = _get_secret("NVIDIA_MODEL", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning")
-GROQ_API_KEY = _get_secret("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")
-GROQ_VISION_MODEL = _get_secret("GROQ_VISION_MODEL", "llama-3.2-11b-vision-preview")
+IMGBB_PERMANENT_KEY = _get_secret"c1a1f1d4df03d1a387d00a3a4068b2c7"
+GEMINI_API_KEY = _get_secret"AQ.Ab8RN6Jlzt18BNR25TTv1tDClL0Dpy6dhqLrTHyVLpkKxnvjtg"
+GEMINI_VISION_MODEL = _get_secret"GEMINI_VISION_MODEL", "gemini-2.0-flash"
+NVIDIA_API_KEY = _get_secret"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"
+NVIDIA_MODEL = _get_secret"NVIDIA_MODEL", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+GROQ_API_KEY = _get_secret"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"
+GROQ_VISION_MODEL = _get_secret"GROQ_VISION_MODEL", "llama-3.2-11b-vision-preview"
 
 MP_LIST = ["Ajio", "Amazon - Vendor Central", "Convert: Vendor Central ➜ Seller Central", "Amazon - Seller Central", "Flipkart", "Meesho", "Myntra"]
 if st.session_state.get("pl_mp_sel", "Ajio") == "Ajio":
