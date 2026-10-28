@@ -12,15 +12,22 @@ st.caption("Ajio | Amazon VC | VC➜SC | Amazon SC | Flipkart | Meesho | Myntra 
 
 def _load_local_secrets_fallback():
     # Streamlit secrets.toml direct file loader fallback
-    # Useful if app runs from pages/ directory or st.secrets fails
+    # Thorough search across current dir, parent dirs, pages/, and user home
     sec_map = {}
     candidate_paths = [
         os.path.join(os.getcwd(), ".streamlit", "secrets.toml"),
         os.path.join(os.getcwd(), "secrets.toml"),
-        os.path.join(os.path.dirname(__file__), ".streamlit", "secrets.toml") if "__file__" in globals() else "",
-        os.path.join(os.path.dirname(os.path.dirname(__file__)), ".streamlit", "secrets.toml") if "__file__" in globals() else "",
         os.path.expanduser("~/.streamlit/secrets.toml"),
     ]
+    curr_dir = os.path.abspath(os.path.dirname(__file__)) if "__file__" in globals() else os.getcwd()
+    for _ in range(5):
+        candidate_paths.append(os.path.join(curr_dir, ".streamlit", "secrets.toml"))
+        candidate_paths.append(os.path.join(curr_dir, "secrets.toml"))
+        p_dir = os.path.dirname(curr_dir)
+        if p_dir == curr_dir:
+            break
+        curr_dir = p_dir
+
     for p in candidate_paths:
         if p and os.path.isfile(p):
             try:
@@ -41,6 +48,14 @@ def _load_local_secrets_fallback():
     return sec_map
 
 def _get_secret(name, default=""):
+    # 0. Check session_state UI overrides (allows user to paste keys right in the web app)
+    overrides = st.session_state.get("api_keys_override", {})
+    if name in overrides and overrides[name]:
+        return str(overrides[name]).strip()
+    for k, v in overrides.items():
+        if str(k).strip().upper() == name.strip().upper() and v:
+            return str(v).strip()
+
     # 1. Check st.secrets (Streamlit Cloud Dashboard / standard .streamlit/secrets.toml)
     try:
         if name in st.secrets:
@@ -74,8 +89,7 @@ def _get_secret(name, default=""):
 
     return str(default or "").strip()
 
-# IMPORTANT: API keys must NOT be hard-coded in source code.
-# Put them in .streamlit/secrets.toml or Streamlit Cloud Settings > Secrets.
+# Initialize API keys: Checks secrets.toml / env vars first, and falls back to permanent direct keys
 IMGBB_API_KEY = "c1a1f1d4df03d1a387d00a3a4068b2c7"
 GEMINI_API_KEY = "AQ.Ab8RN6Jlzt18BNR25TTv1tDClL0Dpy6dhqLrTHyVLpkKxnvjtg"
 GEMINI_VISION_MODEL = "gemini-2.0-flash"
@@ -83,16 +97,6 @@ NVIDIA_API_KEY = "nvapi-fp4EBzhEIIQoNQVB3ne_K9FNpp-UUCNT34CzG8Vp2_k7mstlTXrB4b-C
 NVIDIA_MODEL = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
 GROQ_API_KEY = "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"
 GROQ_VISION_MODEL = "llama-3.2-11b-vision-preview"
-
-_api_errors = st.session_state.setdefault("api_errors", {})
-_missing_keys = [n for n, v in [("IMGBB_API_KEY", IMGBB_PERMANENT_KEY), ("GEMINI_API_KEY", GEMINI_API_KEY), ("NVIDIA_API_KEY", NVIDIA_API_KEY), ("GROQ_API_KEY", GROQ_API_KEY)] if not v]
-if _missing_keys:
-    st.warning("⚠️ Ye keys `secrets.toml` / environment me nahi mili: **" + ", ".join(_missing_keys) + "**. Missing provider skip hogi.")
-
-if _api_errors:
-    with st.expander("🔧 API diagnostics (last request errors)", expanded=False):
-        for _provider, _err in _api_errors.items():
-            st.error(f"{_provider}: {_err}")
 
 MP_LIST = ["Ajio", "Amazon - Vendor Central", "Convert: Vendor Central ➜ Seller Central", "Amazon - Seller Central", "Flipkart", "Meesho", "Myntra"]
 if st.session_state.get("pl_mp_sel", "Ajio") == "Ajio":
@@ -106,6 +110,43 @@ else:
 
 st.divider()
 CONVERT_MODE = marketplace.startswith("Convert:")
+
+_api_errors = st.session_state.setdefault("api_errors", {})
+_missing_keys = [
+    n for n, v in [
+        ("IMGBB_API_KEY", globals().get("IMGBB_PERMANENT_KEY") or globals().get("IMGBB_API_KEY")),
+        ("GEMINI_API_KEY", globals().get("GEMINI_API_KEY")),
+        ("NVIDIA_API_KEY", globals().get("NVIDIA_API_KEY")),
+        ("GROQ_API_KEY", globals().get("GROQ_API_KEY")),
+    ] if not v
+]
+
+# Only show missing API keys warning if NOT in Convert mode (Convert mode doesn't need AI/ImgBB!)
+if _missing_keys and not CONVERT_MODE:
+    st.warning("⚠️ Ye keys `secrets.toml` / environment me nahi mili: **" + ", ".join(_missing_keys) + "**. Missing provider skip hogi.")
+    with st.expander("🔑 Quick API Keys Setup (Yahan direct paste karein ya Streamlit Cloud Secrets me dalein)", expanded=False):
+        st.info("💡 **Streamlit Cloud par Permanent Setup:** Dashboard me App Settings (⚙️) ➔ **Secrets** me jaakar keys paste karein.")
+        st.markdown("**Ya fir temporary session ke liye yahan paste karke save karein:**")
+        col_k1, col_k2 = st.columns(2)
+        with col_k1:
+            ui_imgbb = st.text_input("IMGBB_API_KEY:", value=IMGBB_PERMANENT_KEY, type="password", key="ui_set_imgbb")
+            ui_gemini = st.text_input("GEMINI_API_KEY:", value=GEMINI_API_KEY, type="password", key="ui_set_gemini")
+        with col_k2:
+            ui_nvidia = st.text_input("NVIDIA_API_KEY:", value=NVIDIA_API_KEY, type="password", key="ui_set_nvidia")
+            ui_groq = st.text_input("GROQ_API_KEY:", value=GROQ_API_KEY, type="password", key="ui_set_groq")
+        if st.button("💾 Save Keys for this Session"):
+            ov = st.session_state.setdefault("api_keys_override", {})
+            if ui_imgbb: ov["IMGBB_API_KEY"] = ui_imgbb.strip()
+            if ui_gemini: ov["GEMINI_API_KEY"] = ui_gemini.strip()
+            if ui_nvidia: ov["NVIDIA_API_KEY"] = ui_nvidia.strip()
+            if ui_groq: ov["GROQ_API_KEY"] = ui_groq.strip()
+            st.success("✅ Keys saved in session! Reloading...")
+            st.rerun()
+
+if _api_errors:
+    with st.expander("🔧 API diagnostics (last request errors)", expanded=False):
+        for _provider, _err in _api_errors.items():
+            st.error(f"{_provider}: {_err}")
 
 HIGHLIGHT_FILL = PatternFill(start_color="FFF200", end_color="FFF200", fill_type="solid")
 HIGHLIGHT_FONT = Font(bold=True)
@@ -550,7 +591,7 @@ def upload_to_imgbb(image_bytes, api_key):
     if not image_bytes:
         return None
     keys_to_try = []
-    for k in [api_key, IMGBB_PERMANENT_KEY]:
+    for k in [api_key, globals().get("IMGBB_PERMANENT_KEY"), globals().get("IMGBB_API_KEY"), "86fc928d36f7cdff5eac1656b544ed1d"]:
         k_clean = str(k or "").strip()
         if k_clean and k_clean not in keys_to_try:
             keys_to_try.append(k_clean)
@@ -648,12 +689,31 @@ def build_sheet_dropdown_map(ws):
             ref = getattr(dn, 'attr_text', '') or getattr(dn, 'value', '') or ''
             defined_ranges[name.lower()] = ref.split(',')[0].strip().lstrip('=')
 
-    def resolve_ref(ref_str):
+    def resolve_ref(ref_str, pt=''):
         ref = str(ref_str or '').strip().lstrip('=')
+        if not ref: return []
         if ref.startswith('"') and ref.endswith('"'):
             return [x.strip() for x in ref[1:-1].split(',') if x.strip()]
-        if ',' in ref and '!' not in ref and ':' not in ref:
+        if ',' in ref and not any(ch in ref for ch in '()&[]$=<>!'):
             return [x.strip() for x in ref.split(',') if x.strip()]
+        if '(' in ref:
+            m = re.findall(r'"([a-zA-Z0-9_.#-]+)"', ref)
+            candidates = []
+            for cand in m:
+                if len(cand) > 3 and not cand.startswith('_'):
+                    if pt: candidates.append((pt.lower() + cand.lower()))
+                    candidates.append(cand.lower())
+            resolved = None
+            for c in candidates:
+                if c in defined_ranges:
+                    resolved = defined_ranges[c]; break
+                for dn_name in defined_ranges:
+                    if dn_name.endswith(c):
+                        resolved = defined_ranges[dn_name]; break
+                if resolved: break
+            if resolved: ref = resolved
+            else: return []
+
         if ref.lower() in defined_ranges:
             ref = defined_ranges[ref.lower()]
         target_ws = ws
@@ -679,30 +739,47 @@ def build_sheet_dropdown_map(ws):
         return []
 
     dd_map = {}
-    try:
-        dvs = ws.data_validations.dataValidation
+    r1_val = str(ws.cell(1, 1).value or '')
+    m_pt = re.search(r'producttype[=":\s]+([a-zA-Z0-9_-]+)', r1_val, re.IGNORECASE)
+    primary_pt = m_pt.group(1).upper() if m_pt else ''
+    if not primary_pt:
+        for r in (5, 6, 7):
+            val = str(ws.cell(r, 2).value or '').strip()
+            if val and val.isupper() and len(val) >= 3:
+                primary_pt = val; break
+
+    try: dvs = ws.data_validations.dataValidation
     except Exception: dvs = []
     for dv in dvs:
         if dv.formula1:
-            opts = resolve_ref(dv.formula1)
+            opts = resolve_ref(dv.formula1, pt=primary_pt)
             if opts:
                 opts = [o for o in opts if str(o).strip().lower() not in {'', 'select', 'select one', 'choose', 'choose one', 'dropdown'}]
                 for rng in dv.sqref.ranges:
                     for c in range(rng.min_col, rng.max_col + 1):
-                        dd_map[c] = opts
+                        dd_map.setdefault(c, []).extend(opts)
 
     if 'Dropdown Lists' in wb.sheetnames:
         ws_dd = wb['Dropdown Lists']
         for c in range(1, ws.max_column + 1):
-            if c not in dd_map:
-                col_keys = {str(ws.cell(r, c).value or '').strip().lower() for r in range(1, 6) if ws.cell(r, c).value not in (None, '')}
-                for dd_c in range(1, ws_dd.max_column + 1):
-                    hr = next((r for r in range(1, 4) if str(ws_dd.cell(r, dd_c).value or '').strip().lower() in col_keys and str(ws_dd.cell(r, dd_c).value or '').strip()), None)
-                    if hr is not None:
-                        vals = [str(ws_dd.cell(r, dd_c).value).strip() for r in range(hr + 1, ws_dd.max_row + 1) if ws_dd.cell(r, dd_c).value not in (None, '')]
-                        if vals:
-                            dd_map[c] = [o for o in vals if str(o).strip().lower() not in {'', 'select', 'select one', 'choose', 'choose one', 'dropdown'}]
-                            break
+            attr = str(ws.cell(5, c).value or '').strip()
+            lbl = str(ws.cell(4, c).value or '').strip().lower()
+            k_norm = _norm_amazon_key(attr)
+            collected = []
+            for dd_c in range(1, ws_dd.max_column + 1):
+                dd_attr = str(ws_dd.cell(3, dd_c).value or '').strip()
+                dd_norm = _norm_amazon_key(dd_attr)
+                if (attr and dd_attr and attr.lower() == dd_attr.lower()) or (k_norm and dd_norm and k_norm == dd_norm):
+                    vals = [ws_dd.cell(r, dd_c).value for r in range(4, ws_dd.max_row + 1) if ws_dd.cell(r, dd_c).value not in (None, '')]
+                    vals = [str(v).strip() for v in vals if str(v).strip() != '']
+                    if vals: collected.extend(vals)
+            if collected:
+                combined = list(dict.fromkeys(collected))
+                if c not in dd_map:
+                    dd_map[c] = combined
+                else:
+                    dd_map[c] = list(dict.fromkeys(dd_map[c] + combined))
+
     return dd_map
 
 def get_dropdown_options_for_column(ws, col_idx):
@@ -718,17 +795,31 @@ def smart_pick_dropdown_value(options, desired=None, header_name="", cat="appare
     if not str_opts:
         return desired if desired is not None else fallback
 
+    d_str = str(desired).strip() if desired not in (None, '') else ''
+    d_low = d_str.lower()
     lower_opts = {o.lower(): o for o in str_opts}
-    norm_opts = {re.sub(r'[^a-z0-9]+', '', o.lower()): o for o in str_opts}
+    if d_low and d_low in lower_opts: return lower_opts[d_low]
 
-    if desired not in (None, ''):
-        d_str = str(desired).strip()
-        d_low = d_str.lower()
+    # Special handling for Size: match alpha prefix before parenthesis, e.g. 'L' -> 'L (l)', 'M' -> 'M (m)'
+    if d_low:
+        norm_size = {'xxl': '2xl', 'xxxl': '3xl', 'xxxxl': '4xl', 'xxxxxl': '5xl'}.get(d_low, d_low)
+        if d_low in ('xxl', '2xl'):
+            opt_2xl = next((o for o in str_opts if '2xl (2x_l)' in o.lower()), None)
+            if opt_2xl: return opt_2xl
+        for o in str_opts:
+            clean_o = re.sub(r'\s*\([^)]*\)', '', o).strip().lower()
+            if clean_o in (d_low, norm_size):
+                if 'jaspo' not in o.lower():
+                    return o
+            if o.lower().startswith(f"{d_low} (") or o.lower().startswith(f"{norm_size} ("):
+                if 'jaspo' not in o.lower():
+                    return o
+
         d_norm = re.sub(r'[^a-z0-9]+', '', d_low)
-        if d_low in lower_opts: return lower_opts[d_low]
+        norm_opts = {re.sub(r'[^a-z0-9]+', '', o.lower()): o for o in str_opts}
         if d_norm in norm_opts: return norm_opts[d_norm]
         for o in str_opts:
-            if len(d_low) >= 3 and (d_low in o.lower() or o.lower() in d_low):
+            if len(d_low) >= 4 and (d_low in o.lower() or o.lower() in d_low):
                 return o
 
     h_low = str(header_name or '').lower()
@@ -844,8 +935,9 @@ def smart_pick_dropdown_value(options, desired=None, header_name="", cat="appare
 
     cand = str(desired if desired not in (None, '') else (fallback or '')).strip()
     if cand:
-        close = difflib.get_close_matches(cand, str_opts, n=1, cutoff=0.35)
+        close = difflib.get_close_matches(cand, str_opts, n=1, cutoff=0.7)
         if close: return close[0]
+        if desired not in (None, ''): return desired
 
     return str_opts[0]
 
@@ -1333,7 +1425,7 @@ def _norm_amazon_key(k):
 VC_TO_SC_KEY_ALIASES = {'vendor_sku#1.value': 'contribution_sku#1.value', 'external_product_id#1.type': 'amzn1.volt.ca.product_id_type', 'external_product_id#1.value': 'amzn1.volt.ca.product_id_value', 'merchant_suggested_asin#1.value': 'amzn1.volt.ca.product_id_value', 'list_price#1.value_with_tax': 'purchasable_offer#1.maximum_retail_price#1.schedule#1.value_with_tax'}
 VC_TO_SC_KEY_FALLBACK_GROUPS = [['apparel_size#1.size_system', 'bottoms_size#1.size_system', 'shirt_size#1.size_system', 'shapewear_size#1.size_system'], ['apparel_size#1.size_class', 'bottoms_size#1.size_class', 'shirt_size#1.size_class', 'shapewear_size#1.size_class'], ['apparel_size#1.size', 'bottoms_size#1.size', 'shirt_size#1.size', 'shapewear_size#1.size'], ['apparel_size#1.size_to', 'bottoms_size#1.size_to', 'shirt_size#1.size_to', 'shapewear_size#1.size_to'], ['apparel_size#1.body_type', 'bottoms_size#1.body_type', 'shirt_size#1.body_type', 'shapewear_size#1.body_type'], ['apparel_size#1.height_type', 'bottoms_size#1.height_type', 'shirt_size#1.height_type', 'shapewear_size#1.height_type']]
 VC_TO_SC_LABEL_ALIASES = {'vendor sku': 'sku', 'maximum retail price (mrp)': 'maximum retail price (sell on amazon, in)', 'external product id type': 'product id type', 'external product id': 'product id', 'merchant suggested asin': 'product id'}
-PARENT_INHERITED_LABELS = {'product type', 'brand name', 'product description', 'bullet point', 'generic keywords', 'material', 'fabric type', 'fit type', 'pocket description', 'care instructions', 'manufacturer contact information', 'pattern', 'external product information entity', 'external product information', 'seasons', 'packer contact information', 'sleeve length description', 'sleeve type', 'item weight', 'item weight unit', 'item length', 'item length unit', 'item width', 'item width unit', 'item height', 'item height unit', 'item package length', 'package length unit', 'item package width', 'package width unit', 'item package height', 'package height unit', 'package weight', 'package weight unit', 'country of origin', 'dangerous goods regulations'}
+PARENT_INHERITED_LABELS = {'product type', 'brand name', 'product description', 'bullet point', 'generic keywords', 'fabric type', 'care instructions', 'manufacturer contact information', 'external product information entity', 'external product information', 'seasons', 'packer contact information', 'item weight', 'item weight unit', 'item length', 'item length unit', 'item width', 'item width unit', 'item height', 'item height unit', 'country of origin'}
 
 def _build_parent_title_from_child(child_title, parent_sku):
     if not child_title: return f"({parent_sku})" if parent_sku else ""
@@ -2366,6 +2458,7 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
     sc_fulfillment_col = sc_key_to_col.get('fulfillment_availability#1.fulfillment_channel_code') or sc_lbl_occ_to_col.get(('fulfillment channel code (in)', 1))
     sc_quantity_col = sc_key_to_col.get('fulfillment_availability#1.quantity') or sc_lbl_occ_to_col.get(('quantity (in)', 1)) or sc_lbl_occ_to_col.get(('quantity', 1))
     sc_shipping_tpl_col = sc_key_to_col.get('merchant_shipping_group#1.value') or sc_lbl_occ_to_col.get(('shipping template (in)', 1))
+    sc_color_map_col = sc_key_to_col.get('color#1.standardized_values#1') or sc_lbl_occ_to_col.get(('color map', 1))
 
     parent_inherited_sc_cols = {c for c, lbl in sc_col_to_lbl.items() if lbl in PARENT_INHERITED_LABELS}
     curr_r = sc_data_r
@@ -2377,7 +2470,7 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
     for ws_vc in vc_listing_sheets:
         vc_lbl_r, vc_key_r, vc_data_r = _detect_amz_sheet_rows(ws_vc, 3, 4, 7)
         vc_to_sc_col, vc_lbl_counts = {}, {}
-        vc_sku_col = vc_model_name_col = vc_asin_col = vc_prod_type_col = vc_item_type_col = vc_title_col = None
+        vc_sku_col = vc_model_name_col = vc_asin_col = vc_prod_type_col = vc_item_type_col = vc_title_col = vc_color_col = vc_color_map_col = None
         for c in range(1, ws_vc.max_column + 1):
             lbl = str(ws_vc.cell(vc_lbl_r, c).value or '').strip().lower()
             key = str(ws_vc.cell(vc_key_r, c).value or '').strip() if vc_key_r else ''
@@ -2388,6 +2481,8 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
             if vc_prod_type_col is None and (nk == 'product_type#1.value' or lbl in ('product type', 'feed product type')): vc_prod_type_col = c
             if vc_item_type_col is None and (nk == 'item_type_name#1.value' or lbl in ('item type name', 'item type keyword')): vc_item_type_col = c
             if vc_title_col is None and (nk == 'item_name#1.value' or lbl in ('item name', 'title', 'product name')): vc_title_col = c
+            if vc_color_col is None and (nk == 'color#1.value' or lbl == 'color'): vc_color_col = c
+            if vc_color_map_col is None and (nk == 'color#1.standardized_values#1' or lbl == 'color map'): vc_color_map_col = c
             nk_target = VC_TO_SC_KEY_ALIASES.get(nk, nk)
             occ = 1
             if lbl: occ = vc_lbl_counts.get(lbl, 0) + 1; vc_lbl_counts[lbl] = occ
@@ -2420,6 +2515,13 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
             if vc_asin_col and sc_prod_id_val_col:
                 asin_val = ws_vc.cell(r_vc, vc_asin_col).value
                 if asin_val not in (None, ''): mapped_cells[sc_prod_id_val_col] = str(asin_val).strip()
+            if sc_color_map_col:
+                cur_cm = mapped_cells.get(sc_color_map_col)
+                raw_c = ws_vc.cell(r_vc, vc_color_col).value if vc_color_col else None
+                if cur_cm not in (None, ''):
+                    mapped_cells[sc_color_map_col] = map_to_standard_color_map(cur_cm)
+                elif raw_c not in (None, ''):
+                    mapped_cells[sc_color_map_col] = map_to_standard_color_map(raw_c)
             raw_pt_val = ws_vc.cell(r_vc, vc_prod_type_col).value if vc_prod_type_col else ''
             raw_itn_val = ws_vc.cell(r_vc, vc_item_type_col).value if vc_item_type_col else ''
             raw_title_val = ws_vc.cell(r_vc, vc_title_col).value if vc_title_col else ''
@@ -2488,13 +2590,12 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
                 ws_sc.cell(curr_r, sc_c).value = val
         ws_sc.cell(curr_r, sc_sku_col).value = model_sku
         if sc_prod_type_col and sc_prod_type_col in ref_cells: ws_sc.cell(curr_r, sc_prod_type_col).value = ref_cells[sc_prod_type_col]
+        if sc_action_col: ws_sc.cell(curr_r, sc_action_col).value = action_val
         if sc_parentage_col: ws_sc.cell(curr_r, sc_parentage_col).value = parent_val
-        if sc_model_name_col:
-            ws_sc.cell(curr_r, sc_model_name_col).value = model_sku; ws_sc.cell(curr_r, sc_model_name_col).fill = HIGHLIGHT_FILL; ws_sc.cell(curr_r, sc_model_name_col).font = HIGHLIGHT_FONT
+        if sc_var_theme_col: ws_sc.cell(curr_r, sc_var_theme_col).value = var_theme_val
         parent_title = _build_parent_title_from_child(ref_cells.get(sc_title_col, ''), model_sku) if sc_title_col else ""
         if sc_title_col: ws_sc.cell(curr_r, sc_title_col).value = parent_title
-        apply_common_fixed_fields(curr_r)
-        preview.append({'Row': curr_r, 'Source VC Sheet': model_to_sheet.get(model_sku, ''), 'SKU': model_sku, 'Product Type': ref_cells.get(sc_prod_type_col, '') if sc_prod_type_col else '', 'Listing Action': action_val, 'Parentage Level': parent_val, 'Parent SKU': '', 'Variation Theme': var_theme_val, 'Product Id Type': '', 'Product Id': '', 'Shipping Template': '', 'Model Name': model_sku, 'Item Name': parent_title})
+        preview.append({'Row': curr_r, 'Source VC Sheet': model_to_sheet.get(model_sku, ''), 'SKU': model_sku, 'Product Type': ref_cells.get(sc_prod_type_col, '') if sc_prod_type_col else '', 'Listing Action': action_val, 'Parentage Level': parent_val, 'Parent SKU': '', 'Variation Theme': var_theme_val, 'Product Id Type': '', 'Product Id': '', 'Shipping Template': '', 'Model Name': '', 'Item Name': parent_title})
         curr_r += 1; total_written += 1
 
     def write_child_row(child_sku, model_str, mapped_cells, src_sheet_name=""):
@@ -2504,17 +2605,20 @@ def convert_vc_to_sc(vc_file, sc_file, ctx):
             if opts: val = smart_pick_dropdown_value(opts, desired=val, header_name=sc_col_to_lbl.get(sc_c, ''))
             ws_sc.cell(curr_r, sc_c).value = val
         ws_sc.cell(curr_r, sc_sku_col).value = child_sku
+        if sc_action_col: ws_sc.cell(curr_r, sc_action_col).value = action_val
         if sc_parentage_col: ws_sc.cell(curr_r, sc_parentage_col).value = child_val
         if sc_parent_sku_col and model_str: ws_sc.cell(curr_r, sc_parent_sku_col).value = model_str
+        if sc_var_theme_col: ws_sc.cell(curr_r, sc_var_theme_col).value = var_theme_val
         if sc_model_name_col:
             if model_str: ws_sc.cell(curr_r, sc_model_name_col).value = model_str
             ws_sc.cell(curr_r, sc_model_name_col).fill = HIGHLIGHT_FILL; ws_sc.cell(curr_r, sc_model_name_col).font = HIGHLIGHT_FONT
         if sc_prod_id_type_col: ws_sc.cell(curr_r, sc_prod_id_type_col).value = asin_type_val
+        if sc_condition_col: ws_sc.cell(curr_r, sc_condition_col).value = cond_new_val
+        if sc_fulfillment_col: ws_sc.cell(curr_r, sc_fulfillment_col).value = fulfillment_default_val
+        if sc_quantity_col: ws_sc.cell(curr_r, sc_quantity_col).value = qty_zero_val
         if sc_shipping_tpl_col: ws_sc.cell(curr_r, sc_shipping_tpl_col).value = shipping_tpl_val
-        apply_common_fixed_fields(curr_r)
         preview.append({'Row': curr_r, 'Source VC Sheet': src_sheet_name, 'SKU': child_sku, 'Product Type': mapped_cells.get(sc_prod_type_col, '') if sc_prod_type_col else '', 'Listing Action': action_val, 'Parentage Level': child_val, 'Parent SKU': model_str, 'Variation Theme': var_theme_val, 'Product Id Type': asin_type_val, 'Product Id': mapped_cells.get(sc_prod_id_val_col, '') if sc_prod_id_val_col else '', 'Shipping Template': shipping_tpl_val, 'Model Name': model_str, 'Item Name': mapped_cells.get(sc_title_col, '') if sc_title_col else ''})
         curr_r += 1; total_written += 1
-
     if parent_position == 'top':
         for m_sku in unique_models_ordered: write_parent_row(m_sku)
         for c_sku, m_str, m_cells, sh_title in vc_rows_data: write_child_row(c_sku, m_str, m_cells, sh_title)
