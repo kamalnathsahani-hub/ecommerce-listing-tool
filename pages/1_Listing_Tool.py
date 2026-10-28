@@ -76,12 +76,12 @@ def _get_secret(name, default=""):
 
 # IMPORTANT: API keys must NOT be hard-coded in source code.
 # Put them in .streamlit/secrets.toml or Streamlit Cloud Settings > Secrets.
-IMGBB_PERMANENT_KEY = "c1a1f1d4df03d1a387d00a3a4068b2c7"
-GEMINI_API_KEY = "AQ.Ab8RN6Jlzt18BNR25TTv1tDClL0Dpy6dhqLrTHyVLpkKxnvjtg"
+IMGBB_PERMANENT_KEY = "c0a3a4068b2c7"
+GEMINI_API_KEY = "Dpy6dhqLrTHyVLpkKxnvjtg"
 GEMINI_VISION_MODEL = "gemini-2.0-flash"
-NVIDIA_API_KEY = "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"
+NVIDIA_API_KEY = "34CzG8Vp2_k7mstlTXrB4b-Cm8hwdeaI"
 NVIDIA_MODEL = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
-GROQ_API_KEY = "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"
+GROQ_API_KEY = "hMJIzAjq8MfeAnYFylSMdX"
 GROQ_VISION_MODEL = "llama-3.2-11b-vision-preview"
 
 _api_errors = st.session_state.setdefault("api_errors", {})
