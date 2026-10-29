@@ -19,9 +19,3 @@ with col2:
     st.markdown("### 💰 Pricing Calculator")
     st.write("Calculate marketplace fees, margins, and selling prices.")
     st.page_link("pages/2_Pricing_Calculator.py", label="Open Calculator", icon="💰")
-
-with col3:
-    st.container(border=True)
-    st.markdown("### ✨ Perfect Listing (AI Vision)")
-    st.write("Reads template instructions, extracts size chart measurements, and fills 100% compliant Ajio/marketplace files.")
-    st.page_link("pages/3_Perfect_Listing.py", label="Launch Perfect Listing", icon="✨")
