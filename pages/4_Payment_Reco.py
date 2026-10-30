@@ -28,15 +28,27 @@ if uploaded_file is not None:
                 df = pd.read_excel(uploaded_file)
                 df = df.dropna(how='all')
 
-        def find_col(possible_names):
-            for col in df.columns:
-                for name in possible_names:
-                    if str(name).strip().lower() == str(col).strip().lower() or name.lower() in str(col).lower():
+        # Strict priority column finder
+        def find_col(possible_names, exclude_keywords=None):
+            # 1. Exact match first (Case-insensitive)
+            for name in possible_names:
+                for col in df.columns:
+                    if str(name).strip().lower() == str(col).strip().lower():
+                        return col
+            # 2. Controlled substring match
+            for name in possible_names:
+                for col in df.columns:
+                    c_clean = str(col).strip().lower()
+                    n_clean = str(name).strip().lower()
+                    if n_clean in c_clean:
+                        if exclude_keywords and any(ex.lower() in c_clean for ex in exclude_keywords):
+                            continue
                         return col
             return None
 
-        # Detect columns
-        channel_col = find_col(['Channel Code', 'Channel'])
+        # Detect columns with exact matching
+        # Channel Code: Exclude 'order', 'item', 'product' so Col B 'Channel Order Code' is never picked
+        channel_col = find_col(['Channel Code', 'Channel Name'], exclude_keywords=['order', 'item', 'product', 'quantity', 'sale', 'refund', 'date', 'time'])
         order_id_col = find_col(['Channel Order Code', 'Order ID', 'Order Code'])
         sku_col = find_col(['Sku Code', 'Seller SKU', 'SKU'])
         cost_price_col = find_col(['Cost Price', 'Product Cost', 'Unit Cost', 'COGS'])
@@ -66,7 +78,7 @@ if uploaded_file is not None:
         profit_fill = PatternFill(start_color="D9EAD3", fill_type="solid")
 
         wb = openpyxl.Workbook()
-        wb.remove(wb.active) # Remove default sheet
+        wb.remove(wb.active)
 
         # Helper: Extract summary metrics
         def extract_metrics(sub_df):
@@ -219,13 +231,12 @@ if uploaded_file is not None:
                 col_letter = get_column_letter(col[0].column)
                 ws.column_dimensions[col_letter].width = max(max_len + 3, 14)
 
-        # GENERATE WORKBOOK SHEETS ACCORDING TO TEMPLATE TYPE
+        # GENERATE WORKBOOK SHEETS
         if is_multi_channel:
-            # Multi-channel template (e.g. SAmple.xlsx)
             channels = df[channel_col].dropna().unique()
             for ch in channels:
                 ch_df = df[df[channel_col] == ch].copy()
-                ch_clean = str(ch).replace("/", "_").replace("\\", "_")
+                ch_clean = str(ch).replace("/", "_").replace("\\", "_").strip()
                 
                 # Excel 31 characters limit safe titles
                 sum_sheet_title = f"{ch_clean}_Summary"[:31]
@@ -257,20 +268,22 @@ if uploaded_file is not None:
         st.subheader("📌 File Overview")
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Total Transactions", f"{all_metrics['total']:,}")
-        m2.metric("Delivered Orders", f"{all_metrics['delivered']:,}", f"{(all_metrics['delivered']/all_metrics['total']*100):.1f}% Delivery Rate")
+        m1_deliv = all_metrics['total'] - (all_metrics['cr'] + all_metrics['rto'])
+        m2.metric("Delivered Orders", f"{m1_deliv:,}", f"{(m1_deliv/all_metrics['total']*100):.1f}% Delivery Rate")
         m3.metric("Customer Return (CIR)", f"{all_metrics['cr']:,}", f"{(all_metrics['cr']/all_metrics['total']*100):.1f}%")
         m4.metric("Courier Return (RTO)", f"{all_metrics['rto']:,}", f"{(all_metrics['rto']/all_metrics['total']*100):.1f}%")
 
         if is_multi_channel:
             st.markdown("---")
-            st.subheader("🏪 Marketplace Channels Detected (Each has its own dedicated tabs)")
+            st.subheader("🏪 Marketplace Channels Detected (Column E)")
             ch_list_ui = []
             for ch in df[channel_col].dropna().unique():
                 m_ch = extract_metrics(df[df[channel_col] == ch])
+                ch_deliv_ui = m_ch["total"] - (m_ch["cr"] + m_ch["rto"])
                 ch_list_ui.append({
                     "Channel Code": ch,
                     "Total Orders": m_ch["total"],
-                    "Delivered (Calculated)": m_ch["delivered"],
+                    "Delivered (Calculated)": ch_deliv_ui,
                     "CIR": m_ch["cr"],
                     "RTO": m_ch["rto"],
                     "Net Payout (₹)": round(m_ch["payout"], 2)
