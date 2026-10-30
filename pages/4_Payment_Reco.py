@@ -6,10 +6,10 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 # Page Config
-st.set_page_config(page_title="Payment Reco & Profit Analyzer", layout="wide")
+st.set_page_config(page_title="Multi-Channel Payment Reco & Profit Analyzer", layout="wide")
 
-st.title("💰 Marketplace Payment & Profit Reconciliation")
-st.markdown("Settlement Excel file upload karke sales, returns, deductions, live formulas aur **SKU-Wise Pivot** report download karein.")
+st.title("💰 Multi-Channel Payment & Profit Reconciliation")
+st.markdown("Flipkart Settlement Excel ya Uniware/ERP Multi-Marketplace CSV (`Channel Code` wali file) upload karein. System automatically har marketplace ka alag-alag aur SKU-wise breakdown generate karega.")
 
 # Sidebar Cost Inputs
 st.sidebar.header("⚙️ Costing & Expenses")
@@ -17,86 +17,142 @@ cogs_input = st.sidebar.number_input("Average Product Cost / COGS (₹ per item)
 pkg_cost = st.sidebar.number_input("Packaging & Label Cost (₹ per item)", min_value=0.0, value=10.0, step=1.0)
 total_unit_cost = float(cogs_input + pkg_cost)
 
-# File Uploader
-uploaded_file = st.file_uploader("📂 Upload Settlement Excel File (.xlsx / .xls)", type=["xlsx", "xls"])
+# File Uploader - Supports both XLSX and CSV
+uploaded_file = st.file_uploader("📂 Upload Settlement / Reco File (.xlsx, .xls, .csv)", type=["xlsx", "xls", "csv"])
 
 if uploaded_file is not None:
     try:
-        xls = pd.ExcelFile(uploaded_file)
-        
-        # Check sheet structure
-        if 'Orders' in xls.sheet_names:
-            df = pd.read_excel(uploaded_file, sheet_name='Orders', header=1)
-            df = df.dropna(subset=['Order ID']).copy()
+        # Load File (CSV or Excel)
+        file_name = uploaded_file.name.lower()
+        if file_name.endswith('.csv'):
+            df = pd.read_csv(uploaded_file, low_memory=False)
         else:
-            df = pd.read_excel(uploaded_file)
-            df = df.dropna(how='all')
+            xls = pd.ExcelFile(uploaded_file)
+            if 'Orders' in xls.sheet_names:
+                df = pd.read_excel(uploaded_file, sheet_name='Orders', header=1)
+                df = df.dropna(subset=['Order ID']).copy()
+            else:
+                df = pd.read_excel(uploaded_file)
+                df = df.dropna(how='all')
 
-        # Helper column matchers
+        # Helper column finders
         def find_col(possible_names):
             for col in df.columns:
                 for name in possible_names:
-                    if name.lower() in str(col).lower():
+                    if str(name).lower() == str(col).lower() or name.lower() in str(col).lower():
                         return col
             return None
 
-        order_id_col = find_col(['Order ID'])
-        sale_col = find_col(['Sale Amount (Rs.)', 'Sale Amount'])
-        refund_col = find_col(['Refund (Rs.)', 'Refund Amount', 'Refund'])
-        bank_col = [c for c in df.columns if 'Bank Settlement' in str(c)][0] if any('Bank Settlement' in str(c) for c in df.columns) else find_col(['Settlement Value', 'Net Settlement'])
+        # Column Identifications
+        channel_col = find_col(['Channel Code', 'Channel'])
+        order_id_col = find_col(['Channel Order Code', 'Order ID', 'Order Code'])
+        sku_col = find_col(['Sku Code', 'Seller SKU', 'SKU'])
+        sale_col = find_col(['Channel Forward Sale Amount', 'Sale Amount (Rs.)', 'Sale Amount', 'UC Selling Price'])
+        refund_col = find_col(['Channel Refund Amount', 'Refund (Rs.)', 'Refund Amount', 'UC Refund'])
+        bank_col = find_col(['Actual Net Settlement', 'Bank Settlement Value', 'Net Settlement'])
         return_type_col = find_col(['Return Type'])
-        rev_ship_col = find_col(['Reverse Shipping Fee', 'Reverse Shipping'])
-        gst_mp_col = find_col(['GST on MP Fees', 'GST on Marketplace'])
-        mp_fee_col = find_col(['Marketplace Fee (Rs.)', 'Marketplace Fee', 'Total Marketplace Fee'])
-        sku_col = find_col(['Seller SKU', 'SKU'])
-        order_date_col = find_col(['Order Date'])
+        rev_ship_col = find_col(['Actual Reverse Shipping Fee', 'Reverse Shipping Fee (Rs.)', 'Reverse Shipping'])
+        comm_col = find_col(['Actual Commission Fee', 'Commission (Rs.)'])
+        fixed_col = find_col(['Actual Fixed Fee', 'Fixed Fee  (Rs.)'])
+        gst_mp_col = find_col(['Actual Taxed Fee', 'GST on MP Fees (Rs.)', 'GST on Marketplace'])
+        order_status_col = find_col(['Order Status', 'Item Return Status'])
 
-        # Data processing
+        is_multi_channel = bool(channel_col)
+
+        # Basic Stats
         total_transactions = len(df)
-        df_delivered = df[df[refund_col] == 0].copy() if refund_col else df.copy()
-        df_returns = df[df[refund_col] < 0].copy() if refund_col else pd.DataFrame()
+        
+        # Delivered vs Returns logic
+        if return_type_col:
+            cust_returns = len(df[df[return_type_col].astype(str).str.upper().isin(['CUSTOMER RETURN', 'CIR'])])
+            rto_returns = len(df[df[return_type_col].astype(str).str.upper().isin(['LOGISTICS RETURN', 'RTO'])])
+        else:
+            cust_returns, rto_returns = 0, 0
 
-        delivered_count = len(df_delivered)
-        return_count = len(df_returns)
+        if order_status_col:
+            delivered_df = df[df[order_status_col].astype(str).str.upper().isin(['DELIVERED', 'COMPLETE'])].copy()
+            if len(delivered_df) == 0:
+                delivered_df = df[df[refund_col] == 0].copy() if refund_col else df.copy()
+        elif refund_col:
+            delivered_df = df[df[refund_col] == 0].copy()
+        else:
+            delivered_df = df.copy()
 
-        cust_return_count = len(df[df[return_type_col] == 'Customer Return']) if return_type_col else 0
-        rto_count = len(df[df[return_type_col] == 'Logistics Return']) if return_type_col else 0
+        delivered_count = len(delivered_df)
+        total_returns = cust_returns + rto_returns
 
-        cust_return_pct = (cust_return_count / total_transactions * 100) if total_transactions > 0 else 0
-        rto_pct = (rto_count / total_transactions * 100) if total_transactions > 0 else 0
-
-        gross_sales = float(df[sale_col].sum()) if sale_col else 0.0
-        customer_refunds = abs(float(df[refund_col].sum())) if refund_col else 0.0
-        bank_payout = float(df[bank_col].sum()) if bank_col else 0.0
-        total_rev_shipping = abs(float(df[rev_ship_col].sum())) if rev_ship_col else 0.0
-        total_gst_mp = abs(float(df[gst_mp_col].sum())) if gst_mp_col else 0.0
-        total_mp_fee = abs(float(df[mp_fee_col].sum())) if mp_fee_col else 0.0
+        gross_sales = float(pd.to_numeric(df[sale_col], errors='coerce').fillna(0).sum()) if sale_col else 0.0
+        customer_refunds = abs(float(pd.to_numeric(df[refund_col], errors='coerce').fillna(0).sum())) if refund_col else 0.0
+        bank_payout = float(pd.to_numeric(df[bank_col], errors='coerce').fillna(0).sum()) if bank_col else 0.0
+        total_rev_shipping = abs(float(pd.to_numeric(df[rev_ship_col], errors='coerce').fillna(0).sum())) if rev_ship_col else 0.0
+        total_gst_mp = abs(float(pd.to_numeric(df[gst_mp_col], errors='coerce').fillna(0).sum())) if gst_mp_col else 0.0
+        total_comm = abs(float(pd.to_numeric(df[comm_col], errors='coerce').fillna(0).sum())) if comm_col else 0.0
 
         total_cogs_delivered = delivered_count * total_unit_cost
         estimated_profit = bank_payout - total_cogs_delivered
         profit_margin = (estimated_profit / bank_payout * 100) if bank_payout > 0 else 0
 
-        avg_charge_per_return = (total_rev_shipping / return_count) if return_count > 0 else 0.0
+        avg_charge_per_return = (total_rev_shipping / total_returns) if total_returns > 0 else 0.0
         return_burden_per_delivered = (total_rev_shipping + total_gst_mp) / delivered_count if delivered_count > 0 else 0.0
 
-        # UI Metrics Display
-        st.success("✅ Payment File Analyzed Successfully!")
+        # UI Overview Metrics
+        st.success(f"✅ File Analyzed Successfully! Mode: {'Multi-Marketplace Channel File' if is_multi_channel else 'Single Marketplace File'}")
         
-        st.subheader("📌 Key Order & Return Breakdown")
+        st.subheader("📌 Business Level Summary")
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total Transactions", f"{total_transactions:,}")
+        m1.metric("Total Orders / Rows", f"{total_transactions:,}")
         m2.metric("Delivered Orders", f"{delivered_count:,}", f"{(delivered_count/total_transactions*100):.1f}% Delivery Rate")
-        m3.metric("Customer Return %", f"{cust_return_pct:.1f}%", f"{cust_return_count} Orders")
-        m4.metric("RTO (Courier Return) %", f"{rto_pct:.1f}%", f"{rto_count} Orders")
+        m3.metric("Customer Return (CIR)", f"{cust_returns:,}", f"{(cust_returns/total_transactions*100):.1f}%")
+        m4.metric("Courier Return (RTO)", f"{rto_returns:,}", f"{(rto_returns/total_transactions*100):.1f}%")
 
-        st.subheader("💵 Financials & Profitability")
         f1, f2, f3, f4 = st.columns(4)
-        f1.metric("Gross Sales", f"₹{gross_sales:,.2f}")
+        f1.metric("Gross Sales Value", f"₹{gross_sales:,.2f}")
         f2.metric("Customer Refunds", f"-₹{customer_refunds:,.2f}")
-        f3.metric("Bank Payout (Received)", f"₹{bank_payout:,.2f}")
+        f3.metric("Net Bank Settlement", f"₹{bank_payout:,.2f}")
         f4.metric("Estimated Net Profit", f"₹{estimated_profit:,.2f}", f"{profit_margin:.1f}% Margin")
 
         st.markdown("---")
+
+        # --- CHANNEL WISE BREAKDOWN (IF MULTI-CHANNEL) ---
+        channel_data_list = []
+        if is_multi_channel:
+            for ch_name, grp in df.groupby(channel_col):
+                ch_tot = len(grp)
+                if order_status_col:
+                    ch_del = len(grp[grp[order_status_col].astype(str).str.upper().isin(['DELIVERED', 'COMPLETE'])])
+                elif refund_col:
+                    ch_del = len(grp[grp[refund_col] == 0])
+                else:
+                    ch_del = ch_tot
+
+                if return_type_col:
+                    ch_cr = len(grp[grp[return_type_col].astype(str).str.upper().isin(['CUSTOMER RETURN', 'CIR'])])
+                    ch_rto = len(grp[grp[return_type_col].astype(str).str.upper().isin(['LOGISTICS RETURN', 'RTO'])])
+                else:
+                    ch_cr, ch_rto = 0, 0
+
+                ch_payout = float(pd.to_numeric(grp[bank_col], errors='coerce').fillna(0).sum()) if bank_col else 0.0
+                ch_rev_ship = float(pd.to_numeric(grp[rev_ship_col], errors='coerce').fillna(0).sum()) if rev_ship_col else 0.0
+                ch_comm = float(pd.to_numeric(grp[comm_col], errors='coerce').fillna(0).sum()) if comm_col else 0.0
+                
+                channel_data_list.append({
+                    "channel": str(ch_name),
+                    "total_orders": ch_tot,
+                    "delivered": ch_del,
+                    "customer_return": ch_cr,
+                    "rto_return": ch_rto,
+                    "payout": ch_payout,
+                    "rev_shipping": ch_rev_ship,
+                    "commission": ch_comm
+                })
+            
+            df_channels_preview = pd.DataFrame(channel_data_list).sort_values(by="total_orders", ascending=False)
+            st.subheader("🏪 Marketplace Channel-Wise Performance")
+            st.dataframe(df_channels_preview.rename(columns={
+                "channel": "Channel Name", "total_orders": "Total Orders", "delivered": "Delivered",
+                "customer_return": "CIR (Customer Return)", "rto_return": "RTO", "payout": "Net Payout (₹)"
+            }), use_container_width=True)
+            st.markdown("---")
 
         # --- SKU WISE PIVOT CALCULATION ---
         sku_df = pd.DataFrame()
@@ -104,10 +160,20 @@ if uploaded_file is not None:
             sku_summary = []
             for sku_name, group in df.groupby(sku_col):
                 sku_total_orders = len(group)
-                sku_deliv = len(group[group[refund_col] == 0]) if refund_col else len(group)
-                sku_cr = len(group[group[return_type_col] == 'Customer Return']) if return_type_col else 0
-                sku_rto = len(group[group[return_type_col] == 'Logistics Return']) if return_type_col else 0
-                sku_bank = group[bank_col].sum() if bank_col else 0.0
+                if order_status_col:
+                    sku_deliv = len(group[group[order_status_col].astype(str).str.upper().isin(['DELIVERED', 'COMPLETE'])])
+                elif refund_col:
+                    sku_deliv = len(group[group[refund_col] == 0])
+                else:
+                    sku_deliv = sku_total_orders
+
+                if return_type_col:
+                    sku_cr = len(group[group[return_type_col].astype(str).str.upper().isin(['CUSTOMER RETURN', 'CIR'])])
+                    sku_rto = len(group[group[return_type_col].astype(str).str.upper().isin(['LOGISTICS RETURN', 'RTO'])])
+                else:
+                    sku_cr, sku_rto = 0, 0
+
+                sku_bank = float(pd.to_numeric(group[bank_col], errors='coerce').fillna(0).sum()) if bank_col else 0.0
                 sku_summary.append({
                     "sku": str(sku_name),
                     "total_orders": int(sku_total_orders),
@@ -118,22 +184,16 @@ if uploaded_file is not None:
                 })
             sku_df = pd.DataFrame(sku_summary).sort_values(by="total_orders", ascending=False)
             
-            # Preview in UI
-            preview_display = sku_df.rename(columns={
-                "sku": "SKU",
-                "total_orders": "Total Orders",
-                "delivered_orders": "Delivered Orders",
-                "customer_returns": "Customer Returns",
-                "rto_returns": "RTO Returns",
-                "payout": "Total Bank Payout (₹)"
-            })
-            st.subheader("📦 SKU-Wise Performance Preview (Top 10)")
-            st.dataframe(preview_display.head(10), use_container_width=True)
+            st.subheader("📦 Top 10 SKU-Wise Performance Preview")
+            st.dataframe(sku_df.head(10).rename(columns={
+                "sku": "SKU", "total_orders": "Total Orders", "delivered_orders": "Delivered Orders",
+                "customer_returns": "Customer Returns", "rto_returns": "RTO Returns", "payout": "Total Bank Payout (₹)"
+            }), use_container_width=True)
 
-        # --- CREATE EXCEL WORKBOOK VIA OPENPYXL ---
+        # ====================================================
+        # BUILD EXCEL WORKBOOK WITH DYNAMIC FORMULAS
+        # ====================================================
         wb = openpyxl.Workbook()
-        
-        # Styles
         header_fill = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
         header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
         metric_font = Font(name="Calibri", size=10, bold=True)
@@ -143,9 +203,9 @@ if uploaded_file is not None:
                              top=Side(style='thin', color='DDDDDD'),
                              bottom=Side(style='thin', color='DDDDDD'))
 
-        # ==========================================
-        # SHEET 1: Executive_Summary (DYNAMIC FORMULAS)
-        # ==========================================
+        # ----------------------------------------------------
+        # SHEET 1: Executive_Summary
+        # ----------------------------------------------------
         ws1 = wb.active
         ws1.title = "Executive_Summary"
         ws1.views.sheetView[0].showGridLines = True
@@ -159,14 +219,14 @@ if uploaded_file is not None:
         summary_rows = [
             ("Settlement File Total Transactions", total_transactions, "0"),
             ("Delivered / Successful Orders", delivered_count, "0"),
-            ("Customer Return Count", cust_return_count, "0"),
+            ("Customer Return (CIR) Count", cust_returns, "0"),
             ("Customer Return %", "=B4/B2", "0.00%"),
-            ("RTO (Logistics Return) Count", rto_count, "0"),
+            ("RTO (Logistics Return) Count", rto_returns, "0"),
             ("RTO (Logistics Return) %", "=B6/B2", "0.00%"),
             ("Gross Customer Sales Amount (₹)", gross_sales, "₹#,##0.00"),
             ("Customer Refund Amount (₹)", customer_refunds, "₹#,##0.00"),
             ("Reverse Shipping Fees Deducted (₹)", total_rev_shipping, "₹#,##0.00"),
-            ("Marketplace Commission & Other Fees (₹)", max(0.0, total_mp_fee - total_rev_shipping), "₹#,##0.00"),
+            ("Marketplace Commission Fees (₹)", total_comm, "₹#,##0.00"),
             ("GST Deducted on MP Fees (₹)", total_gst_mp, "₹#,##0.00"),
             ("Net Bank Settlement Received (₹)", bank_payout, "₹#,##0.00"),
             ("Average Unit Cost (COGS + Pack) (₹)", total_unit_cost, "₹#,##0.00"),
@@ -182,12 +242,10 @@ if uploaded_file is not None:
             cell_a.value = label
             cell_b.value = val
             cell_b.number_format = num_fmt
-            
             cell_a.font = metric_font if row_idx in [5, 7, 13, 16] else regular_font
             cell_b.font = metric_font if row_idx in [5, 7, 13, 16] else regular_font
             cell_a.border = border_thin
             cell_b.border = border_thin
-            
             if row_idx == 16:
                 cell_a.fill = PatternFill(start_color="D9EAD3", fill_type="solid")
                 cell_b.fill = PatternFill(start_color="D9EAD3", fill_type="solid")
@@ -195,9 +253,57 @@ if uploaded_file is not None:
         ws1.column_dimensions["A"].width = 46
         ws1.column_dimensions["B"].width = 24
 
-        # ==========================================
-        # SHEET 2: SKU_Wise_Performance (WITH FORMULAS)
-        # ==========================================
+        # ----------------------------------------------------
+        # SHEET 2: Channel_Wise_Summary (IF MULTI-CHANNEL)
+        # ----------------------------------------------------
+        if channel_data_list:
+            ws_ch = wb.create_sheet(title="Channel_Wise_Summary")
+            ws_ch.views.sheetView[0].showGridLines = True
+            
+            ch_headers = [
+                "Channel Name", "Total Orders", "Delivered Orders", 
+                "CIR Returns", "RTO Returns", "Total Return %", 
+                "Net Payout (₹)", "Avg Payout / Delivered (₹)", 
+                "Estimated Profit (₹)"
+            ]
+            ws_ch.append(ch_headers)
+            for c_i in range(1, len(ch_headers) + 1):
+                c = ws_ch.cell(row=1, column=c_i)
+                c.fill = header_fill
+                c.font = header_font
+                c.alignment = Alignment(horizontal="center", vertical="center")
+
+            for r_idx, item in enumerate(channel_data_list, start=2):
+                ws_ch.append([
+                    item["channel"],
+                    item["total_orders"],
+                    item["delivered"],
+                    item["customer_return"],
+                    item["rto_return"],
+                    f"=(D{r_idx}+E{r_idx})/B{r_idx}",            # Return % formula
+                    round(item["payout"], 2),                   # Payout
+                    f"=IF(C{r_idx}>0, G{r_idx}/C{r_idx}, 0)",    # Avg Payout / Delivered
+                    f"=G{r_idx}-(C{r_idx}*Executive_Summary!$B$14)" # Estimated Profit
+                ])
+                ws_ch[f"B{r_idx}"].number_format = "0"
+                ws_ch[f"C{r_idx}"].number_format = "0"
+                ws_ch[f"D{r_idx}"].number_format = "0"
+                ws_ch[f"E{r_idx}"].number_format = "0"
+                ws_ch[f"F{r_idx}"].number_format = "0.0%"
+                ws_ch[f"G{r_idx}"].number_format = "₹#,##0.00"
+                ws_ch[f"H{r_idx}"].number_format = "₹#,##0.00"
+                ws_ch[f"I{r_idx}"].number_format = "₹#,##0.00"
+                for col_num in range(1, 10):
+                    ws_ch.cell(row=r_idx, column=col_num).border = border_thin
+
+            for col in ws_ch.columns:
+                max_len = max(len(str(cell.value or '')) for cell in col)
+                col_letter = get_column_letter(col[0].column)
+                ws_ch.column_dimensions[col_letter].width = max(max_len + 3, 16)
+
+        # ----------------------------------------------------
+        # SHEET 3: SKU_Wise_Performance (PIVOT)
+        # ----------------------------------------------------
         if not sku_df.empty:
             ws2 = wb.create_sheet(title="SKU_Wise_Performance")
             ws2.views.sheetView[0].showGridLines = True
@@ -215,7 +321,6 @@ if uploaded_file is not None:
                 c.font = header_font
                 c.alignment = Alignment(horizontal="center", vertical="center")
 
-            # Safely iterating dictionary records to avoid itertuples name errors
             for r_idx, item in enumerate(sku_df.to_dict('records'), start=2):
                 ws2.append([
                     item["sku"],
@@ -228,7 +333,6 @@ if uploaded_file is not None:
                     f"=IF(C{r_idx}>0, G{r_idx}/C{r_idx}, 0)",    # Avg Payout / Delivered
                     f"=G{r_idx}-(C{r_idx}*Executive_Summary!$B$14)" # Estimated Profit
                 ])
-                
                 ws2[f"B{r_idx}"].number_format = "0"
                 ws2[f"C{r_idx}"].number_format = "0"
                 ws2[f"D{r_idx}"].number_format = "0"
@@ -237,71 +341,23 @@ if uploaded_file is not None:
                 ws2[f"G{r_idx}"].number_format = "₹#,##0.00"
                 ws2[f"H{r_idx}"].number_format = "₹#,##0.00"
                 ws2[f"I{r_idx}"].number_format = "₹#,##0.00"
-                
                 for col_num in range(1, 10):
                     ws2.cell(row=r_idx, column=col_num).border = border_thin
 
             for col in ws2.columns:
-                max_len = max(len(str(cell.value or '')) for cell in col)
+                max_len = max(len(str(cell.value or '')) for cell in col[:100])
                 col_letter = get_column_letter(col[0].column)
                 ws2.column_dimensions[col_letter].width = max(max_len + 3, 14)
 
-        # ==========================================
-        # SHEET 3: Simplified_Orders_Reco (ROW DATA)
-        # ==========================================
-        ws3 = wb.create_sheet(title="Simplified_Orders_Reco")
-        ws3.views.sheetView[0].showGridLines = True
-        
-        order_headers = [
-            "Order ID", "Order Date", "SKU", "Order Status",
-            "Sale Amount (₹)", "Refund Amount (₹)", "Reverse Shipping (₹)",
-            "Bank Settlement (₹)", "Unit Cost (₹)", "Estimated Order Profit (₹)"
-        ]
-        ws3.append(order_headers)
-        for col_num in range(1, len(order_headers) + 1):
-            c = ws3.cell(row=1, column=col_num)
-            c.fill = header_fill
-            c.font = header_font
-
-        # Clean Order Level Data
-        clean_df = pd.DataFrame()
-        clean_df['order_id'] = df[order_id_col] if order_id_col else ""
-        clean_df['order_date'] = df[order_date_col].astype(str) if order_date_col else ""
-        clean_df['sku'] = df[sku_col] if sku_col else ""
-        clean_df['status'] = df[return_type_col].fillna('Delivered') if return_type_col else "Delivered"
-        clean_df['sale'] = pd.to_numeric(df[sale_col], errors='coerce').fillna(0) if sale_col else 0
-        clean_df['refund'] = pd.to_numeric(df[refund_col], errors='coerce').fillna(0) if refund_col else 0
-        clean_df['rev_ship'] = pd.to_numeric(df[rev_ship_col], errors='coerce').fillna(0) if rev_ship_col else 0
-        clean_df['bank'] = pd.to_numeric(df[bank_col], errors='coerce').fillna(0) if bank_col else 0
-
-        for row_i, r in enumerate(clean_df.to_dict('records'), start=2):
-            ws3.append([
-                r['order_id'], r['order_date'], r['sku'], r['status'],
-                r['sale'], r['refund'], r['rev_ship'], r['bank'],
-                f"=IF(F{row_i}=0, Executive_Summary!$B$14, 0)",
-                f"=H{row_i}-I{row_i}"
-            ])
-            ws3[f"E{row_i}"].number_format = "0.00"
-            ws3[f"F{row_i}"].number_format = "0.00"
-            ws3[f"G{row_i}"].number_format = "0.00"
-            ws3[f"H{row_i}"].number_format = "0.00"
-            ws3[f"I{row_i}"].number_format = "0.00"
-            ws3[f"J{row_i}"].number_format = "0.00"
-
-        for col in ws3.columns:
-            max_len = max(len(str(cell.value or '')) for cell in col[:100])
-            col_letter = get_column_letter(col[0].column)
-            ws3.column_dimensions[col_letter].width = max(max_len + 3, 14)
-
-        # Output to Streamlit Download Button
+        # Download Button
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
         
         st.download_button(
-            label="📥 Download Simplified Excel Report (With Live Formulas & SKU Pivot)",
+            label="📥 Download Simplified Multi-Marketplace Excel Report",
             data=output.getvalue(),
-            file_name="Business_Payment_Profit_Report_Formulas.xlsx",
+            file_name="Multi_Marketplace_Payment_Reconciliation.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
@@ -309,4 +365,4 @@ if uploaded_file is not None:
         st.error(f"Error processing file: {str(e)}")
 
 else:
-    st.info("👆 Please upload your marketplace payment settlement Excel file above to generate the report.")
+    st.info("👆 Please upload your marketplace payment settlement Excel or CSV file above to generate the report.")
