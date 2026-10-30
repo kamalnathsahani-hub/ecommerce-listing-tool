@@ -9,14 +9,16 @@ from openpyxl.utils import get_column_letter
 st.set_page_config(page_title="Multi-Channel Payment Reco & Profit Analyzer", layout="wide")
 
 st.title("💰 Multi-Channel Payment & Profit Reconciliation")
-st.markdown("Settlement Excel ya Multi-Channel CSV/Excel file upload karein. File me agar `Channel Code` (Col E) hai, toh har channel ke liye **Apps Script ke accounting logic** ke mutabiq Summary aur SKU Pivot banegi.")
+st.markdown("Settlement Excel ya Multi-Channel CSV file upload karein. File me agar `Channel Code` (Col E) hai, toh har channel ke liye **exact Apps Script accounting layout** aur SKU pivot report generate hogi.")
 
 uploaded_file = st.file_uploader("📂 Upload Settlement / Reco File (.xlsx, .xls, .csv)", type=["xlsx", "xls", "csv"])
 
 if uploaded_file is not None:
     try:
-        file_name = uploaded_file.name.lower()
-        if file_name.endswith('.csv'):
+        file_name = uploaded_file.name
+        base_name = file_name.rsplit('.', 1)[0]
+        
+        if file_name.lower().endswith('.csv'):
             df = pd.read_csv(uploaded_file, low_memory=False)
         else:
             xls = pd.ExcelFile(uploaded_file)
@@ -59,22 +61,25 @@ if uploaded_file is not None:
         rev_ship_col = find_col(['Actual Reverse Shipping Fee', 'Reverse Shipping Fee (Rs.)', 'Reverse Shipping'])
         comm_col = find_col(['Actual Commission Fee', 'Commission (Rs.)'])
         gst_mp_col = find_col(['Actual Taxed Fee', 'GST on MP Fees (Rs.)', 'GST on Marketplace'])
+        ad_fee_col = find_col(['Actual Marketing Fee', 'Ads Fees', 'Ad Services Fee'])
 
         is_multi_channel = bool(channel_col and df[channel_col].dropna().nunique() > 1)
         has_cost_price = bool(cost_price_col)
 
         # Style Definitions
-        header_fill = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
-        header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
-        metric_font = Font(name="Calibri", size=10, bold=True)
+        bold_header_font = Font(name="Calibri", size=11, bold=True)
+        bold_metric_font = Font(name="Calibri", size=10, bold=True)
         regular_font = Font(name="Calibri", size=10)
-        border_thin = Border(left=Side(style='thin', color='DDDDDD'),
-                             right=Side(style='thin', color='DDDDDD'),
-                             top=Side(style='thin', color='DDDDDD'),
-                             bottom=Side(style='thin', color='DDDDDD'))
-        yellow_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
-        alert_red_fill = PatternFill(start_color="FCE5CD", end_color="FCE5CD", fill_type="solid")
+        table_head_fill = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
+        table_head_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        
+        peach_fill = PatternFill(start_color="FCE5CD", end_color="FCE5CD", fill_type="solid")
+        green_fill = PatternFill(start_color="D9EAD3", end_color="D9EAD3", fill_type="solid")
         profit_fill = PatternFill(start_color="D9EAD3", fill_type="solid")
+        border_thin = Border(left=Side(style='thin', color='E0E0E0'),
+                             right=Side(style='thin', color='E0E0E0'),
+                             top=Side(style='thin', color='E0E0E0'),
+                             bottom=Side(style='thin', color='E0E0E0'))
 
         wb = openpyxl.Workbook()
         wb.remove(wb.active)
@@ -106,6 +111,7 @@ if uploaded_file is not None:
 
             pf_sum = 0.0
             pf_count = 0
+            ad_fee_sum = 0.0
 
             for _, row in sub_df.iterrows():
                 os_val = str(row.get(order_status_col, '')).strip().upper() if order_status_col else ''
@@ -122,6 +128,8 @@ if uploaded_file is not None:
                 cost_val = to_num(row.get(cost_price_col, 0)) if cost_price_col else 0.0
                 pf_val = to_num(row.get(protection_fund_col, 0)) if protection_fund_col else 0.0
                 fr_val = str(row.get(forward_reco_col, '')).strip().upper() if forward_reco_col else ''
+                if ad_fee_col:
+                    ad_fee_sum += to_num(row.get(ad_fee_col, 0))
 
                 if rtype in ['RTO', 'LOGISTICS RETURN']:
                     rto_net_settlement_sum += act_val
@@ -154,6 +162,8 @@ if uploaded_file is not None:
             return {
                 "rowCount": total_rows,
                 "cancelledCount": cancelled_count,
+                "osCancelledCount": os_cancelled_count,
+                "frCancelledCount": fr_cancelled_count,
                 "rtoCount": rto_count,
                 "cirCount": cir_count,
                 "protectionFundSum": round(abs(pf_sum)),
@@ -166,80 +176,91 @@ if uploaded_file is not None:
                 "noneExpectedSum14": round(abs(none_expected_sum14)),
                 "zeroActualCount14": zero_actual_count14,
                 "noneCostPriceSum15": round(abs(none_cost_price_sum15)),
-                "zeroCostPriceCount15": zero_cost_price_count15
+                "zeroCostPriceCount15": zero_cost_price_count15,
+                "adFeeSum": round(abs(ad_fee_sum))
             }
 
-        # Build Summary Sheet matching Apps Script exactly
-        def build_apps_script_summary_sheet(ws, title, m):
+        # Build Sheet matching image layout
+        def build_image_matched_summary_sheet(ws, title, m, channel_display_name):
             ws.title = title[:31]
             ws.views.sheetView[0].showGridLines = True
 
-            ws["A1"] = "Metric"
-            ws["B1"] = "Value"
-            ws["C1"] = "Expected / Adjustment"
-            ws["A1"].fill = header_fill; ws["A1"].font = header_font
-            ws["B1"].fill = header_fill; ws["B1"].font = header_font
-            ws["C1"].fill = header_fill; ws["C1"].font = header_font
+            ws["A1"] = f"{channel_display_name} {base_name}"
+            ws["A1"].font = Font(name="Calibri", size=11, bold=True)
+            ws["E1"] = "Other charges"
+            ws["E1"].font = Font(name="Calibri", size=10, bold=True)
+            ws["H1"] = "Other CN"
+            ws["H1"].font = Font(name="Calibri", size=10, bold=True)
 
-            structure = [
-                (2, "Total Filtered Orders (B2)", m["rowCount"], None, "0", None),
-                (3, "Cancelled Orders (B3)", m["cancelledCount"], None, "0", None),
-                (4, "RTO Returns (B4)", m["rtoCount"], None, "0", None),
-                (5, "Protection Fund (B5)", m["protectionFundSum"], None, "₹#,##0", f"{m['protectionFundCount']} orders me non-zero Protection Fund mila."),
-                (6, "", None, None, None, None),
-                (7, "CIR Returns (B7)", m["cirCount"], None, "0", None),
-                (8, "RTO Net Settlement (B8)", m["rtoNetSettlementSum"], None, "₹#,##0", None),
-                (9, "Negative Net Settlement / Return Charge (B9)", m["negativeNetSettlementSum"], m["expectedNetSettlementSum"], "₹#,##0", f"{m['positiveCaseCount']} CIR orders ka value Expected Net Settlement se liya gaya (C9) kyunki unme Actual positive tha."),
-                (10, "Average Loss per CIR Order (B10)", "=IFERROR(ROUND((B9+C9)/B7,0),0)", None, "₹#,##0", None),
-                (11, "Return % on Non-Cancelled Orders (B11)", '=ROUND(((B4+B7)/(B2-B3))*100,0)&"%"', None, "0%", None),
-                (12, "", None, None, None, None),
-                (13, "Delivered / Net Successful Orders (B13)", "=B2-B3-B4-B7", None, "0", None),
-                (14, "NONE Return Type - Actual Net Settlement (B14)", m["noneActualSum14"], m["noneExpectedSum14"], "₹#,##0", f"{m['zeroActualCount14']} orders ka Actual Net Settlement 0 tha, isliye unka Expected Net Settlement C14 me liya gaya."),
-                (15, "NONE Return Type - Cost Price (B15)", m["noneCostPriceSum15"], None, "₹#,##0", f"{m['zeroCostPriceCount15']} orders ki Cost Price 0 mili hai."),
-                (16, "Average Return Charge per Delivered Order (B16)", "=IFERROR(ROUND((B9+C9)/B13,0),0)", None, "₹#,##0", None),
-                (17, "", None, None, None, None),
-                (18, "Forward Gross Profit (B18)", "=ROUND(ABS(B5+B14+C14-B15),0)", None, "₹#,##0", None),
-                (19, "Total Return Charge (B19)", "=ROUND(ABS(B9+C9),0)", None, "₹#,##0", None),
-                (20, "Ads & Extra Deductions [Col F Sum] (B20)", "=SUM(F2:F20)", None, "₹#,##0", None),
-                (21, "", None, None, None, None),
-                (22, "Other Reimbursements & Credits [Col I Sum] (B22)", "=SUM(I2:I20)", None, "₹#,##0", None),
-                (23, "", None, None, None, None),
-                (24, "Net Final Profit (B24)", "=ROUND(B18-B19-B20+B22,0)", None, "₹#,##0", None),
-                (25, "", None, None, None, None),
-                (26, "Net Profit per Delivered Order (B26)", "=IFERROR(ROUND(B24/B13,2),0)", None, "₹#,##0.00", None)
+            rows = [
+                (2, "Total Order", m["rowCount"], None, "0", None),
+                (3, "Cancelled", m["cancelledCount"], None, "0", None),
+                (4, "RTO", m["rtoCount"], None, "0", None),
+                (5, "SPF Claim Amount", m["protectionFundSum"], None, "0", f"{m['protectionFundCount']} order(s) me Protection Fund ki 0 ke alava value mili hai."),
+                (7, "C. Return", m["cirCount"], None, "0", None),
+                (8, "RTO Charge", m["rtoNetSettlementSum"], None, "0", None),
+                (9, "C. Return Charge", m["negativeNetSettlementSum"], m["expectedNetSettlementSum"], "0", f"{m['positiveCaseCount']} CIR order(s) ka value Expected Net Settlement se liya gaya hai, kyunki unme Actual Net Settlement positive tha."),
+                (10, "Per order return charge", "=IFERROR(ROUND((B9+C9)/B7,0),0)", None, "0", None),
+                (11, "Return %", '=ROUND(((B4+B7)/(B2-B3))*100,0)&"%"', None, "0%", None),
+                (13, "Success order", "=B2-B3-B4-B7", None, "0", None),
+                (14, "Success order payout", m["noneActualSum14"], m["noneExpectedSum14"], "0", f"{m['zeroActualCount14']} order(s) ka Actual Net Settlement 0 show kar raha tha, isliye unka Expected Net Settlement C14 me liya gaya hai."),
+                (15, "Success Order product cost", m["noneCostPriceSum15"], None, "0", f"{m['zeroCostPriceCount15']} order ki Cost Price 0 mili hai."),
+                (16, "Per order return charge on success order", "=IFERROR(ROUND((B9+C9)/B13,0),0)", None, "0", None),
+                (18, "Gross Profit", "=ROUND(ABS(B5+B14+C14-B15),0)", None, "0", None),
+                (19, "Less Return Charge", "=ROUND(ABS(B9+C9),0)", None, "0", None),
+                (20, "Less Other Charges", "=SUM(F2:F20)", None, "0", None),
+                (22, "Add other CN", "=SUM(I2:I20)", None, "0", None),
+                (24, "Net Profit", "=ROUND(B18-B19-B20+B22,0)", None, "0", None),
+                (26, "Profit per success Order", "=IFERROR(ROUND(B24/B13,2),0)", None, "0", None)
             ]
 
-            for r_idx, label, b_val, c_val, num_fmt, note_text in structure:
-                if not label: continue
+            ws["E3"] = "Ad Services Fee"
+            ws["E3"].font = regular_font
+            ws["F3"] = m["adFeeSum"]
+            ws["F3"].font = regular_font
+            ws["F3"].number_format = "0"
+            ws["F3"].border = border_thin
+
+            for r_idx, label, b_val, c_val, num_fmt, note_text in rows:
                 ca = ws[f"A{r_idx}"]; cb = ws[f"B{r_idx}"]; cc = ws[f"C{r_idx}"]
                 ca.value = label
                 cb.value = b_val
                 if c_val is not None:
                     cc.value = c_val
                     cc.number_format = num_fmt
+                    cc.font = regular_font
+                    cc.border = border_thin
 
                 if num_fmt and b_val is not None:
                     cb.number_format = num_fmt
 
-                ca.font = metric_font if r_idx in [2, 13, 18, 24, 26] else regular_font
-                cb.font = metric_font if r_idx in [2, 13, 18, 24, 26] else regular_font
-                cc.font = regular_font
+                ca.font = bold_metric_font if r_idx in [2, 13, 18, 24, 26] else regular_font
+                cb.font = bold_metric_font if r_idx in [2, 13, 18, 24, 26] else regular_font
 
-                ca.border = border_thin; cb.border = border_thin; cc.border = border_thin
+                ca.border = border_thin
+                cb.border = border_thin
 
                 if note_text:
                     target_cell = cc if c_val is not None else cb
                     target_cell.comment = Comment(note_text, "Payment Reco")
 
-                if r_idx in [18, 24]:
-                    ca.fill = profit_fill; cb.fill = profit_fill
+                if r_idx in [19, 20]:
+                    cb.fill = peach_fill
+                elif r_idx == 22:
+                    cb.fill = green_fill
 
-            ws.column_dimensions["A"].width = 50
-            ws.column_dimensions["B"].width = 24
-            ws.column_dimensions["C"].width = 24
+            ws.column_dimensions["A"].width = 38
+            ws.column_dimensions["B"].width = 18
+            ws.column_dimensions["C"].width = 18
+            ws.column_dimensions["D"].width = 6
+            ws.column_dimensions["E"].width = 24
+            ws.column_dimensions["F"].width = 18
+            ws.column_dimensions["G"].width = 6
+            ws.column_dimensions["H"].width = 20
+            ws.column_dimensions["I"].width = 16
 
-        # Build SKU Sheet with '=B2-D2-E2' formula
-        def build_sku_sheet(ws, title, sub_df):
+        # Build SKU Sheet with dynamic delivered orders formula: B2-D2-E2
+        def build_sku_sheet(ws, title, sub_df, summary_sheet_name):
             ws.title = title[:31]
             ws.views.sheetView[0].showGridLines = True
             headers = [
@@ -251,7 +272,7 @@ if uploaded_file is not None:
             ws.append(headers)
             for c_i in range(1, len(headers) + 1):
                 c = ws.cell(row=1, column=c_i)
-                c.fill = header_fill; c.font = header_font
+                c.fill = table_head_fill; c.font = table_head_font
                 c.alignment = Alignment(horizontal="center", vertical="center")
 
             sku_list = []
@@ -278,6 +299,7 @@ if uploaded_file is not None:
             sku_list.sort(key=lambda x: x["total"], reverse=True)
 
             for r_idx, item in enumerate(sku_list, start=2):
+                cost_cell_val = item["cost"] if has_cost_price and item["cost"] > 0 else f"='{summary_sheet_name}'!$B$15/'{summary_sheet_name}'!$B$13"
                 ws.append([
                     item["sku"],
                     item["total"],
@@ -285,7 +307,7 @@ if uploaded_file is not None:
                     item["cr"],
                     item["rto"],
                     f"=(D{r_idx}+E{r_idx})/B{r_idx}",             # Return % formula
-                    item["cost"],
+                    cost_cell_val,
                     round(item["payout"], 2),                    # Total Payout
                     f"=IF(C{r_idx}>0, H{r_idx}/C{r_idx}, 0)",     # Avg Payout / Delivered
                     f"=H{r_idx}-(C{r_idx}*G{r_idx})"              # Estimated Profit
@@ -300,10 +322,6 @@ if uploaded_file is not None:
                 ws[f"I{r_idx}"].number_format = "₹#,##0.00"
                 ws[f"J{r_idx}"].number_format = "₹#,##0.00"
 
-                if item["cost"] == 0 and item["payout"] > 0 and has_cost_price:
-                    ws[f"G{r_idx}"].fill = alert_red_fill
-                    ws[f"G{r_idx}"].comment = Comment("Payout received but Cost is 0! Please update cost price.", "Payment Reco")
-
                 for col_num in range(1, 11):
                     ws.cell(row=r_idx, column=col_num).border = border_thin
 
@@ -317,8 +335,8 @@ if uploaded_file is not None:
             ws.title = title[:31]
             ws.views.sheetView[0].showGridLines = True
             ws.append(["Metric", "Value"])
-            ws["A1"].fill = header_fill; ws["A1"].font = header_font
-            ws["B1"].fill = header_fill; ws["B1"].font = header_font
+            ws["A1"].fill = table_head_fill; ws["A1"].font = table_head_font
+            ws["B1"].fill = table_head_fill; ws["B1"].font = table_head_font
 
             tot = len(sub_df)
             cr = len(sub_df[sub_df[return_type_col].astype(str).str.upper().isin(['CUSTOMER RETURN', 'CIR'])]) if return_type_col else 0
@@ -343,8 +361,6 @@ if uploaded_file is not None:
                 ("Marketplace Commission Fees (₹)", comm, "₹#,##0.00"),
                 ("GST Deducted on MP Fees (₹)", gst, "₹#,##0.00"),
                 ("Net Bank Settlement Received (₹)", payout, "₹#,##0.00"),
-                ("Total Product Cost (Sold Units) (₹)", "=B3*B14", "₹#,##0.00"),
-                ("Net Profit in Hand (₹)", "=B13-B15", "₹#,##0.00"),
                 ("Average Return Charge per Return Order (₹)", "=IF((B4+B6)>0, B10/(B4+B6), 0)", "₹#,##0.00"),
                 ("Return Charge Burden per 1 Delivered Order (₹)", "=IF(B3>0, (B10+B12)/B3, 0)", "₹#,##0.00")
             ]
@@ -352,13 +368,9 @@ if uploaded_file is not None:
             for row_idx, (label, val, num_fmt) in enumerate(rows, start=2):
                 ca = ws[f"A{row_idx}"]; cb = ws[f"B{row_idx}"]
                 ca.value = label; cb.value = val; cb.number_format = num_fmt
-                ca.font = metric_font if row_idx in [3, 5, 7, 13, 16] else regular_font
-                cb.font = metric_font if row_idx in [3, 5, 7, 13, 16] else regular_font
+                ca.font = bold_metric_font if row_idx in [3, 5, 7, 13] else regular_font
+                cb.font = bold_metric_font if row_idx in [3, 5, 7, 13] else regular_font
                 ca.border = border_thin; cb.border = border_thin
-                if row_idx == 14:
-                    ca.fill = yellow_fill; cb.fill = yellow_fill
-                if row_idx == 16:
-                    ca.fill = profit_fill; cb.fill = profit_fill
 
             ws.column_dimensions["A"].width = 50
             ws.column_dimensions["B"].width = 24
@@ -373,39 +385,46 @@ if uploaded_file is not None:
                 sum_sheet_title = f"{ch_clean}_Summary"[:31]
                 sku_sheet_title = f"{ch_clean}_SKU"[:31]
 
-                # Apps Script Summary Sheet for channel
                 ws_sum = wb.create_sheet()
-                ch_metrics = calculate_apps_script_metrics(ch_df)
-                build_apps_script_summary_sheet(ws_sum, sum_sheet_title, ch_metrics)
+                ch_m = calculate_apps_script_metrics(ch_df)
+                build_image_matched_summary_sheet(ws_sum, sum_sheet_title, ch_m, ch_clean)
 
-                # SKU Sheet for channel
                 if sku_col:
                     ws_sku = wb.create_sheet()
-                    build_sku_sheet(ws_sku, sku_sheet_title, ch_df)
+                    build_sku_sheet(ws_sku, sku_sheet_title, ch_df, sum_sheet_title)
         else:
-            # Single template (Flipkart settlement direct)
             ws_single_sum = wb.create_sheet()
             build_standard_single_summary(ws_single_sum, "Executive_Summary", df)
 
             if sku_col:
                 ws_single_sku = wb.create_sheet()
-                build_sku_sheet(ws_single_sku, "SKU_Wise_Performance", df)
+                build_sku_sheet(ws_single_sku, "SKU_Wise_Performance", df, "Executive_Summary")
 
         st.success(f"✅ Processed successfully! Mode: {'Multi-Marketplace Channel Mode' if is_multi_channel else 'Single Marketplace Mode'}")
         
+        all_metrics = calculate_apps_script_metrics(df)
+        st.subheader("📌 File Overview")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total Transactions", f"{all_metrics['rowCount']:,}")
+        m2.metric("Cancelled Orders", f"{all_metrics['cancelledCount']:,}")
+        m3.metric("RTO Returns", f"{all_metrics['rtoCount']:,}")
+        m4.metric("CIR Returns", f"{all_metrics['cirCount']:,}")
+
         if is_multi_channel:
+            st.markdown("---")
             st.subheader("🏪 Marketplace Channels Detected (Column E)")
             ch_list_ui = []
             for ch in df[channel_col].dropna().unique():
                 m_ch = calculate_apps_script_metrics(df[df[channel_col] == ch])
+                ch_success = m_ch["rowCount"] - m_ch["cancelledCount"] - m_ch["rtoCount"] - m_ch["cirCount"]
                 ch_list_ui.append({
                     "Channel Code": ch,
-                    "Total Orders (B2)": m_ch["rowCount"],
+                    "Total Order (B2)": m_ch["rowCount"],
                     "Cancelled (B3)": m_ch["cancelledCount"],
                     "RTO (B4)": m_ch["rtoCount"],
                     "CIR (B7)": m_ch["cirCount"],
-                    "Delivered (B13)": m_ch["rowCount"] - m_ch["cancelledCount"] - m_ch["rtoCount"] - m_ch["cirCount"],
-                    "Actual Settlement (B14)": f"₹{m_ch['noneActualSum14']:,}",
+                    "Success Order (B13)": ch_success,
+                    "Success Payout (B14)": f"₹{m_ch['noneActualSum14']:,}",
                     "Product Cost (B15)": f"₹{m_ch['noneCostPriceSum15']:,}"
                 })
             st.dataframe(pd.DataFrame(ch_list_ui), use_container_width=True)
