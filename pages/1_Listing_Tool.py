@@ -90,13 +90,14 @@ def _get_secret(name, default=""):
     return str(default or "").strip()
 
 # Initialize API keys: Checks secrets.toml / env vars first, and falls back to permanent direct keys
-IMGBB_API_KEY = "c4e017b58c982cf4d4fa436fb16ad503"
-GEMINI_API_KEY = "AQ.Ab8RN6Jlzt18BNR25TTv1tDClL0Dpy6dhqLrTHyVLpkKxnvjtg"
-GEMINI_VISION_MODEL = "gemini-2.0-flash"
-NVIDIA_API_KEY = "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"
-NVIDIA_MODEL = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
-GROQ_API_KEY = "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"
-GROQ_VISION_MODEL = "llama-3.2-11b-vision-preview"
+IMGBB_API_KEY = _get_secret("IMGBB_API_KEY", "c4e017b58c982cf4d4fa436fb16ad503")
+IMGBB_PERMANENT_KEY = IMGBB_API_KEY  # Backward-compatible alias so NameError is impossible
+GEMINI_API_KEY = _get_secret("GEMINI_API_KEY", "AQ.Ab8RN6Jlzt18BNR25TTv1tDClL0Dpy6dhqLrTHyVLpkKxnvjtg")
+GEMINI_VISION_MODEL = _get_secret("GEMINI_VISION_MODEL", "gemini-2.0-flash")
+NVIDIA_API_KEY = _get_secret("NVIDIA_API_KEY", "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")
+NVIDIA_MODEL = _get_secret("NVIDIA_MODEL", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning")
+GROQ_API_KEY = _get_secret("GROQ_API_KEY", "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")
+GROQ_VISION_MODEL = _get_secret("GROQ_VISION_MODEL", "llama-3.2-11b-vision-preview")
 
 MP_LIST = ["Ajio", "Amazon - Vendor Central", "Convert: Vendor Central ➜ Seller Central", "Amazon - Seller Central", "Flipkart", "Meesho", "Myntra"]
 if st.session_state.get("pl_mp_sel", "Ajio") == "Ajio":
@@ -114,7 +115,7 @@ CONVERT_MODE = marketplace.startswith("Convert:")
 _api_errors = st.session_state.setdefault("api_errors", {})
 _missing_keys = [
     n for n, v in [
-        ("IMGBB_API_KEY", globals().get("IMGBB_PERMANENT_KEY") or globals().get("IMGBB_API_KEY")),
+        ("IMGBB_API_KEY", globals().get("IMGBB_API_KEY") or globals().get("IMGBB_PERMANENT_KEY")),
         ("GEMINI_API_KEY", globals().get("GEMINI_API_KEY")),
         ("NVIDIA_API_KEY", globals().get("NVIDIA_API_KEY")),
         ("GROQ_API_KEY", globals().get("GROQ_API_KEY")),
@@ -129,7 +130,7 @@ if _missing_keys and not CONVERT_MODE:
         st.markdown("**Ya fir temporary session ke liye yahan paste karke save karein:**")
         col_k1, col_k2 = st.columns(2)
         with col_k1:
-            ui_imgbb = st.text_input("IMGBB_API_KEY:", value=IMGBB_PERMANENT_KEY, type="password", key="ui_set_imgbb")
+            ui_imgbb = st.text_input("IMGBB_API_KEY:", value=IMGBB_API_KEY, type="password", key="ui_set_imgbb")
             ui_gemini = st.text_input("GEMINI_API_KEY:", value=GEMINI_API_KEY, type="password", key="ui_set_gemini")
         with col_k2:
             ui_nvidia = st.text_input("NVIDIA_API_KEY:", value=NVIDIA_API_KEY, type="password", key="ui_set_nvidia")
@@ -591,7 +592,7 @@ def upload_to_imgbb(image_bytes, api_key):
     if not image_bytes:
         return None
     keys_to_try = []
-    for k in [api_key, globals().get("IMGBB_PERMANENT_KEY"), globals().get("IMGBB_API_KEY"), "86fc928d36f7cdff5eac1656b544ed1d"]:
+    for k in [api_key, globals().get("IMGBB_API_KEY"), globals().get("IMGBB_PERMANENT_KEY"), "c4e017b58c982cf4d4fa436fb16ad503"]:
         k_clean = str(k or "").strip()
         if k_clean and k_clean not in keys_to_try:
             keys_to_try.append(k_clean)
@@ -633,9 +634,10 @@ def upload_to_imgbb(image_bytes, api_key):
                 time.sleep(0.4 * (attempt + 1))
     return None
 
-def upload_to_imgbb_cached(image_bytes, api_key, cache, sku_hint="", img_idx=1):
+def upload_to_imgbb_cached(image_bytes, api_key=None, cache=None, sku_hint="", img_idx=1):
     if not image_bytes:
         return None
+    api_key = api_key or globals().get("IMGBB_API_KEY") or globals().get("IMGBB_PERMANENT_KEY") or "c4e017b58c982cf4d4fa436fb16ad503"
     h = hashlib.md5(image_bytes).hexdigest()
     cache_key = f"real_imgbb_{h}"
     if cache_key in cache and cache[cache_key] and not _is_synthetic_hash_url(cache[cache_key], h):
@@ -1260,7 +1262,7 @@ def get_sku_img_urls(raw_fld, ctx, clean_style):
                     break
         if matched_tuples:
             for idx_im, (iname, ibytes) in enumerate(matched_tuples, start=1):
-                u = upload_to_imgbb_cached(ibytes, IMGBB_PERMANENT_KEY, img_cache, sku_hint=clean_style, img_idx=idx_im)
+                u = upload_to_imgbb_cached(ibytes, IMGBB_API_KEY, img_cache, sku_hint=clean_style, img_idx=idx_im)
                 if u:
                     urls.append(u)
             if urls:
@@ -3022,14 +3024,14 @@ def render_listing_ui():
                                 v_res, provider = pl_multi_ai_vision_detect(pl_zip_images[fld][0][1], pl_zip_images[fld][0][0], folder_hint=fld, all_img_tuples=pl_zip_images[fld])
                                 if v_res: v_res['ai_source'] = provider; ctx['vision_results'][base_sku] = v_res
                         for fld, sc_info in pl_size_charts.items():
-                            url = pl_upload_to_imgbb_cached(sc_info['bytes'], IMGBB_PERMANENT_KEY, img_cache)
+                            url = pl_upload_to_imgbb_cached(sc_info['bytes'], IMGBB_API_KEY, img_cache)
                             if url:
                                 ctx['size_chart_urls'][fld] = url
                                 if not ctx['size_chart_cdn_url']: ctx['size_chart_cdn_url'] = url
                         for fld, img_tuples in pl_zip_images.items():
                             ctx['live_links_cache'][fld] = []
                             for iname, ibytes in img_tuples:
-                                url = pl_upload_to_imgbb_cached(ibytes, IMGBB_PERMANENT_KEY, img_cache)
+                                url = pl_upload_to_imgbb_cached(ibytes, IMGBB_API_KEY, img_cache)
                                 if url: ctx['live_links_cache'][fld].append(url)
                     out_bytes, preview_data, total_added, target_sheet = pl_run_perfect_ajio_listing(tpl_file, pl_zip_images, size_chart_measurements, ctx)
                     st.success(f"🎉 Listing complete! Total **{total_added}** variants add hue (`{target_sheet}`).")
@@ -3054,14 +3056,14 @@ def render_listing_ui():
                     if pl_zip_images:
                         with st.spinner("ZIP folders ki images ko ImgBB API ke thru live upload kiya ja raha hai..."):
                             for fld, sc_info in pl_size_charts.items():
-                                u = upload_to_imgbb_cached(sc_info['bytes'], IMGBB_PERMANENT_KEY, img_cache, sku_hint=fld, img_idx=0)
+                                u = upload_to_imgbb_cached(sc_info['bytes'], IMGBB_API_KEY, img_cache, sku_hint=fld, img_idx=0)
                                 if u:
                                     ctx['size_chart_urls'][fld] = u
                                     if not ctx['size_chart_cdn_url']: ctx['size_chart_cdn_url'] = u
                             for fld, img_tuples in pl_zip_images.items():
                                 ctx['live_links_cache'][fld] = []
                                 for idx_im, (iname, ibytes) in enumerate(img_tuples, start=1):
-                                    u = upload_to_imgbb_cached(ibytes, IMGBB_PERMANENT_KEY, img_cache, sku_hint=fld, img_idx=idx_im)
+                                    u = upload_to_imgbb_cached(ibytes, IMGBB_API_KEY, img_cache, sku_hint=fld, img_idx=idx_im)
                                     if u: ctx['live_links_cache'][fld].append(u)
                                 cs_fld = clean_sku_name(fld)
                                 if cs_fld != fld:
