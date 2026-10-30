@@ -343,7 +343,6 @@ if uploaded_file is not None:
                 ("Marketplace Commission Fees (₹)", comm, "₹#,##0.00"),
                 ("GST Deducted on MP Fees (₹)", gst, "₹#,##0.00"),
                 ("Net Bank Settlement Received (₹)", payout, "₹#,##0.00"),
-                ("Average Unit Cost (₹) [FILL IF 0]", 0.0, "₹#,##0.00"),
                 ("Total Product Cost (Sold Units) (₹)", "=B3*B14", "₹#,##0.00"),
                 ("Net Profit in Hand (₹)", "=B13-B15", "₹#,##0.00"),
                 ("Average Return Charge per Return Order (₹)", "=IF((B4+B6)>0, B10/(B4+B6), 0)", "₹#,##0.00"),
