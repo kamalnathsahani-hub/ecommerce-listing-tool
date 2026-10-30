@@ -1,18 +1,21 @@
 import streamlit as st
 import pandas as pd
 import io
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 
 # Page Config
-st.set_page_config(page_title="Payment Reconciliation & Profit Analyzer", layout="wide")
+st.set_page_config(page_title="Payment Reco & Profit Analyzer", layout="wide")
 
 st.title("💰 Marketplace Payment & Profit Reconciliation")
-st.markdown("Flipkart ya kisi bhi marketplace ki settlement Excel file upload karke payment breakup, deductions, return charges aur net profit analyze karein.")
+st.markdown("Settlement Excel file upload karke sales, returns, deductions, live formulas aur **SKU-Wise Pivot** report download karein.")
 
-# Sidebar inputs for costing
+# Sidebar Cost Inputs
 st.sidebar.header("⚙️ Costing & Expenses")
 cogs_input = st.sidebar.number_input("Average Product Cost / COGS (₹ per item)", min_value=0.0, value=120.0, step=5.0)
 pkg_cost = st.sidebar.number_input("Packaging & Label Cost (₹ per item)", min_value=0.0, value=10.0, step=1.0)
-total_unit_cost = cogs_input + pkg_cost
+total_unit_cost = float(cogs_input + pkg_cost)
 
 # File Uploader
 uploaded_file = st.file_uploader("📂 Upload Settlement Excel File (.xlsx / .xls)", type=["xlsx", "xls"])
@@ -24,13 +27,12 @@ if uploaded_file is not None:
         # Check sheet structure
         if 'Orders' in xls.sheet_names:
             df = pd.read_excel(uploaded_file, sheet_name='Orders', header=1)
-            # Remove any sub-header row where Order ID is empty
             df = df.dropna(subset=['Order ID']).copy()
         else:
             df = pd.read_excel(uploaded_file)
             df = df.dropna(how='all')
 
-        # Helper column finders (Safe matching for different marketplace naming)
+        # Helper column matchers
         def find_col(possible_names):
             for col in df.columns:
                 for name in possible_names:
@@ -41,7 +43,7 @@ if uploaded_file is not None:
         order_id_col = find_col(['Order ID'])
         sale_col = find_col(['Sale Amount (Rs.)', 'Sale Amount'])
         refund_col = find_col(['Refund (Rs.)', 'Refund Amount', 'Refund'])
-        bank_col = find_col(['Bank Settlement Value', 'Settlement Value', 'Net Settlement'])
+        bank_col = [c for c in df.columns if 'Bank Settlement' in str(c)][0] if any('Bank Settlement' in str(c) for c in df.columns) else find_col(['Settlement Value', 'Net Settlement'])
         return_type_col = find_col(['Return Type'])
         rev_ship_col = find_col(['Reverse Shipping Fee', 'Reverse Shipping'])
         gst_mp_col = find_col(['GST on MP Fees', 'GST on Marketplace'])
@@ -49,28 +51,20 @@ if uploaded_file is not None:
         sku_col = find_col(['Seller SKU', 'SKU'])
         order_date_col = find_col(['Order Date'])
 
-        # Basic counts & splits
+        # Data processing
         total_transactions = len(df)
-        
-        if refund_col:
-            df_delivered = df[df[refund_col] == 0].copy()
-            df_returns = df[df[refund_col] < 0].copy()
-        else:
-            df_delivered = df.copy()
-            df_returns = pd.DataFrame()
+        df_delivered = df[df[refund_col] == 0].copy() if refund_col else df.copy()
+        df_returns = df[df[refund_col] < 0].copy() if refund_col else pd.DataFrame()
 
         delivered_count = len(df_delivered)
         return_count = len(df_returns)
 
-        # Return types breakdown
         cust_return_count = len(df[df[return_type_col] == 'Customer Return']) if return_type_col else 0
         rto_count = len(df[df[return_type_col] == 'Logistics Return']) if return_type_col else 0
 
         cust_return_pct = (cust_return_count / total_transactions * 100) if total_transactions > 0 else 0
         rto_pct = (rto_count / total_transactions * 100) if total_transactions > 0 else 0
-        total_return_pct = (return_count / total_transactions * 100) if total_transactions > 0 else 0
 
-        # Financial totals
         gross_sales = float(df[sale_col].sum()) if sale_col else 0.0
         customer_refunds = abs(float(df[refund_col].sum())) if refund_col else 0.0
         bank_payout = float(df[bank_col].sum()) if bank_col else 0.0
@@ -78,16 +72,14 @@ if uploaded_file is not None:
         total_gst_mp = abs(float(df[gst_mp_col].sum())) if gst_mp_col else 0.0
         total_mp_fee = abs(float(df[mp_fee_col].sum())) if mp_fee_col else 0.0
 
-        # Calculations
         total_cogs_delivered = delivered_count * total_unit_cost
         estimated_profit = bank_payout - total_cogs_delivered
         profit_margin = (estimated_profit / bank_payout * 100) if bank_payout > 0 else 0
 
-        # Average return penalties
         avg_charge_per_return = (total_rev_shipping / return_count) if return_count > 0 else 0.0
         return_burden_per_delivered = (total_rev_shipping + total_gst_mp) / delivered_count if delivered_count > 0 else 0.0
 
-        # --- Dashboard Metrics Display ---
+        # UI Metrics Display
         st.success("✅ Payment File Analyzed Successfully!")
         
         st.subheader("📌 Key Order & Return Breakdown")
@@ -104,65 +96,226 @@ if uploaded_file is not None:
         f3.metric("Bank Payout (Received)", f"₹{bank_payout:,.2f}")
         f4.metric("Estimated Net Profit", f"₹{estimated_profit:,.2f}", f"{profit_margin:.1f}% Margin")
 
-        st.subheader("⚠️ Return Cost Impact (Reverse Shipping)")
-        r1, r2, r3 = st.columns(3)
-        r1.metric("Total Reverse Shipping Deducted", f"₹{total_rev_shipping:,.2f}")
-        r2.metric("Avg Reverse Charge / Return", f"₹{avg_charge_per_return:.2f}")
-        r3.metric("Return Charge Burden / Delivered Order", f"₹{return_burden_per_delivered:.2f}")
-
         st.markdown("---")
 
-        # --- Create Simplified Excel Workbook ---
-        summary_records = [
-            {"Metric": "Settlement File Total Transactions", "Value": total_transactions},
-            {"Metric": "Delivered / Successful Orders", "Value": delivered_count},
-            {"Metric": "Customer Return Count", "Value": cust_return_count},
-            {"Metric": "Customer Return %", "Value": f"{cust_return_pct:.2f}%"},
-            {"Metric": "RTO (Logistics Return) Count", "Value": rto_count},
-            {"Metric": "RTO (Logistics Return) %", "Value": f"{rto_pct:.2f}%"},
-            {"Metric": "Gross Customer Sales Amount (₹)", "Value": round(gross_sales, 2)},
-            {"Metric": "Customer Refund Amount (₹)", "Value": round(customer_refunds, 2)},
-            {"Metric": "Reverse Shipping Fees Deducted (₹)", "Value": round(total_rev_shipping, 2)},
-            {"Metric": "Marketplace Commission & Other Fees (₹)", "Value": round(total_mp_fee - total_rev_shipping, 2)},
-            {"Metric": "GST Deducted on MP Fees (₹)", "Value": round(total_gst_mp, 2)},
-            {"Metric": "Net Bank Settlement Received (₹)", "Value": round(bank_payout, 2)},
-            {"Metric": f"Total Product & Packaging Cost ({delivered_count} Sold Units) (₹)", "Value": round(total_cogs_delivered, 2)},
-            {"Metric": "Net Profit in Hand (₹)", "Value": round(estimated_profit, 2)},
-            {"Metric": "Average Return Charge per Return Order (₹)", "Value": round(avg_charge_per_return, 2)},
-            {"Metric": "Return Charge Burden per 1 Delivered Order (₹)", "Value": round(return_burden_per_delivered, 2)}
-        ]
-        df_summary_report = pd.DataFrame(summary_records)
+        # --- SKU WISE PIVOT CALCULATION (FOR PREVIEW & EXCEL) ---
+        if sku_col:
+            sku_summary = []
+            for sku_name, group in df.groupby(sku_col):
+                sku_total_orders = len(group)
+                sku_deliv = len(group[group[refund_col] == 0]) if refund_col else len(group)
+                sku_cr = len(group[group[return_type_col] == 'Customer Return']) if return_type_col else 0
+                sku_rto = len(group[group[return_type_col] == 'Logistics Return']) if return_type_col else 0
+                sku_bank = group[bank_col].sum() if bank_col else 0.0
+                sku_summary.append({
+                    "SKU": sku_name,
+                    "Total Orders": sku_total_orders,
+                    "Delivered Orders": sku_deliv,
+                    "Customer Returns": sku_cr,
+                    "RTO Returns": sku_rto,
+                    "Total Bank Payout (₹)": round(sku_bank, 2)
+                })
+            sku_df = pd.DataFrame(sku_summary).sort_values(by="Total Orders", ascending=False)
+            
+            st.subheader("📦 SKU-Wise Performance Preview (Top 10)")
+            st.dataframe(sku_df.head(10), use_container_width=True)
 
-        # Simplified Clean Orders Dataframe
+        # --- CREATE EXCEL WORKBOOK WITH DYNAMIC FORMULAS VIA OPENPYXL ---
+        wb = openpyxl.Workbook()
+        
+        # Styles
+        header_fill = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
+        header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        metric_font = Font(name="Calibri", size=10, bold=True)
+        regular_font = Font(name="Calibri", size=10)
+        border_thin = Border(left=Side(style='thin', color='DDDDDD'),
+                             right=Side(style='thin', color='DDDDDD'),
+                             top=Side(style='thin', color='DDDDDD'),
+                             bottom=Side(style='thin', color='DDDDDD'))
+
+        # ==========================================
+        # SHEET 1: Executive_Summary (WITH FORMULAS)
+        # ==========================================
+        ws1 = wb.active
+        ws1.title = "Executive_Summary"
+        ws1.views.sheetView[0].showGridLines = True
+
+        ws1.append(["Metric", "Value"])
+        ws1["A1"].fill = header_fill
+        ws1["A1"].font = header_font
+        ws1["B1"].fill = header_fill
+        ws1["B1"].font = header_font
+
+        # Dynamic Formula Definitions
+        # B2: Total Transactions
+        # B3: Delivered Orders
+        # B4: Customer Return Count
+        # B5: Customer Return %  -> =B4/B2
+        # B6: RTO Count
+        # B7: RTO %             -> =B6/B2
+        # B8: Gross Sales
+        # B9: Customer Refund
+        # B10: Reverse Shipping Fees
+        # B11: Marketplace Commission & Other Fees
+        # B12: GST on MP Fees
+        # B13: Net Bank Settlement
+        # B14: Unit Cost (COGS + Packaging)
+        # B15: Total Product & Packaging Cost -> =B3*B14
+        # B16: Net Profit in Hand             -> =B13-B15
+        # B17: Average Return Charge / Return -> =IF((B4+B6)>0, B10/(B4+B6), 0)
+        # B18: Return Penalty Burden / Delivered -> =IF(B3>0, (B10+B12)/B3, 0)
+        
+        summary_rows = [
+            ("Settlement File Total Transactions", total_transactions, "0"),
+            ("Delivered / Successful Orders", delivered_count, "0"),
+            ("Customer Return Count", cust_return_count, "0"),
+            ("Customer Return %", "=B4/B2", "0.00%"),
+            ("RTO (Logistics Return) Count", rto_count, "0"),
+            ("RTO (Logistics Return) %", "=B6/B2", "0.00%"),
+            ("Gross Customer Sales Amount (₹)", gross_sales, "₹#,##0.00"),
+            ("Customer Refund Amount (₹)", customer_refunds, "₹#,##0.00"),
+            ("Reverse Shipping Fees Deducted (₹)", total_rev_shipping, "₹#,##0.00"),
+            ("Marketplace Commission & Other Fees (₹)", max(0.0, total_mp_fee - total_rev_shipping), "₹#,##0.00"),
+            ("GST Deducted on MP Fees (₹)", total_gst_mp, "₹#,##0.00"),
+            ("Net Bank Settlement Received (₹)", bank_payout, "₹#,##0.00"),
+            ("Average Unit Cost (COGS + Pack) (₹)", total_unit_cost, "₹#,##0.00"),
+            ("Total Product & Packaging Cost (Sold Units) (₹)", "=B3*B14", "₹#,##0.00"),
+            ("Net Profit in Hand (₹)", "=B13-B15", "₹#,##0.00"),
+            ("Average Return Charge per Return Order (₹)", "=IF((B4+B6)>0, B10/(B4+B6), 0)", "₹#,##0.00"),
+            ("Return Charge Burden per 1 Delivered Order (₹)", "=IF(B3>0, (B10+B12)/B3, 0)", "₹#,##0.00")
+        ]
+
+        for row_idx, (label, val, num_fmt) in enumerate(summary_rows, start=2):
+            cell_a = ws1[f"A{row_idx}"]
+            cell_b = ws1[f"B{row_idx}"]
+            cell_a.value = label
+            cell_b.value = val
+            cell_b.number_format = num_fmt
+            
+            # Styling
+            cell_a.font = metric_font if row_idx in [5, 7, 13, 16] else regular_font
+            cell_b.font = metric_font if row_idx in [5, 7, 13, 16] else regular_font
+            cell_a.border = border_thin
+            cell_b.border = border_thin
+            
+            # Highlight Net Profit row
+            if row_idx == 16:
+                cell_a.fill = PatternFill(start_color="D9EAD3", fill_type="solid")
+                cell_b.fill = PatternFill(start_color="D9EAD3", fill_type="solid")
+
+        ws1.column_dimensions["A"].width = 46
+        ws1.column_dimensions["B"].width = 24
+
+        # ==========================================
+        # SHEET 2: SKU_Wise_Performance (PIVOT)
+        # ==========================================
+        if sku_col:
+            ws2 = wb.create_sheet(title="SKU_Wise_Performance")
+            ws2.views.sheetView[0].showGridLines = True
+            
+            sku_headers = [
+                "SKU Code", "Total Orders", "Delivered Orders", 
+                "Customer Returns", "RTO Returns", "Return %", 
+                "Total Payout (₹)", "Avg Payout / Delivered (₹)", 
+                "Estimated Profit (₹)"
+            ]
+            ws2.append(sku_headers)
+            for col_num in range(1, len(sku_headers) + 1):
+                c = ws2.cell(row=1, column=col_num)
+                c.fill = header_fill
+                c.font = header_font
+                c.alignment = Alignment(horizontal="center", vertical="center")
+
+            for r_idx, row in enumerate(sku_df.itertuples(), start=2):
+                ws2.append([
+                    row.SKU,
+                    row._2,  # Total Orders
+                    row.Delivered_Orders,
+                    row.Customer_Returns,
+                    row.RTO_Returns,
+                    f"=(D{r_idx}+E{r_idx})/B{r_idx}",            # Return % formula
+                    row.Total_Bank_Payout__,                     # Total Payout
+                    f"=IF(C{r_idx}>0, G{r_idx}/C{r_idx}, 0)",    # Avg Payout / Delivered formula
+                    f"=G{r_idx}-(C{r_idx}*Executive_Summary!$B$14)" # Estimated Profit formula
+                ])
+                # Formats
+                ws2[f"B{r_idx}"].number_format = "0"
+                ws2[f"C{r_idx}"].number_format = "0"
+                ws2[f"D{r_idx}"].number_format = "0"
+                ws2[f"E{r_idx}"].number_format = "0"
+                ws2[f"F{r_idx}"].number_format = "0.0%"
+                ws2[f"G{r_idx}"].number_format = "₹#,##0.00"
+                ws2[f"H{r_idx}"].number_format = "₹#,##0.00"
+                ws2[f"I{r_idx}"].number_format = "₹#,##0.00"
+                
+                for col_num in range(1, 10):
+                    ws2.cell(row=r_idx, column=col_num).border = border_thin
+
+            for col in ws2.columns:
+                max_len = max(len(str(cell.value or '')) for cell in col)
+                col_letter = get_column_letter(col[0].column)
+                ws2.column_dimensions[col_letter].width = max(max_len + 3, 14)
+
+        # ==========================================
+        # SHEET 3: Simplified_Orders_Reco (ROW DATA)
+        # ==========================================
+        ws3 = wb.create_sheet(title="Simplified_Orders_Reco")
+        ws3.views.sheetView[0].showGridLines = True
+        
+        order_headers = [
+            "Order ID", "Order Date", "SKU", "Order Status",
+            "Sale Amount (₹)", "Refund Amount (₹)", "Reverse Shipping (₹)",
+            "Bank Settlement (₹)", "Unit Cost (₹)", "Estimated Order Profit (₹)"
+        ]
+        ws3.append(order_headers)
+        for col_num in range(1, len(order_headers) + 1):
+            c = ws3.cell(row=1, column=col_num)
+            c.fill = header_fill
+            c.font = header_font
+
+        # Clean Order Level Data
         clean_df = pd.DataFrame()
         if order_id_col: clean_df['Order ID'] = df[order_id_col]
-        if order_date_col: clean_df['Order Date'] = df[order_date_col]
+        if order_date_col: clean_df['Order Date'] = df[order_date_col].astype(str)
         if sku_col: clean_df['SKU'] = df[sku_col]
         if return_type_col: clean_df['Order Status'] = df[return_type_col].fillna('Delivered')
-        if sale_col: clean_df['Sale Amount (₹)'] = df[sale_col]
-        if refund_col: clean_df['Refund Amount (₹)'] = df[refund_col]
-        if rev_ship_col: clean_df['Reverse Shipping (₹)'] = df[rev_ship_col]
-        if bank_col: clean_df['Bank Settlement (₹)'] = df[bank_col]
-        
-        # Add Unit Cost & Profit column for delivered orders
-        if refund_col and bank_col:
-            clean_df['Unit Cost (₹)'] = clean_df['Refund Amount (₹)'].apply(lambda x: total_unit_cost if x == 0 else 0)
-            clean_df['Estimated Order Profit (₹)'] = clean_df['Bank Settlement (₹)'] - clean_df['Unit Cost (₹)']
+        if sale_col: clean_df['Sale Amount'] = df[sale_col].fillna(0)
+        if refund_col: clean_df['Refund Amount'] = df[refund_col].fillna(0)
+        if rev_ship_col: clean_df['Reverse Shipping'] = df[rev_ship_col].fillna(0)
+        if bank_col: clean_df['Bank Settlement'] = df[bank_col].fillna(0)
 
-        # Preview Table
-        st.subheader("📋 Executive Summary Table")
-        st.dataframe(df_summary_report, use_container_width=True)
+        for row_i, r in enumerate(clean_df.itertuples(), start=2):
+            # Dynamic formulas:
+            # Col I (Unit Cost): =IF(F{row_i}==0, Executive_Summary!$B$14, 0)
+            # Col J (Profit): =H{row_i}-I{row_i}
+            ws3.append([
+                r._1, r._2, r.SKU, r.Order_Status,
+                r.Sale_Amount, r.Refund_Amount, r.Reverse_Shipping,
+                r.Bank_Settlement,
+                f"=IF(F{row_i}=0, Executive_Summary!$B$14, 0)",
+                f"=H{row_i}-I{row_i}"
+            ])
+            ws3[f"E{row_i}"].number_format = "0.00"
+            ws3[f"F{row_i}"].number_format = "0.00"
+            ws3[f"G{row_i}"].number_format = "0.00"
+            ws3[f"H{row_i}"].number_format = "0.00"
+            ws3[f"I{row_i}"].number_format = "0.00"
+            ws3[f"J{row_i}"].number_format = "0.00"
 
-        # Excel Writer in memory
+        for col in ws3.columns:
+            max_len = max(len(str(cell.value or '')) for cell in col[:100])
+            col_letter = get_column_letter(col[0].column)
+            ws3.column_dimensions[col_letter].width = max(max_len + 3, 14)
+
+        # Output to Streamlit Download Button
         output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df_summary_report.to_excel(writer, sheet_name='Executive_Summary', index=False)
-            clean_df.to_excel(writer, sheet_name='Simplified_Orders_Reco', index=False)
+        wb.save(output)
+        output.seek(0)
         
         st.download_button(
-            label="📥 Download Simplified Excel Report",
+            label="📥 Download Simplified Excel Report (With Live Formulas & SKU Pivot)",
             data=output.getvalue(),
-            file_name="Business_Payment_Profit_Report.xlsx",
+            file_name="Business_Payment_Profit_Report_Formulas.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
