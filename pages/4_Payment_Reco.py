@@ -9,7 +9,7 @@ from openpyxl.utils import get_column_letter
 st.set_page_config(page_title="Multi-Channel Payment Reco & Profit Analyzer", layout="wide")
 
 st.title("💰 Multi-Channel Payment & Profit Reconciliation")
-st.markdown("Settlement Excel ya Multi-Channel CSV file upload karein. Agar file me multiple `Channel Code` hain, toh system automatically **har channel ke naam se alag-alag sheets** (Summary + SKU Pivot) create karke dega.")
+st.markdown("Settlement Excel ya Multi-Channel CSV/Excel file upload karein. File format detect karke system automatically channel-wise aur SKU-wise live dynamic formulas ke saath report generate karega.")
 
 # File Uploader
 uploaded_file = st.file_uploader("📂 Upload Settlement / Reco File (.xlsx, .xls, .csv)", type=["xlsx", "xls", "csv"])
@@ -31,7 +31,7 @@ if uploaded_file is not None:
         def find_col(possible_names):
             for col in df.columns:
                 for name in possible_names:
-                    if str(name).lower() == str(col).lower() or name.lower() in str(col).lower():
+                    if str(name).strip().lower() == str(col).strip().lower() or name.lower() in str(col).lower():
                         return col
             return None
 
@@ -40,7 +40,7 @@ if uploaded_file is not None:
         order_id_col = find_col(['Channel Order Code', 'Order ID', 'Order Code'])
         sku_col = find_col(['Sku Code', 'Seller SKU', 'SKU'])
         cost_price_col = find_col(['Cost Price', 'Product Cost', 'Unit Cost', 'COGS'])
-        sale_col = find_col(['Channel Forward Sale Amount', 'Sale Amount (Rs.)', 'Sale Amount', 'UC Selling Price'])
+        sale_col = find_col(['Channel Forward Sale Amount', 'Channel Net Sale Amount', 'Sale Amount (Rs.)', 'Sale Amount', 'UC Selling Price'])
         refund_col = find_col(['Channel Refund Amount', 'Refund (Rs.)', 'Refund Amount', 'UC Refund'])
         bank_col = find_col(['Actual Net Settlement', 'Bank Settlement Value', 'Net Settlement'])
         return_type_col = find_col(['Return Type'])
@@ -49,7 +49,7 @@ if uploaded_file is not None:
         gst_mp_col = find_col(['Actual Taxed Fee', 'GST on MP Fees (Rs.)', 'GST on Marketplace'])
         order_status_col = find_col(['Order Status', 'Item Return Status'])
 
-        is_multi_channel = bool(channel_col)
+        is_multi_channel = bool(channel_col and df[channel_col].dropna().nunique() > 1)
         has_cost_price = bool(cost_price_col)
 
         # Style Definitions
@@ -66,8 +66,9 @@ if uploaded_file is not None:
         profit_fill = PatternFill(start_color="D9EAD3", fill_type="solid")
 
         wb = openpyxl.Workbook()
+        wb.remove(wb.active) # Remove default sheet
 
-        # Helper to extract metrics for any dataframe slice
+        # Helper: Extract summary metrics
         def extract_metrics(sub_df):
             tot = len(sub_df)
             if return_type_col:
@@ -76,16 +77,7 @@ if uploaded_file is not None:
             else:
                 cr, rto = 0, 0
 
-            if order_status_col:
-                deliv_df = sub_df[sub_df[order_status_col].astype(str).str.upper().isin(['DELIVERED', 'COMPLETE'])]
-                if len(deliv_df) == 0:
-                    deliv_df = sub_df[sub_df[refund_col] == 0] if refund_col else sub_df
-            elif refund_col:
-                deliv_df = sub_df[sub_df[refund_col] == 0]
-            else:
-                deliv_df = sub_df
-            deliv = len(deliv_df)
-
+            deliv = tot - (cr + rto)
             sales = float(pd.to_numeric(sub_df[sale_col], errors='coerce').fillna(0).sum()) if sale_col else 0.0
             refunds = abs(float(pd.to_numeric(sub_df[refund_col], errors='coerce').fillna(0).sum())) if refund_col else 0.0
             payout = float(pd.to_numeric(sub_df[bank_col], errors='coerce').fillna(0).sum()) if bank_col else 0.0
@@ -100,9 +92,9 @@ if uploaded_file is not None:
                 "rev_ship": rev_ship, "comm": comm, "gst": gst, "avg_cost": avg_cost
             }
 
-        # Helper to create Summary Sheet with Excel formulas
+        # Helper: Create Summary Sheet with dynamic Excel formulas
         def make_summary_sheet(ws, title, m):
-            ws.title = title[:31] # Excel max sheet name is 31 chars
+            ws.title = title[:31]
             ws.views.sheetView[0].showGridLines = True
             ws.append(["Metric", "Value"])
             ws["A1"].fill = header_fill
@@ -112,7 +104,7 @@ if uploaded_file is not None:
 
             rows = [
                 ("Settlement File Total Transactions", m["total"], "0"),
-                ("Delivered / Successful Orders", m["delivered"], "0"),
+                ("Delivered / Successful Orders", "=B2-B4-B6", "0"),
                 ("Customer Return (CIR) Count", m["cr"], "0"),
                 ("Customer Return %", "=B4/B2", "0.00%"),
                 ("RTO (Logistics Return) Count", m["rto"], "0"),
@@ -136,8 +128,8 @@ if uploaded_file is not None:
                 ca.value = label
                 cb.value = val
                 cb.number_format = num_fmt
-                ca.font = metric_font if row_idx in [5, 7, 13, 16] else regular_font
-                cb.font = metric_font if row_idx in [5, 7, 13, 16] else regular_font
+                ca.font = metric_font if row_idx in [3, 5, 7, 13, 16] else regular_font
+                cb.font = metric_font if row_idx in [3, 5, 7, 13, 16] else regular_font
                 ca.border = border_thin
                 cb.border = border_thin
                 if row_idx == 14 and (not has_cost_price or m["avg_cost"] == 0):
@@ -151,7 +143,7 @@ if uploaded_file is not None:
             ws.column_dimensions["A"].width = 50
             ws.column_dimensions["B"].width = 24
 
-        # Helper to create SKU Pivot Sheet with Excel formulas
+        # Helper: Create SKU Sheet with '=B2-D2-E2' Delivered Formula
         def make_sku_sheet(ws, title, sub_df, summary_sheet_name):
             ws.title = title[:31]
             ws.views.sheetView[0].showGridLines = True
@@ -171,13 +163,6 @@ if uploaded_file is not None:
             sku_list = []
             for sku_name, grp in sub_df.groupby(sku_col):
                 sku_tot = len(grp)
-                if order_status_col:
-                    sku_del = len(grp[grp[order_status_col].astype(str).str.upper().isin(['DELIVERED', 'COMPLETE'])])
-                elif refund_col:
-                    sku_del = len(grp[grp[refund_col] == 0])
-                else:
-                    sku_del = sku_tot
-
                 if return_type_col:
                     sku_cr = len(grp[grp[return_type_col].astype(str).str.upper().isin(['CUSTOMER RETURN', 'CIR'])])
                     sku_rto = len(grp[grp[return_type_col].astype(str).str.upper().isin(['LOGISTICS RETURN', 'RTO'])])
@@ -190,7 +175,6 @@ if uploaded_file is not None:
                 sku_list.append({
                     "sku": str(sku_name),
                     "total": int(sku_tot),
-                    "delivered": int(sku_del),
                     "cr": int(sku_cr),
                     "rto": int(sku_rto),
                     "cost": round(sku_cost, 2),
@@ -204,14 +188,14 @@ if uploaded_file is not None:
                 ws.append([
                     item["sku"],
                     item["total"],
-                    item["delivered"],
+                    f"=B{r_idx}-D{r_idx}-E{r_idx}",               # Dynamic Delivered Orders formula: B2-D2-E2
                     item["cr"],
                     item["rto"],
-                    f"=(D{r_idx}+E{r_idx})/B{r_idx}",
+                    f"=(D{r_idx}+E{r_idx})/B{r_idx}",             # Return % formula
                     cost_cell_val,
-                    round(item["payout"], 2),
-                    f"=IF(C{r_idx}>0, H{r_idx}/C{r_idx}, 0)",
-                    f"=H{r_idx}-(C{r_idx}*G{r_idx})"
+                    round(item["payout"], 2),                    # Total Payout
+                    f"=IF(C{r_idx}>0, H{r_idx}/C{r_idx}, 0)",     # Avg Payout / Delivered
+                    f"=H{r_idx}-(C{r_idx}*G{r_idx})"              # Estimated Profit
                 ])
                 ws[f"B{r_idx}"].number_format = "0"
                 ws[f"C{r_idx}"].number_format = "0"
@@ -235,68 +219,63 @@ if uploaded_file is not None:
                 col_letter = get_column_letter(col[0].column)
                 ws.column_dimensions[col_letter].width = max(max_len + 3, 14)
 
-        # 1. OVERALL MASTER SUMMARY SHEET
-        ws_all = wb.active
-        all_metrics = extract_metrics(df)
-        make_summary_sheet(ws_all, "Executive_Summary", all_metrics)
-
-        # 2. OVERALL SKU SHEET
-        if sku_col:
-            ws_sku_all = wb.create_sheet()
-            make_sku_sheet(ws_sku_all, "SKU_Wise_Performance", df, "Executive_Summary")
-
-        # 3. IF MULTI-CHANNEL, CREATE SEPARATE SHEETS FOR EACH CHANNEL!
+        # GENERATE WORKBOOK SHEETS ACCORDING TO TEMPLATE TYPE
         if is_multi_channel:
+            # Multi-channel template (e.g. SAmple.xlsx)
             channels = df[channel_col].dropna().unique()
             for ch in channels:
                 ch_df = df[df[channel_col] == ch].copy()
-                ch_name_clean = str(ch).replace("/", "_").replace("\\", "_")
+                ch_clean = str(ch).replace("/", "_").replace("\\", "_")
                 
-                # Sheet names (Keep within 31 char excel limit)
-                sum_sheet_title = f"{ch_name_clean}_Sum"[:31]
-                sku_sheet_title = f"{ch_name_clean}_SKU"[:31]
+                # Excel 31 characters limit safe titles
+                sum_sheet_title = f"{ch_clean}_Summary"[:31]
+                sku_sheet_title = f"{ch_clean}_SKU"[:31]
 
-                # Make Channel Summary Sheet
+                # Channel Summary Sheet
                 ws_ch_sum = wb.create_sheet()
-                ch_metrics = extract_metrics(ch_df)
-                make_summary_sheet(ws_ch_sum, sum_sheet_title, ch_metrics)
+                ch_m = extract_metrics(ch_df)
+                make_summary_sheet(ws_ch_sum, sum_sheet_title, ch_m)
 
-                # Make Channel SKU Pivot Sheet
+                # Channel SKU Sheet
                 if sku_col:
                     ws_ch_sku = wb.create_sheet()
                     make_sku_sheet(ws_ch_sku, sku_sheet_title, ch_df, sum_sheet_title)
+        else:
+            # Single Marketplace template (Standard Flipkart Settlement)
+            ws_single_sum = wb.create_sheet()
+            single_m = extract_metrics(df)
+            make_summary_sheet(ws_single_sum, "Executive_Summary", single_m)
 
-        # UI Overview Metrics
-        st.success(f"✅ File Processed! Mode: {'Multi-Marketplace Channel File' if is_multi_channel else 'Single Marketplace File'}")
+            if sku_col:
+                ws_single_sku = wb.create_sheet()
+                make_sku_sheet(ws_single_sku, "SKU_Wise_Performance", df, "Executive_Summary")
+
+        # UI Summary Display
+        st.success(f"✅ Processed successfully! Mode: {'Multi-Marketplace Channel Mode' if is_multi_channel else 'Single Marketplace Mode'}")
         
-        st.subheader("📌 Overall Business Level Summary")
+        all_metrics = extract_metrics(df)
+        st.subheader("📌 File Overview")
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Total Transactions", f"{all_metrics['total']:,}")
         m2.metric("Delivered Orders", f"{all_metrics['delivered']:,}", f"{(all_metrics['delivered']/all_metrics['total']*100):.1f}% Delivery Rate")
         m3.metric("Customer Return (CIR)", f"{all_metrics['cr']:,}", f"{(all_metrics['cr']/all_metrics['total']*100):.1f}%")
         m4.metric("Courier Return (RTO)", f"{all_metrics['rto']:,}", f"{(all_metrics['rto']/all_metrics['total']*100):.1f}%")
 
-        f1, f2, f3 = st.columns(3)
-        f1.metric("Gross Sales Value", f"₹{all_metrics['sales']:,.2f}")
-        f2.metric("Customer Refunds", f"-₹{all_metrics['refunds']:,.2f}")
-        f3.metric("Net Bank Settlement", f"₹{all_metrics['payout']:,.2f}")
-
         if is_multi_channel:
             st.markdown("---")
-            st.subheader("🏪 Marketplace Channels Detected in File")
-            ch_summary_ui = []
+            st.subheader("🏪 Marketplace Channels Detected (Each has its own dedicated tabs)")
+            ch_list_ui = []
             for ch in df[channel_col].dropna().unique():
                 m_ch = extract_metrics(df[df[channel_col] == ch])
-                ch_summary_ui.append({
+                ch_list_ui.append({
                     "Channel Code": ch,
                     "Total Orders": m_ch["total"],
-                    "Delivered": m_ch["delivered"],
+                    "Delivered (Calculated)": m_ch["delivered"],
                     "CIR": m_ch["cr"],
                     "RTO": m_ch["rto"],
                     "Net Payout (₹)": round(m_ch["payout"], 2)
                 })
-            st.dataframe(pd.DataFrame(ch_summary_ui), use_container_width=True)
-            st.info("💡 **Excel Note:** Downloaded workbook me har channel ka alag `{Channel}_Sum` aur `{Channel}_SKU` tab bankar tayyar hoga.")
+            st.dataframe(pd.DataFrame(ch_list_ui), use_container_width=True)
 
         # Download Button
         output = io.BytesIO()
@@ -304,7 +283,7 @@ if uploaded_file is not None:
         output.seek(0)
         
         st.download_button(
-            label="📥 Download Simplified Multi-Marketplace Excel Report",
+            label="📥 Download Channel-Wise Reconciliation Excel File",
             data=output.getvalue(),
             file_name="Multi_Marketplace_Channel_Reconciliation.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
