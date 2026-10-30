@@ -98,7 +98,8 @@ if uploaded_file is not None:
 
         st.markdown("---")
 
-        # --- SKU WISE PIVOT CALCULATION (FOR PREVIEW & EXCEL) ---
+        # --- SKU WISE PIVOT CALCULATION ---
+        sku_df = pd.DataFrame()
         if sku_col:
             sku_summary = []
             for sku_name, group in df.groupby(sku_col):
@@ -108,19 +109,28 @@ if uploaded_file is not None:
                 sku_rto = len(group[group[return_type_col] == 'Logistics Return']) if return_type_col else 0
                 sku_bank = group[bank_col].sum() if bank_col else 0.0
                 sku_summary.append({
-                    "SKU": sku_name,
-                    "Total Orders": sku_total_orders,
-                    "Delivered Orders": sku_deliv,
-                    "Customer Returns": sku_cr,
-                    "RTO Returns": sku_rto,
-                    "Total Bank Payout (₹)": round(sku_bank, 2)
+                    "sku": str(sku_name),
+                    "total_orders": int(sku_total_orders),
+                    "delivered_orders": int(sku_deliv),
+                    "customer_returns": int(sku_cr),
+                    "rto_returns": int(sku_rto),
+                    "payout": float(sku_bank)
                 })
-            sku_df = pd.DataFrame(sku_summary).sort_values(by="Total Orders", ascending=False)
+            sku_df = pd.DataFrame(sku_summary).sort_values(by="total_orders", ascending=False)
             
+            # Preview in UI
+            preview_display = sku_df.rename(columns={
+                "sku": "SKU",
+                "total_orders": "Total Orders",
+                "delivered_orders": "Delivered Orders",
+                "customer_returns": "Customer Returns",
+                "rto_returns": "RTO Returns",
+                "payout": "Total Bank Payout (₹)"
+            })
             st.subheader("📦 SKU-Wise Performance Preview (Top 10)")
-            st.dataframe(sku_df.head(10), use_container_width=True)
+            st.dataframe(preview_display.head(10), use_container_width=True)
 
-        # --- CREATE EXCEL WORKBOOK WITH DYNAMIC FORMULAS VIA OPENPYXL ---
+        # --- CREATE EXCEL WORKBOOK VIA OPENPYXL ---
         wb = openpyxl.Workbook()
         
         # Styles
@@ -134,7 +144,7 @@ if uploaded_file is not None:
                              bottom=Side(style='thin', color='DDDDDD'))
 
         # ==========================================
-        # SHEET 1: Executive_Summary (WITH FORMULAS)
+        # SHEET 1: Executive_Summary (DYNAMIC FORMULAS)
         # ==========================================
         ws1 = wb.active
         ws1.title = "Executive_Summary"
@@ -146,25 +156,6 @@ if uploaded_file is not None:
         ws1["B1"].fill = header_fill
         ws1["B1"].font = header_font
 
-        # Dynamic Formula Definitions
-        # B2: Total Transactions
-        # B3: Delivered Orders
-        # B4: Customer Return Count
-        # B5: Customer Return %  -> =B4/B2
-        # B6: RTO Count
-        # B7: RTO %             -> =B6/B2
-        # B8: Gross Sales
-        # B9: Customer Refund
-        # B10: Reverse Shipping Fees
-        # B11: Marketplace Commission & Other Fees
-        # B12: GST on MP Fees
-        # B13: Net Bank Settlement
-        # B14: Unit Cost (COGS + Packaging)
-        # B15: Total Product & Packaging Cost -> =B3*B14
-        # B16: Net Profit in Hand             -> =B13-B15
-        # B17: Average Return Charge / Return -> =IF((B4+B6)>0, B10/(B4+B6), 0)
-        # B18: Return Penalty Burden / Delivered -> =IF(B3>0, (B10+B12)/B3, 0)
-        
         summary_rows = [
             ("Settlement File Total Transactions", total_transactions, "0"),
             ("Delivered / Successful Orders", delivered_count, "0"),
@@ -192,13 +183,11 @@ if uploaded_file is not None:
             cell_b.value = val
             cell_b.number_format = num_fmt
             
-            # Styling
             cell_a.font = metric_font if row_idx in [5, 7, 13, 16] else regular_font
             cell_b.font = metric_font if row_idx in [5, 7, 13, 16] else regular_font
             cell_a.border = border_thin
             cell_b.border = border_thin
             
-            # Highlight Net Profit row
             if row_idx == 16:
                 cell_a.fill = PatternFill(start_color="D9EAD3", fill_type="solid")
                 cell_b.fill = PatternFill(start_color="D9EAD3", fill_type="solid")
@@ -207,9 +196,9 @@ if uploaded_file is not None:
         ws1.column_dimensions["B"].width = 24
 
         # ==========================================
-        # SHEET 2: SKU_Wise_Performance (PIVOT)
+        # SHEET 2: SKU_Wise_Performance (WITH FORMULAS)
         # ==========================================
-        if sku_col:
+        if not sku_df.empty:
             ws2 = wb.create_sheet(title="SKU_Wise_Performance")
             ws2.views.sheetView[0].showGridLines = True
             
@@ -226,19 +215,20 @@ if uploaded_file is not None:
                 c.font = header_font
                 c.alignment = Alignment(horizontal="center", vertical="center")
 
-            for r_idx, row in enumerate(sku_df.itertuples(), start=2):
+            # Safely iterating dictionary records to avoid itertuples name errors
+            for r_idx, item in enumerate(sku_df.to_dict('records'), start=2):
                 ws2.append([
-                    row.SKU,
-                    row._2,  # Total Orders
-                    row.Delivered_Orders,
-                    row.Customer_Returns,
-                    row.RTO_Returns,
+                    item["sku"],
+                    item["total_orders"],
+                    item["delivered_orders"],
+                    item["customer_returns"],
+                    item["rto_returns"],
                     f"=(D{r_idx}+E{r_idx})/B{r_idx}",            # Return % formula
-                    row.Total_Bank_Payout__,                     # Total Payout
-                    f"=IF(C{r_idx}>0, G{r_idx}/C{r_idx}, 0)",    # Avg Payout / Delivered formula
-                    f"=G{r_idx}-(C{r_idx}*Executive_Summary!$B$14)" # Estimated Profit formula
+                    round(item["payout"], 2),                   # Total Payout
+                    f"=IF(C{r_idx}>0, G{r_idx}/C{r_idx}, 0)",    # Avg Payout / Delivered
+                    f"=G{r_idx}-(C{r_idx}*Executive_Summary!$B$14)" # Estimated Profit
                 ])
-                # Formats
+                
                 ws2[f"B{r_idx}"].number_format = "0"
                 ws2[f"C{r_idx}"].number_format = "0"
                 ws2[f"D{r_idx}"].number_format = "0"
@@ -275,23 +265,19 @@ if uploaded_file is not None:
 
         # Clean Order Level Data
         clean_df = pd.DataFrame()
-        if order_id_col: clean_df['Order ID'] = df[order_id_col]
-        if order_date_col: clean_df['Order Date'] = df[order_date_col].astype(str)
-        if sku_col: clean_df['SKU'] = df[sku_col]
-        if return_type_col: clean_df['Order Status'] = df[return_type_col].fillna('Delivered')
-        if sale_col: clean_df['Sale Amount'] = df[sale_col].fillna(0)
-        if refund_col: clean_df['Refund Amount'] = df[refund_col].fillna(0)
-        if rev_ship_col: clean_df['Reverse Shipping'] = df[rev_ship_col].fillna(0)
-        if bank_col: clean_df['Bank Settlement'] = df[bank_col].fillna(0)
+        clean_df['order_id'] = df[order_id_col] if order_id_col else ""
+        clean_df['order_date'] = df[order_date_col].astype(str) if order_date_col else ""
+        clean_df['sku'] = df[sku_col] if sku_col else ""
+        clean_df['status'] = df[return_type_col].fillna('Delivered') if return_type_col else "Delivered"
+        clean_df['sale'] = pd.to_numeric(df[sale_col], errors='coerce').fillna(0) if sale_col else 0
+        clean_df['refund'] = pd.to_numeric(df[refund_col], errors='coerce').fillna(0) if refund_col else 0
+        clean_df['rev_ship'] = pd.to_numeric(df[rev_ship_col], errors='coerce').fillna(0) if rev_ship_col else 0
+        clean_df['bank'] = pd.to_numeric(df[bank_col], errors='coerce').fillna(0) if bank_col else 0
 
-        for row_i, r in enumerate(clean_df.itertuples(), start=2):
-            # Dynamic formulas:
-            # Col I (Unit Cost): =IF(F{row_i}==0, Executive_Summary!$B$14, 0)
-            # Col J (Profit): =H{row_i}-I{row_i}
+        for row_i, r in enumerate(clean_df.to_dict('records'), start=2):
             ws3.append([
-                r._1, r._2, r.SKU, r.Order_Status,
-                r.Sale_Amount, r.Refund_Amount, r.Reverse_Shipping,
-                r.Bank_Settlement,
+                r['order_id'], r['order_date'], r['sku'], r['status'],
+                r['sale'], r['refund'], r['rev_ship'], r['bank'],
                 f"=IF(F{row_i}=0, Executive_Summary!$B$14, 0)",
                 f"=H{row_i}-I{row_i}"
             ])
