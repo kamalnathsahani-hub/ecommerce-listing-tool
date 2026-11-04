@@ -1,7 +1,8 @@
 import streamlit as st
 import openpyxl
 from openpyxl.styles import PatternFill, Font
-import io, os, re, json, time, zipfile, base64, hashlib, difflib, traceback, requests, colorsys, threading, concurrent.futures
+import io, os, re, json, time, zipfile, base64, hashlib, difflib, traceback, requests, colorsys, threading, concurrent.futures, xlrd
+import pandas as pd
 from datetime import datetime
 from PIL import Image
 
@@ -1352,7 +1353,80 @@ def ungroup_worksheet(ws):
         ws.sheet_properties.outlinePr.summaryBelow = True; ws.sheet_properties.outlinePr.summaryRight = True
 
 def load_workbook_clean(uploaded_file_or_bytes, name=""):
-    wb = openpyxl.load_workbook(uploaded_file_or_bytes, keep_vba=str(name).lower().endswith('.xlsm'))
+    raw_bytes = None
+    fname = str(name or "")
+    if hasattr(uploaded_file_or_bytes, "getvalue"):
+        raw_bytes = uploaded_file_or_bytes.getvalue()
+        fname = getattr(uploaded_file_or_bytes, "name", fname)
+    elif hasattr(uploaded_file_or_bytes, "read"):
+        try: uploaded_file_or_bytes.seek(0)
+        except Exception: pass
+        raw_bytes = uploaded_file_or_bytes.read()
+        try: uploaded_file_or_bytes.seek(0)
+        except Exception: pass
+        fname = getattr(uploaded_file_or_bytes, "name", fname)
+    elif isinstance(uploaded_file_or_bytes, (bytes, bytearray)):
+        raw_bytes = bytes(uploaded_file_or_bytes)
+    elif isinstance(uploaded_file_or_bytes, str) and len(uploaded_file_or_bytes) < 1000:
+        if os.path.isfile(uploaded_file_or_bytes):
+            with open(uploaded_file_or_bytes, "rb") as f:
+                raw_bytes = f.read()
+            fname = os.path.basename(uploaded_file_or_bytes)
+
+    if raw_bytes is None:
+        raw_bytes = b""
+
+    # 1. Try standard openpyxl load if it is a ZIP archive (modern .xlsx, .xlsm, or renamed .xls)
+    if len(raw_bytes) > 4 and raw_bytes[:4] == b"PK\x03\x04" and zipfile.is_zipfile(io.BytesIO(raw_bytes)):
+        try:
+            wb = openpyxl.load_workbook(io.BytesIO(raw_bytes), keep_vba=fname.lower().endswith('.xlsm'))
+            for s in wb.sheetnames:
+                wb[s].protection.sheet = False
+                try: wb[s].protection.disable()
+                except Exception: pass
+            return wb
+        except Exception:
+            pass
+
+    # 2. Try xlrd if it is a legacy binary Excel 97-2003 .xls file (BIFF8)
+    try:
+        rd_book = xlrd.open_workbook(file_contents=raw_bytes, formatting_info=False)
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)  # remove default sheet
+        for sheet_name in rd_book.sheet_names():
+            rd_sheet = rd_book.sheet_by_name(sheet_name)
+            ws = wb.create_sheet(title=sheet_name)
+            for r in range(rd_sheet.nrows):
+                row_vals = rd_sheet.row_values(r)
+                for c, val in enumerate(row_vals):
+                    if val not in (None, ""):
+                        if isinstance(val, float) and val.is_integer():
+                            val = int(val)
+                        ws.cell(row=r + 1, column=c + 1, value=val)
+        return wb
+    except Exception:
+        pass
+
+    # 3. Try HTML or XML table saved with .xls extension
+    try:
+        dfs = pd.read_html(io.BytesIO(raw_bytes))
+        if dfs:
+            wb = openpyxl.Workbook()
+            wb.remove(wb.active)
+            for idx, df in enumerate(dfs):
+                ws = wb.create_sheet(title=f"Sheet{idx+1}")
+                for c, col_name in enumerate(df.columns):
+                    ws.cell(row=1, column=c + 1, value=str(col_name))
+                for r, row in df.iterrows():
+                    for c, val in enumerate(row):
+                        if pd.notna(val):
+                            ws.cell(row=r + 2, column=c + 1, value=val)
+            return wb
+    except Exception:
+        pass
+
+    # 4. Fallback: try openpyxl direct load with data_only
+    wb = openpyxl.load_workbook(io.BytesIO(raw_bytes), data_only=True)
     for s in wb.sheetnames:
         wb[s].protection.sheet = False
         try: wb[s].protection.disable()
@@ -2569,8 +2643,8 @@ def _merge_vc_duplicate_cell_maps(existing_cells, new_cells, existing_score, new
     return merged
 
 def convert_vc_to_sc(vc_file, sc_file, ctx):
-    wb_vc = openpyxl.load_workbook(io.BytesIO(vc_file.getvalue()), data_only=True)
-    wb_sc = load_workbook_clean(io.BytesIO(sc_file.getvalue()), sc_file.name)
+    wb_vc = load_workbook_clean(vc_file, getattr(vc_file, 'name', 'vc_file.xlsx'))
+    wb_sc = load_workbook_clean(sc_file, getattr(sc_file, 'name', 'sc_file.xlsx'))
     ws_sc = next((wb_sc[s] for s in wb_sc.sheetnames if s.strip().lower() == 'template'), None) or pick_template_sheet(wb_sc)
     try: ungroup_worksheet(ws_sc)
     except Exception: pass
@@ -2896,7 +2970,7 @@ def pl_build_dynamic_seo_content(category, gender, brand, fabric, pattern, keywo
 
 def pl_run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detected_size_charts, ctx):
     name = getattr(template_file_or_bytes, 'name', 'template.xlsx')
-    wb = openpyxl.load_workbook(template_file_or_bytes, keep_vba=name.lower().endswith('.xlsm'))
+    wb = load_workbook_clean(template_file_or_bytes, name)
     info = pl_read_and_analyze_template(wb)
     ws = wb[info['styles_sheet']]
     headers, header_row = info['headers'], info['header_row']
@@ -3014,8 +3088,8 @@ def _mime_for(name):
 def render_convert_ui():
     st.subheader("🔄 Convert: Amazon Vendor Central ➜ Amazon Seller Central")
     c1, c2 = st.columns(2)
-    with c1: vc_file = st.file_uploader("1️⃣ Filled Vendor Central File (.xlsx / .xlsm):", type=["xlsx", "xlsm"], key="vc_src")
-    with c2: sc_file = st.file_uploader("2️⃣ Blank Seller Central Template (.xlsx / .xlsm):", type=["xlsx", "xlsm"], key="sc_dst")
+    with c1: vc_file = st.file_uploader("1️⃣ Filled Vendor Central File (.xlsx / .xlsm / .xls):", type=["xlsx", "xlsm", "xls"], key="vc_src")
+    with c2: sc_file = st.file_uploader("2️⃣ Blank Seller Central Template (.xlsx / .xlsm / .xls):", type=["xlsx", "xlsm", "xls"], key="sc_dst")
     parent_pos_choice = st.radio("Parent Row Position:", options=["Har Model Group ke Pehle (Recommended)", "Sabse Upar (Top Rows me)", "Sabse Niche (Bottom Rows me)"], index=0, horizontal=True)
     pos_map = {"Har Model Group ke Pehle (Recommended)": "before_group", "Sabse Upar (Top Rows me)": "top", "Sabse Niche (Bottom Rows me)": "bottom"}
 
@@ -3078,13 +3152,14 @@ def render_listing_ui():
 
     st.divider()
     st.subheader("2. Marketplace Template Upload")
-    tpl_file = st.file_uploader(f"{marketplace} Template (.xlsx / .xlsm):", type=["xlsx", "xlsm"], key="pl_tpl_in")
+    tpl_file = st.file_uploader(f"{marketplace} Template (.xlsx / .xlsm / .xls):", type=["xlsx", "xlsm", "xls"], key="pl_tpl_in")
 
     if tpl_file and is_ajio:
         try:
-            wb_check = openpyxl.load_workbook(tpl_file, data_only=True)
+            wb_check = load_workbook_clean(tpl_file, tpl_file.name)
             t_info = pl_read_and_analyze_template(wb_check)
-            tpl_file.seek(0)
+            try: tpl_file.seek(0)
+            except Exception: pass
             c_t1, c_t2, c_t3 = st.columns(3)
             with c_t1: st.metric("Target Styles Sheet", t_info['styles_sheet'])
             with c_t2: st.metric("Template Columns", len(t_info['headers']))
@@ -3094,9 +3169,10 @@ def render_listing_ui():
 
     if tpl_file and is_meesho:
         try:
-            wb_mcheck = openpyxl.load_workbook(tpl_file, data_only=True)
+            wb_mcheck = load_workbook_clean(tpl_file, tpl_file.name)
             m_info = analyze_meesho_template(wb_mcheck)
-            tpl_file.seek(0)
+            try: tpl_file.seek(0)
+            except Exception: pass
             if m_info:
                 c_m1, c_m2, c_m3 = st.columns(3)
                 with c_m1: st.metric("Meesho Template Sheet", m_info['sheet_name'])
@@ -3212,7 +3288,7 @@ def render_listing_ui():
                         if preview: st.dataframe(preview, use_container_width=True)
                         base_name, ext = os.path.splitext(tpl_file.name)
                         out_ext = ext if ext.lower() in ['.xlsm', '.xlsx'] else '.xlsx'
-                        dl_name = f"{base_name}_FILLED{out_ext}" if (is_meesho or marketplace == "Myntra") else tpl_file.name
+                        dl_name = f"{base_name}_FILLED{out_ext}"
                         st.download_button("📥 Download Filled File", data=out, file_name=dl_name, mime=_mime_for(dl_name), type="primary")
             except ValueError as ve: st.error(str(ve))
             except Exception as e:
