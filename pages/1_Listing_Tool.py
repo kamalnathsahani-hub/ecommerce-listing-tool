@@ -3,12 +3,12 @@ import openpyxl
 from openpyxl.styles import PatternFill, Font
 import io, os, re, json, time, zipfile, base64, hashlib, difflib, traceback, requests, colorsys, threading, concurrent.futures, xlrd
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 from PIL import Image
 
 # Multi-key pool for ImgBB with automatic failover and rate-limit detection
 _DEFAULT_IMGBB_KEYS = [
-    "b3784cfabbb5014641a420b3986da06d", # User primary key
+    "c942c2836911240d098530266cd64a9b", # User primary key
     "5faf7edf23f5135e5262c1895d456c6d", # Working backup 1
     "d9c025078516d7a461e1b12b548b8ca7", # Working backup 2
     "9597e75da909fa8fc0e6f77dc4a86ce8", # Working backup 3
@@ -16,6 +16,7 @@ _DEFAULT_IMGBB_KEYS = [
     "86fc928d36f7cdff5eac1656b544ed1d", # Backup 5
 ]
 _EXHAUSTED_IMGBB_KEYS = set()
+_KEY_EXHAUSTION_DATA = {}
 _GLOBAL_IMG_CACHE = {}
 _IMG_UPLOAD_LOCK = threading.Lock()
 
@@ -104,9 +105,9 @@ def _get_secret(name, default=""):
     return str(default or "").strip()
 
 # Initialize API keys: Checks secrets.toml / env vars first, and falls back to permanent direct keys
-IMGBB_API_KEY = _get_secret("IMGBB_API_KEY", "b3784cfabbb5014641a420b3986da06d")
+IMGBB_API_KEY = _get_secret("IMGBB_API_KEY", "c4e017b58c982cf4d4fa436fb16ad503")
 IMGBB_PERMANENT_KEY = IMGBB_API_KEY  # Backward-compatible alias so NameError is impossible
-GEMINI_API_KEY = _get_secret("GEMINI_API_KEY", "AQ.Ab8RN6JxGtyaVcg71OtWYjWGJQMdwQ3mMqGWOG7Kr53Fnzs3Gw")
+GEMINI_API_KEY = _get_secret("GEMINI_API_KEY", "AQ.Ab8RN6Jlzt18BNR25TTv1tDClL0Dpy6dhqLrTHyVLpkKxnvjtg")
 GEMINI_VISION_MODEL = _get_secret("GEMINI_VISION_MODEL", "gemini-2.0-flash")
 NVIDIA_API_KEY = _get_secret("NVIDIA_API_KEY", "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")
 NVIDIA_MODEL = _get_secret("NVIDIA_MODEL", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning")
@@ -127,17 +128,25 @@ st.divider()
 CONVERT_MODE = marketplace.startswith("Convert:")
 
 with st.sidebar:
-    st.write("### ⚙️ API Key & CDN Settings")
-    st.caption("Agar ImgBB ki daily upload limit reach ho jaye ya images upload na hon, toh yahan nayi key paste karein:")
-    sb_imgbb = st.text_input("🔑 ImgBB Key Override:", value="", placeholder="Paste new key here...", key="ui_set_imgbb_sidebar")
+    st.write("### ⚙️ ImgBB CDN & Quota Monitor")
+    q_status = get_imgbb_quota_status()
+    if q_status["all_exhausted"]:
+        st.error(f"🚨 **ImgBB Upload Limit Reached!**\n* **Agla Upload Time:** Lagbhag **{q_status['reset_time_str']}** ({q_status['remaining_min']} min baad)\n* **Solution:** Niche nayi free ImgBB key dalein.")
+    elif q_status["exhausted_keys_count"] > 0:
+        st.warning(f"ℹ️ {q_status['exhausted_keys_count']} key rate-limited hai, lekin **{q_status['active_keys_count']} backup key(s)** active hain.")
+    else:
+        st.success(f"🟢 **ImgBB Active:** Sabhi {q_status['total_keys']} keys available hain.")
+
+    st.caption("🔑 **Instant Key Override (Bina Wait Kiye Upload Ke Liye):**")
+    sb_imgbb = st.text_input("Nayi ImgBB Key paste karein:", value="", placeholder="Paste new API key here...", key="ui_set_imgbb_sidebar")
     if sb_imgbb.strip():
         st.session_state["ui_set_imgbb"] = sb_imgbb.strip()
+        _EXHAUSTED_IMGBB_KEYS.discard(sb_imgbb.strip())
         st.success("✅ Nayi ImgBB key active hai!")
-    if _EXHAUSTED_IMGBB_KEYS:
-        st.caption(f"ℹ️ {len(_EXHAUSTED_IMGBB_KEYS)} key(s) rate-limited in this session.")
-        if st.button("🔄 Reset Exhausted Keys"):
-            _EXHAUSTED_IMGBB_KEYS.clear()
-            st.rerun()
+    if st.button("🔄 Check & Reset Quota Now"):
+        _EXHAUSTED_IMGBB_KEYS.clear()
+        _KEY_EXHAUSTION_DATA.clear()
+        st.rerun()
 
 _api_errors = st.session_state.setdefault("api_errors", {})
 _missing_keys = [
@@ -617,6 +626,59 @@ def _is_synthetic_hash_url(url, md5_hex=""):
             return True
     return False
 
+
+def get_imgbb_quota_status():
+    candidate_sources = []
+    try:
+        if "st" in globals() and hasattr(st, "session_state"):
+            if st.session_state.get("ui_set_imgbb"): candidate_sources.append(st.session_state["ui_set_imgbb"])
+            if st.session_state.get("ui_set_imgbb_sidebar"): candidate_sources.append(st.session_state["ui_set_imgbb_sidebar"])
+    except Exception:
+        pass
+    candidate_sources += [
+        globals().get("IMGBB_API_KEY"),
+        globals().get("IMGBB_PERMANENT_KEY"),
+    ] + _DEFAULT_IMGBB_KEYS
+
+    all_keys = []
+    for k in candidate_sources:
+        k_clean = str(k or "").strip()
+        if k_clean and k_clean not in all_keys:
+            all_keys.append(k_clean)
+
+    now = datetime.now()
+    # Auto-release keys whose 60-minute window has passed
+    for k in list(_EXHAUSTED_IMGBB_KEYS):
+        info = _KEY_EXHAUSTION_DATA.get(k)
+        if info and now >= info.get("reset_at", now):
+            _EXHAUSTED_IMGBB_KEYS.discard(k)
+
+    active_keys = [k for k in all_keys if k not in _EXHAUSTED_IMGBB_KEYS]
+
+    if not active_keys and all_keys:
+        resets = [_KEY_EXHAUSTION_DATA[k]["reset_at"] for k in all_keys if k in _KEY_EXHAUSTION_DATA]
+        earliest_reset = min(resets) if resets else (now + timedelta(minutes=60))
+        remaining_sec = max(0, int((earliest_reset - now).total_seconds()))
+        remaining_min = max(1, remaining_sec // 60)
+        reset_time_str = earliest_reset.strftime("%I:%M %p")
+        return {
+            "all_exhausted": True,
+            "total_keys": len(all_keys),
+            "active_keys_count": 0,
+            "exhausted_keys_count": len(all_keys),
+            "reset_time_str": reset_time_str,
+            "remaining_min": remaining_min,
+        }
+    else:
+        return {
+            "all_exhausted": False,
+            "total_keys": len(all_keys),
+            "active_keys_count": len(active_keys),
+            "exhausted_keys_count": len(all_keys) - len(active_keys),
+            "reset_time_str": None,
+            "remaining_min": 0,
+        }
+
 def upload_to_imgbb(image_bytes, api_key=None):
     if not image_bytes:
         return None
@@ -680,6 +742,11 @@ def upload_to_imgbb(image_bytes, api_key=None):
                         return clean_url
                 elif res.status_code in (400, 429, 403):
                     _EXHAUSTED_IMGBB_KEYS.add(key_use)
+                    _KEY_EXHAUSTION_DATA[key_use] = {
+                        "exhausted_at": datetime.now(),
+                        "reset_at": datetime.now() + timedelta(minutes=60),
+                        "error": res.text[:200]
+                    }
                     _record_api_error("ImgBB", f"Key ending in ...{key_use[-4:]} limit/error: {res.text[:150]}")
                     break
                 else:
@@ -3173,7 +3240,13 @@ def render_listing_ui():
     with col_in2:
         st.write("##### 🌐 Live CDN & Cloud Hosting")
         auto_cdn = st.checkbox("Images ko auto CDN links (ImgBB) me convert karein", value=True, key="pl_auto_cdn")
-        st.caption("⚡ Direct CDN Link Active: ImgBB se direct public URLs auto-generate honge.")
+        q_stat = get_imgbb_quota_status()
+        if q_stat["all_exhausted"]:
+            st.error(f"⏰ **ImgBB Upload Limit Reached:** Agla upload lagbhag **{q_stat['reset_time_str']}** ({q_stat['remaining_min']} min baad) start ho payega. Ya sidebar me nayi key dalein.")
+        elif q_stat["exhausted_keys_count"] > 0:
+            st.info(f"⚡ Multi-Key Active: {q_stat['active_keys_count']} backup keys running.")
+        else:
+            st.caption("⚡ Direct CDN Link Active: ImgBB se direct public URLs auto-generate honge.")
 
     dropbox_url, manual_skus = "", ""
     if not is_ajio:
@@ -3253,6 +3326,10 @@ def render_listing_ui():
             sc_selling_price = st.text_input("Article / Selling Price (optional):", value="", key="pl_my_price", placeholder="e.g. 799")
 
     st.divider()
+
+    q_btn_check = get_imgbb_quota_status()
+    if q_btn_check["all_exhausted"]:
+        st.warning(f"⚠️ **ImgBB Limit Alert:** Sabhi keys ki hourly upload limit reach ho chuki hai. Agla upload lagbhag **{q_btn_check['reset_time_str']}** ({q_btn_check['remaining_min']} minutes baad) shuru hoga. Agar abhi bina wait kiye file generate karni hai, toh sidebar me nayi free ImgBB key paste karein.")
 
     if st.button("🚀 Perfect Listing File Generate Karein", type="primary", key="pl_generate"):
         manual_list = [s.strip() for s in manual_skus.split('\n') if s.strip()] if not is_ajio else []
