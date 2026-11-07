@@ -8,7 +8,7 @@ from PIL import Image
 
 # Multi-key pool for ImgBB with automatic failover and rate-limit detection
 _DEFAULT_IMGBB_KEYS = [
-    "c942c2836911240d098530266cd64a9b", # User primary key
+    "b3784cfabbb5014641a420b3986da06d", # User primary key
     "5faf7edf23f5135e5262c1895d456c6d", # Working backup 1
     "d9c025078516d7a461e1b12b548b8ca7", # Working backup 2
     "9597e75da909fa8fc0e6f77dc4a86ce8", # Working backup 3
@@ -104,7 +104,7 @@ def _get_secret(name, default=""):
     return str(default or "").strip()
 
 # Initialize API keys: Checks secrets.toml / env vars first, and falls back to permanent direct keys
-IMGBB_API_KEY = _get_secret("IMGBB_API_KEY", "c4e017b58c982cf4d4fa436fb16ad503")
+IMGBB_API_KEY = _get_secret("IMGBB_API_KEY", "b3784cfabbb5014641a420b3986da06d")
 IMGBB_PERMANENT_KEY = IMGBB_API_KEY  # Backward-compatible alias so NameError is impossible
 GEMINI_API_KEY = _get_secret("GEMINI_API_KEY", "AQ.Ab8RN6Jlzt18BNR25TTv1tDClL0Dpy6dhqLrTHyVLpkKxnvjtg")
 GEMINI_VISION_MODEL = _get_secret("GEMINI_VISION_MODEL", "gemini-2.0-flash")
