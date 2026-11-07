@@ -106,7 +106,7 @@ def _get_secret(name, default=""):
 # Initialize API keys: Checks secrets.toml / env vars first, and falls back to permanent direct keys
 IMGBB_API_KEY = _get_secret("IMGBB_API_KEY", "b3784cfabbb5014641a420b3986da06d")
 IMGBB_PERMANENT_KEY = IMGBB_API_KEY  # Backward-compatible alias so NameError is impossible
-GEMINI_API_KEY = _get_secret("GEMINI_API_KEY", "AQ.Ab8RN6Jlzt18BNR25TTv1tDClL0Dpy6dhqLrTHyVLpkKxnvjtg")
+GEMINI_API_KEY = _get_secret("GEMINI_API_KEY", "AQ.Ab8RN6JxGtyaVcg71OtWYjWGJQMdwQ3mMqGWOG7Kr53Fnzs3Gw")
 GEMINI_VISION_MODEL = _get_secret("GEMINI_VISION_MODEL", "gemini-2.0-flash")
 NVIDIA_API_KEY = _get_secret("NVIDIA_API_KEY", "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")
 NVIDIA_MODEL = _get_secret("NVIDIA_MODEL", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning")
