@@ -778,7 +778,7 @@ def batch_upload_listing_images(pl_zip_images, pl_size_charts, ctx, img_cache, p
 
     for fld, items in folder_results.items():
         sorted_urls = [u for idx, u in sorted(items, key=lambda x: x[0]) if u]
-        for k in [fld, str(fld).strip(), clean_sku_name(fld), str(fld).lower(), clean_sku_name(fld).lower()]:
+        for k in [fld, str(fld).strip(), clean_sku_name(fld), pl_clean_sku_name(fld), pl_extract_style_code(fld), str(fld).lower(), clean_sku_name(fld).lower(), pl_clean_sku_name(fld).lower(), pl_extract_style_code(fld).lower()]:
             ctx['live_links_cache'][k] = sorted_urls
 
     if failed_uploads > 0 and len(_EXHAUSTED_IMGBB_KEYS) >= len(_DEFAULT_IMGBB_KEYS):
@@ -2929,7 +2929,13 @@ def pl_read_and_analyze_template(wb):
     info = {'sheets': wb.sheetnames, 'styles_sheet': None, 'category_breadcrumb': '', 'detected_gender': 'Women', 'detected_category': 'Apparel', 'col_to_dropdowns': {}, 'headers': {}, 'mandatory_cols': []}
     if 'Seller Information Sheet' in wb.sheetnames:
         target = wb['Seller Information Sheet'].cell(2, 1).value
-        if target and str(target).strip() in wb.sheetnames: info['styles_sheet'] = str(target).strip()
+        if target:
+            target_str = str(target)
+            if target_str in wb.sheetnames: info['styles_sheet'] = target_str
+            elif target_str.strip() in wb.sheetnames: info['styles_sheet'] = target_str.strip()
+            else:
+                matched_s = next((s for s in wb.sheetnames if s.strip().lower() == target_str.strip().lower()), None)
+                if matched_s: info['styles_sheet'] = matched_s
     if not info['styles_sheet']:
         info['styles_sheet'] = next((s for s in wb.sheetnames if 'styles' in s.lower() and 'instruction' not in s.lower()), wb.sheetnames[0])
     ws_styles = wb[info['styles_sheet']]
@@ -2994,7 +3000,24 @@ def pl_run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detecte
     col_meas_type, col_to_fit_bust, col_bust, col_front_len, col_to_fit_waist, col_waist, col_to_fit_hip, col_hip, col_inseam = find_col(['*Measurement Type']), find_col(['*To Fit Bust']), find_col(['*Bust']), find_col(['*Front Length']), find_col(['*To Fit Waist']), find_col(['*Waist']), find_col(['*To Fit Hip']), find_col(['*Hips', 'Hips', '*Hip']), find_col(['*Inseam', 'Inseam', '*Inseam Length'])
     col_chest, col_shoulder, col_outseam = find_col(['*Chest', 'Chest', '*To Fit Chest']), find_col(['*Shoulder', 'Shoulder', '*Across Shoulder']), find_col(['*Outseam Length', 'Outseam Length'])
 
-    img_cols = [c for c in [find_col(['*MODEL' if i == 1 else f'MODEL{i}']) for i in range(1, 15)] if c]
+    img_cols = []
+    for i in range(1, 16):
+        cands = [
+            "*MODEL" if i == 1 else f"MODEL{i}",
+            "MODEL" if i == 1 else f"MODEL{i}",
+            f"*MODEL{i}", f"MODEL{i}", f"MODEL {i}", f"*MODEL {i}",
+            f"Images.MODEL" if i == 1 else f"Images.MODEL{i}",
+            f"Images.MODEL{i}"
+        ]
+        matched_c = find_col(cands)
+        if matched_c and matched_c not in img_cols:
+            img_cols.append(matched_c)
+    if not img_cols:
+        for c, h in headers.items():
+            nh = pl_norm_h(h)
+            if re.match(r"^(\*?images?\.?)?model\d*$", nh) and "height" not in nh and "worn" not in nh and "chest" not in nh:
+                img_cols.append(c)
+    col_swatch = find_col(["SWATCH", "*SWATCH", "Images.SWATCH"])
 
     curr_r = header_row + 1
     while ws.cell(curr_r, col_style or 1).value is not None: curr_r += 1
@@ -3028,8 +3051,14 @@ def pl_run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detecte
         sleeve_val = sc_data.get('sleeve_length') or ai_data.get('sleeve_length') or "Short sleeve"
         bottom_val = sc_data.get('bottomwear_type') or ("Capris" if "capri" in fld.lower() else "Pyjamas")
         desc_text, high_text, add_text = pl_build_dynamic_seo_content(cat_detected, gender_detected, ctx.get('brand', ''), mat_val, pattern_val, ctx.get('keywords', ''))
-        img_urls = list(ctx.get('live_links_cache', {}).get(fld, []))
-        sc_url = (ctx.get('size_chart_urls') or {}).get(fld) or ctx.get('size_chart_cdn_url')
+        img_urls = get_sku_img_urls(fld, ctx, base_sku)
+        if not img_urls:
+            cache_dict = ctx.get('live_links_cache') or {}
+            for k in [fld, base_sku, pl_clean_sku_name(fld), str(fld).strip(), str(base_sku).strip(), fld.lower(), base_sku.lower()]:
+                if k in cache_dict and cache_dict[k]:
+                    img_urls = list(cache_dict[k])
+                    break
+        sc_url = (ctx.get('size_chart_urls') or {}).get(fld) or (ctx.get('size_chart_urls') or {}).get(base_sku) or ctx.get('size_chart_cdn_url')
         if sc_url and sc_url not in img_urls: img_urls.append(sc_url)
         hsn_val, hsn_is_auto = pl_resolve_hsn_code(ctx.get('hsn'), sku_cat, fld)
 
@@ -3076,6 +3105,8 @@ def pl_run_perfect_ajio_listing(template_file_or_bytes, zip_images_data, detecte
             if col_outseam: set_val(curr_r, col_outseam, meas['bottom_length'])
             for idx_img, url in enumerate(img_urls):
                 if idx_img < len(img_cols): ws.cell(curr_r, img_cols[idx_img]).value = url
+            if col_swatch and img_urls:
+                ws.cell(curr_r, col_swatch).value = img_urls[0]
             curr_r += 1; total_added += 1
 
     output = io.BytesIO()
@@ -3233,7 +3264,7 @@ def render_listing_ui():
                 tpl_file.seek(0)
                 size_chart_measurements = extract_all_size_charts_universal(pl_size_charts) if pl_size_charts else {}
                 if is_ajio:
-                    ctx = {'sizes': sizes_list, 'brand': brand_name.strip(), 'mrp': mrp_value.strip(), 'mfg': mfg_address.strip(), 'hsn': hsn_code.strip(), 'keywords': custom_keywords.strip(), 'td': int(default_td), 'live_links_cache': {}, 'size_chart_urls': {}, 'size_chart_cdn_url': None, 'zip_images_data': pl_zip_images, 'size_chart_measurements': size_chart_measurements, 'vision_results': st.session_state['pl_vision_results']}
+                    ctx = {'folders': pl_folders, 'sizes': sizes_list, 'brand': brand_name.strip(), 'mrp': mrp_value.strip(), 'mfg': mfg_address.strip(), 'hsn': hsn_code.strip(), 'keywords': custom_keywords.strip(), 'td': int(default_td), 'live_links_cache': {}, 'size_chart_urls': {}, 'size_chart_cdn_url': None, 'zip_images_data': pl_zip_images, 'size_chart_measurements': size_chart_measurements, 'vision_results': st.session_state['pl_vision_results']}
                     with st.spinner("🤖 AI Vision + White-Balance Pixel Check & CDN Upload chal raha hai..."):
                         for fld in pl_folders:
                             base_sku = pl_clean_sku_name(fld)
