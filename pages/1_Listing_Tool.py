@@ -20,6 +20,59 @@ _KEY_EXHAUSTION_DATA = {}
 _GLOBAL_IMG_CACHE = {}
 _IMG_UPLOAD_LOCK = threading.Lock()
 
+def get_imgbb_quota_status():
+    candidate_sources = []
+    try:
+        if "st" in globals() and hasattr(st, "session_state"):
+            if st.session_state.get("ui_set_imgbb"): candidate_sources.append(st.session_state["ui_set_imgbb"])
+            if st.session_state.get("ui_set_imgbb_sidebar"): candidate_sources.append(st.session_state["ui_set_imgbb_sidebar"])
+    except Exception:
+        pass
+    candidate_sources += [
+        globals().get("IMGBB_API_KEY"),
+        globals().get("IMGBB_PERMANENT_KEY"),
+    ] + _DEFAULT_IMGBB_KEYS
+
+    all_keys = []
+    for k in candidate_sources:
+        k_clean = str(k or "").strip()
+        if k_clean and k_clean not in all_keys:
+            all_keys.append(k_clean)
+
+    now = datetime.now()
+    # Auto-release keys whose 60-minute window has passed
+    for k in list(_EXHAUSTED_IMGBB_KEYS):
+        info = _KEY_EXHAUSTION_DATA.get(k)
+        if info and now >= info.get("reset_at", now):
+            _EXHAUSTED_IMGBB_KEYS.discard(k)
+
+    active_keys = [k for k in all_keys if k not in _EXHAUSTED_IMGBB_KEYS]
+
+    if not active_keys and all_keys:
+        resets = [_KEY_EXHAUSTION_DATA[k]["reset_at"] for k in all_keys if k in _KEY_EXHAUSTION_DATA]
+        earliest_reset = min(resets) if resets else (now + timedelta(minutes=60))
+        remaining_sec = max(0, int((earliest_reset - now).total_seconds()))
+        remaining_min = max(1, remaining_sec // 60)
+        reset_time_str = earliest_reset.strftime("%I:%M %p")
+        return {
+            "all_exhausted": True,
+            "total_keys": len(all_keys),
+            "active_keys_count": 0,
+            "exhausted_keys_count": len(all_keys),
+            "reset_time_str": reset_time_str,
+            "remaining_min": remaining_min,
+        }
+    else:
+        return {
+            "all_exhausted": False,
+            "total_keys": len(all_keys),
+            "active_keys_count": len(active_keys),
+            "exhausted_keys_count": len(all_keys) - len(active_keys),
+            "reset_time_str": None,
+            "remaining_min": 0,
+        }
+
+
 st.set_page_config(page_title="Multi-Marketplace Auto Listing Generator", layout="wide")
 if st.button("⬅️ Back to Home"): st.switch_page("app.py")
 st.title("📦 Multi-Marketplace Auto Listing Generator (Universal Pro V28 - Unified Dashboard)")
@@ -626,58 +679,6 @@ def _is_synthetic_hash_url(url, md5_hex=""):
             return True
     return False
 
-
-def get_imgbb_quota_status():
-    candidate_sources = []
-    try:
-        if "st" in globals() and hasattr(st, "session_state"):
-            if st.session_state.get("ui_set_imgbb"): candidate_sources.append(st.session_state["ui_set_imgbb"])
-            if st.session_state.get("ui_set_imgbb_sidebar"): candidate_sources.append(st.session_state["ui_set_imgbb_sidebar"])
-    except Exception:
-        pass
-    candidate_sources += [
-        globals().get("IMGBB_API_KEY"),
-        globals().get("IMGBB_PERMANENT_KEY"),
-    ] + _DEFAULT_IMGBB_KEYS
-
-    all_keys = []
-    for k in candidate_sources:
-        k_clean = str(k or "").strip()
-        if k_clean and k_clean not in all_keys:
-            all_keys.append(k_clean)
-
-    now = datetime.now()
-    # Auto-release keys whose 60-minute window has passed
-    for k in list(_EXHAUSTED_IMGBB_KEYS):
-        info = _KEY_EXHAUSTION_DATA.get(k)
-        if info and now >= info.get("reset_at", now):
-            _EXHAUSTED_IMGBB_KEYS.discard(k)
-
-    active_keys = [k for k in all_keys if k not in _EXHAUSTED_IMGBB_KEYS]
-
-    if not active_keys and all_keys:
-        resets = [_KEY_EXHAUSTION_DATA[k]["reset_at"] for k in all_keys if k in _KEY_EXHAUSTION_DATA]
-        earliest_reset = min(resets) if resets else (now + timedelta(minutes=60))
-        remaining_sec = max(0, int((earliest_reset - now).total_seconds()))
-        remaining_min = max(1, remaining_sec // 60)
-        reset_time_str = earliest_reset.strftime("%I:%M %p")
-        return {
-            "all_exhausted": True,
-            "total_keys": len(all_keys),
-            "active_keys_count": 0,
-            "exhausted_keys_count": len(all_keys),
-            "reset_time_str": reset_time_str,
-            "remaining_min": remaining_min,
-        }
-    else:
-        return {
-            "all_exhausted": False,
-            "total_keys": len(all_keys),
-            "active_keys_count": len(active_keys),
-            "exhausted_keys_count": len(all_keys) - len(active_keys),
-            "reset_time_str": None,
-            "remaining_min": 0,
-        }
 
 def upload_to_imgbb(image_bytes, api_key=None):
     if not image_bytes:
