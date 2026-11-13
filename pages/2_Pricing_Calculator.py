@@ -4,6 +4,7 @@ import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 import io
+import math
 
 # 1. Page Config hamesha sabse upar hona chahiye
 st.set_page_config(page_title="Pricing & TP Calculator", page_icon="💰", layout="wide")
@@ -453,7 +454,8 @@ def generate_vendor_master_workbook(df_results, vendor_code_val, sc_vendor_str):
 
     for r_idx, row in df_results.iterrows():
         r_num = r_idx + 2
-        tp_val = round(float(row["Final Cost (Amazon TP)"]), 2)
+        # Agar decimal ke baad kuch bhi value aaye (e.g., 1.1 ya 1.9) to round up karke next integer (2) kar dein
+        tp_val = math.ceil(round(float(row["Final Cost (Amazon TP)"]), 6))
         asp_val = float(row["ASP (INPUT)"])
         mrp_val = float(row["MRP"])
 
@@ -472,9 +474,9 @@ def generate_vendor_master_workbook(df_results, vendor_code_val, sc_vendor_str):
         c8 = ws_cost.cell(r_num, 8, tp_val)
         c9 = ws_cost.cell(r_num, 9, asp_val)
         
-        c5.number_format = "0.00"
-        c7.number_format = "0.00"
-        c8.number_format = "0.00"
+        c5.number_format = "0"
+        c7.number_format = "0"
+        c8.number_format = "0"
 
     for col in range(1, 10):
         ws_cost.column_dimensions[get_column_letter(col)].width = 22
