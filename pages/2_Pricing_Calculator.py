@@ -92,9 +92,12 @@ BRAND_CONFIGS = {
         "ams_pct": 6.0, "office_exp": 40.0, "consult_pct": 5.0,
         "deduct_consult": True, "vendor_code": "9S98W", "sc_code": "HGQE"
     },
-    "SS GLOBAL": {
-        "tax_pct": 5.0, "margin_type": "fixed", "margin_pct": 31.0,
-        "ams_pct": 6.0, "office_exp": 40.0, "consult_pct": 5.0,
+    "SS GLOBAL (LYMIO)": {
+        "tax_pct": 5.0, "margin_type": "slab_3",
+        "slab1_max": 499, "slab1_margin": 32.0,
+        "slab2_min": 499, "slab2_max": 749, "slab2_margin": 31.0,
+        "slab3_min": 749, "slab3_margin": 28.0,
+        "ams_pct": 7.0, "office_exp": 40.0, "consult_pct": 5.0,
         "deduct_consult": True, "vendor_code": "SSGNJ", "sc_code": "HCLK"
     },
     "LYMIO": {
