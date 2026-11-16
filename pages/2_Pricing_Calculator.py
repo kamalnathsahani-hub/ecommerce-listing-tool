@@ -5,6 +5,7 @@ from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 import io
 import math
+from datetime import datetime
 
 # 1. Page Config hamesha sabse upar hona chahiye
 st.set_page_config(page_title="Pricing & TP Calculator", page_icon="💰", layout="wide")
@@ -747,6 +748,9 @@ with tab1:
                 
                 vendor_excel_bytes = generate_vendor_master_workbook(final_df, target_vendor_code, target_sc_vendor_str)
 
+                row_count = len(final_df)
+                today_date = datetime.now().strftime("%d-%m")
+
                 with dl_col1:
                     st.download_button(
                         label=f"📊 Download {selected_brand} TP Calculator Workbook (With Live Formulas)",
@@ -759,7 +763,7 @@ with tab1:
                     st.download_button(
                         label=f"📦 Download {selected_brand} Vendor Cost & DF Attributes Template",
                         data=vendor_excel_bytes,
-                        file_name=f"{selected_brand}_Vendor_Cost_Attributes_Master.xlsx",
+                        file_name=f"{selected_brand}_{row_count}_ASIN_Vendor_Cost_{today_date}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         use_container_width=True
                     )
