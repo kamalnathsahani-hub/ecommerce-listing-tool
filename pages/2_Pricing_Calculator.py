@@ -57,27 +57,27 @@ BRAND_CONFIGS = {
     "FABNEX": {
         "tax_pct": 5.0, "margin_type": "fixed", "margin_pct": 26.0,
         "ams_pct": 4.0, "office_exp": 40.0, "consult_pct": 5.0,
-        "deduct_consult": True, "vendor_code": "FP9UO", "sc_code": "FOHK"
+        "deduct_consult": True, "vendor_code": "J37Z3", "sc_code": "FP9UO"
     },
     "QNIM": {
         "tax_pct": 5.0, "margin_type": "fixed", "margin_pct": 30.0,
         "ams_pct": 4.0, "office_exp": 40.0, "consult_pct": 5.0,
-        "deduct_consult": True, "vendor_code": "KR8S7", "sc_code": "GCYB"
+        "deduct_consult": True, "vendor_code": "KR8S7", "sc_code": "KR8S3"
     },
     "WEREFLEX": {
         "tax_pct": 5.0, "margin_type": "fixed", "margin_pct": 30.0,
         "ams_pct": 5.0, "office_exp": 45.0, "consult_pct": 5.0,
-        "deduct_consult": False, "vendor_code": "YHUBT", "sc_code": "GGHB"
+        "deduct_consult": False, "vendor_code": "YHUBS", "sc_code": "YHUBT"
     },
     "ZURITY": {
         "tax_pct": 5.0, "margin_type": "fixed", "margin_pct": 31.0,
         "ams_pct": 7.0, "office_exp": 50.0, "consult_pct": 5.0,
-        "deduct_consult": True, "vendor_code": "PC9NG", "sc_code": "GZEZ"
+        "deduct_consult": True, "vendor_code": "WG8YI", "sc_code": "PC9NG"
     },
     "URBAN": {
         "tax_pct": 5.0, "margin_type": "fixed", "margin_pct": 31.0,
         "ams_pct": 6.0, "office_exp": 40.0, "consult_pct": 5.0,
-        "deduct_consult": True, "vendor_code": "URHY6", "sc_code": "GPGJ"
+        "deduct_consult": True, "vendor_code": "URHY3", "sc_code": "URHY6"
     },
     "LITZO": {
         "tax_pct": 5.0, "margin_type": "fixed", "margin_pct": 31.0,
@@ -87,12 +87,12 @@ BRAND_CONFIGS = {
     "ASMERIYO": {
         "tax_pct": 5.0, "margin_type": "fixed", "margin_pct": 31.0,
         "ams_pct": 6.0, "office_exp": 40.0, "consult_pct": 5.0,
-        "deduct_consult": True, "vendor_code": "RCCLU", "sc_code": "GSTK"
+        "deduct_consult": True, "vendor_code": "RCCLU", "sc_code": "RCCLS"
     },
     "LERIYA": {
         "tax_pct": 5.0, "margin_type": "fixed", "margin_pct": 31.0,
         "ams_pct": 6.0, "office_exp": 40.0, "consult_pct": 5.0,
-        "deduct_consult": True, "vendor_code": "9S98W", "sc_code": "HGQE"
+        "deduct_consult": True, "vendor_code": "OQ9B5", "sc_code": "9S98W"
     },
     "SS GLOBAL (LYMIO)": {
         "tax_pct": 5.0, "margin_type": "slab_3",
@@ -100,7 +100,7 @@ BRAND_CONFIGS = {
         "slab2_min": 499, "slab2_max": 749, "slab2_margin": 31.0,
         "slab3_min": 749, "slab3_margin": 28.0,
         "ams_pct": 7.0, "office_exp": 40.0, "consult_pct": 5.0,
-        "deduct_consult": True, "vendor_code": "SSGNJ", "sc_code": "HCLK"
+        "deduct_consult": True, "vendor_code": "JBZ4K", "sc_code": "SSGNJ"
     },
     "LYMIO": {
         "tax_pct": 5.0, "margin_type": "slab_3",
@@ -108,14 +108,14 @@ BRAND_CONFIGS = {
         "slab2_min": 499, "slab2_max": 749, "slab2_margin": 31.0,
         "slab3_min": 749, "slab3_margin": 28.0,
         "ams_pct": 7.0, "office_exp": 40.0, "consult_pct": 5.0,
-        "deduct_consult": True, "vendor_code": "JBZ54", "sc_code": "GFUK"
+        "deduct_consult": True, "vendor_code": "JBZ4K", "sc_code": "JBZ54"
     },
     "LYMIO PREMIUM": {
         "tax_pct": 5.0, "margin_type": "slab_2",
         "slab1_max": 749, "slab1_margin": 31.0,
         "slab2_min": 749, "slab2_margin": 28.0,
         "ams_pct": 8.0, "office_exp": 60.0, "consult_pct": 5.0,
-        "deduct_consult": False, "vendor_code": "JBZ54", "sc_code": "GFUK"
+        "deduct_consult": False, "vendor_code": "JBZ4K", "sc_code": "JBZ54"
     }
 }
 
