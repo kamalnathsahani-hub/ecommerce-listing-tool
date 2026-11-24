@@ -158,9 +158,9 @@ def _get_secret(name, default=""):
     return str(default or "").strip()
 
 # Initialize API keys: Checks secrets.toml / env vars first, and falls back to permanent direct keys
-IMGBB_API_KEY = _get_secret("IMGBB_API_KEY", "b3784cfabbb5014641a420b3986da06d")
+IMGBB_API_KEY = _get_secret("IMGBB_API_KEY", "3fa5cf93bf08028c8adda038ab05a947")
 IMGBB_PERMANENT_KEY = IMGBB_API_KEY  # Backward-compatible alias so NameError is impossible
-GEMINI_API_KEY = _get_secret("GEMINI_API_KEY", "AQ.Ab8RN6JxGtyaVcg71OtWYjWGJQMdwQ3mMqGWOG7Kr53Fnzs3Gw")
+GEMINI_API_KEY = _get_secret("GEMINI_API_KEY", "AQ.Ab8RN6Kbd_bP5EtwbJPhA4Tx5UR3ACDq6PPX8CXLMZOj-o58Zw")
 GEMINI_VISION_MODEL = _get_secret("GEMINI_VISION_MODEL", "gemini-2.0-flash")
 NVIDIA_API_KEY = _get_secret("NVIDIA_API_KEY", "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")
 NVIDIA_MODEL = _get_secret("NVIDIA_MODEL", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning")
@@ -2452,7 +2452,7 @@ def run_meesho(uploaded_file, ctx, size_charts_data=None):
     return output.getvalue(), preview, total_added, ws.title
 
 MP_FIELD_CANDIDATES = {
-    'Flipkart': {'sku': ['listing sku', 'seller sku', 'sku', 'sku id'], 'title': ['product title', 'listing title', 'title', 'product name'], 'brand': ['brand', 'brand name'], 'description': ['description', 'product description', 'long description'], 'mrp': ['mrp', 'maximum retail price', 'list price', 'mrp inr'], 'price': ['selling price', 'price', 'your price', 'flipkart selling price'], 'hsn': ['hsn', 'hsn code'], 'gst': ['gst', 'gst %', 'tax', 'tax code', 'luxury cess'], 'inventory': ['stock', 'inventory', 'quantity', 'stock count'], 'color': ['color', 'color family', 'colour'], 'size': ['size', 'size value', 'variant size'], 'fabric': ['fabric', 'fabric type', 'material'], 'pattern': ['pattern', 'pattern type'], 'fit': ['fit', 'fit type'], 'occasion': ['occasion', 'usage'], 'country': ['country of origin', 'origin country', 'country'], 'generic_kw': ['search keywords', 'keywords', 'search terms'], 'gender': ['gender', 'ideal for'], 'care': ['wash care', 'care instructions'], 'sleeve': ['sleeve', 'sleeve length'], 'manufacturer': ['manufactured by', 'manufacturer', 'manufacturer details'], 'packer': ['packed by', 'packer', 'packer details', 'marketed by'], 'img1': ['main image url', 'image url 1', 'image 1', 'image1', 'primary image url'], 'chest': ['chest', 'chest size', 'bust', 'bust size'], 'waist': ['waist', 'waist size'], 'hip': ['hip', 'hip size'], 'shoulder': ['shoulder', 'shoulder size', 'across shoulder'], 'length': ['length', 'length size', 'front length'], 'inseam': ['inseam', 'inseam length'], 'weight': ['weight', 'package weight', 'net weight', 'volumetric weight'], 'pkg_l': ['package length', 'length (cm)', 'volumetric length'], 'pkg_w': ['package breadth', 'package width', 'breadth (cm)', 'width (cm)'], 'pkg_h': ['package height', 'height (cm)']},
+    'Flipkart': {'sku': ['seller sku id', 'listing sku', 'seller sku', 'seller sku code', 'sku id', 'sku', 'style code'], 'title': ['product title', 'listing title', 'title', 'product name', 'model name'], 'brand': ['brand', 'brand name'], 'description': ['description', 'product description', 'long description'], 'mrp': ['mrp', 'maximum retail price', 'list price', 'mrp inr'], 'price': ['your selling price', 'selling price', 'flipkart selling price', 'price', 'your price'], 'hsn': ['hsn', 'hsn code'], 'gst': ['gst', 'gst %', 'tax', 'tax code', 'luxury cess'], 'inventory': ['stock count', 'stock', 'inventory', 'quantity'], 'color': ['brand color', 'color', 'color family', 'colour', 'base color'], 'size': ['size', 'size value', 'variant size'], 'fabric': ['fabric', 'fabric type', 'material', 'primary fabric'], 'pattern': ['pattern', 'pattern type'], 'fit': ['fit', 'fit type'], 'occasion': ['occasion', 'usage'], 'country': ['country of origin', 'origin country', 'country'], 'generic_kw': ['search keywords', 'keywords', 'search terms'], 'gender': ['gender', 'ideal for'], 'care': ['fabric care', 'wash care', 'care instructions'], 'sleeve': ['sleeve', 'sleeve length'], 'manufacturer': ['manufacturer details', 'manufactured by', 'manufacturer'], 'packer': ['packer details', 'packed by', 'packer', 'marketed by', 'importer details'], 'img1': ['main image url', 'image url 1', 'image 1', 'image1', 'primary image url'], 'chest': ['chest', 'chest size', 'bust', 'bust size'], 'waist': ['waist', 'waist size'], 'hip': ['hip', 'hip size'], 'shoulder': ['shoulder', 'shoulder size', 'across shoulder'], 'length': ['length', 'length size', 'front length'], 'inseam': ['inseam', 'inseam length'], 'weight': ['package weight', 'weight', 'net weight', 'volumetric weight', 'package weight (kg)', 'weight (g)'], 'pkg_l': ['package length', 'length (cm)', 'volumetric length', 'package length (cm)'], 'pkg_w': ['package breadth', 'package width', 'breadth (cm)', 'width (cm)', 'package breadth (cm)'], 'pkg_h': ['package height', 'height (cm)', 'package height (cm)']},
     'Myntra': {'sku': ['seller sku', 'sku', 'sku id', 'style code', 'vendor article number'], 'title': ['style name', 'product name', 'title', 'item name', 'vendor article name'], 'brand': ['brand', 'brand name', 'vendor brand'], 'description': ['style description', 'description', 'product description'], 'mrp': ['mrp', 'maximum retail price', 'list price'], 'price': ['selling price', 'price', 'wholesale price', 'article price'], 'hsn': ['hsn', 'hsn code'], 'season': ['season', 'season code'], 'year': ['year', 'season year'], 'occasion': ['occasion', 'usage'], 'color': ['color', 'colour', 'primary color', 'prominent colour'], 'size': ['size', 'variant size', 'standard size'], 'fabric': ['fabric', 'material', 'composition'], 'pattern': ['pattern', 'print', 'print or pattern type'], 'fit': ['fit', 'fit type'], 'country': ['country of origin', 'country'], 'generic_kw': ['keywords', 'search keywords'], 'gender': ['gender', 'customer gender', 'age group'], 'care': ['wash care', 'care instructions'], 'sleeve': ['sleeve length', 'sleeve styling'], 'manufacturer': ['manufactured by', 'manufacturer', 'manufacturer details'], 'packer': ['marketed by', 'packer details', 'packed by', 'importer'], 'img1': ['image 1', 'image1', 'images1', 'main image url', 'primary image url', 'front image'], 'chest': ['chest', 'chest size', 'bust', 'bust size', 'garment chest'], 'waist': ['waist', 'waist size', 'garment waist'], 'hip': ['hip', 'hip size', 'garment hip'], 'shoulder': ['shoulder', 'shoulder size', 'across shoulder'], 'length': ['length', 'front length', 'garment length'], 'inseam': ['inseam', 'inseam length'], 'weight': ['weight', 'net weight', 'package weight', 'article weight'], 'pkg_l': ['package length', 'length (cm)'], 'pkg_w': ['package width', 'package breadth', 'width (cm)'], 'pkg_h': ['package height', 'height (cm)']},
 }
 
@@ -2460,15 +2460,24 @@ def run_generic_marketplace(uploaded_file, ctx, mp):
     wb = load_workbook_clean(uploaded_file, uploaded_file.name)
     fields = MP_FIELD_CANDIDATES.get(mp, MP_FIELD_CANDIDATES['Flipkart'])
     mrp_fill, mrp_font = HIGHLIGHT_FILL, HIGHLIGHT_FONT
-    best_ws, best_row, best_score = None, None, -1
+    best_ws, best_row, best_score = None, None, 0
     sku_cands = [_norm_h(x) for x in fields['sku']]
-    for sname in wb.sheetnames:
+    all_field_cands = {_norm_h(x) for cand_list in fields.values() for x in cand_list}
+    skip_sheets = {'index', 'help', 'instructions', 'instruction', 'guidelines', 'guideline', 'overview', 'summary', 'dropdown', 'master', 'masterdata'}
+    sheet_order = [s for s in wb.sheetnames if _norm_h(s) not in skip_sheets] + [s for s in wb.sheetnames if _norm_h(s) in skip_sheets]
+    for sname in sheet_order:
         ws_try = wb[sname]
-        for r in range(1, min(ws_try.max_row, 10) + 1):
-            vals = [_norm_h(ws_try.cell(r, c).value) for c in range(1, min(ws_try.max_column, 60) + 1)]
-            score = sum(1 for v in vals if v in sku_cands)
-            if score > best_score: best_score, best_ws, best_row = score, ws_try, r
-    if best_ws is None or best_score == 0: raise ValueError(f"{mp} template me 'sku' header wali sheet nahi mili.")
+        for r in range(1, min(ws_try.max_row, 20) + 1):
+            vals = [_norm_h(ws_try.cell(r, c).value) for c in range(1, min(ws_try.max_column, 120) + 1)]
+            sku_hits = sum(2 for v in vals if v in sku_cands)
+            if sku_hits == 0:
+                sku_hits = sum(1 for v in vals if v and ('sellersku' in v or 'skuid' in v or 'listingsku' in v))
+            if sku_hits > 0:
+                total_hits = sku_hits * 10 + sum(1 for v in vals if v in all_field_cands)
+                if total_hits > best_score:
+                    best_score, best_ws, best_row = total_hits, ws_try, r
+    if best_ws is None or best_score <= 0:
+        raise ValueError(f"{mp} template me 'sku' header wali sheet nahi mili.")
     ws, header_row = best_ws, best_row
     try: ungroup_worksheet(ws)
     except Exception: pass
@@ -2482,17 +2491,39 @@ def run_generic_marketplace(uploaded_file, ctx, mp):
         for cd in cands:
             n = _norm_h(cd)
             if n in cols: return cols[n]
+        for cd in cands:
+            n = _norm_h(cd)
+            if len(n) >= 5:
+                for h_key, col_idx in cols.items():
+                    if n in h_key:
+                        return col_idx
         return None
 
     fcol = {k: find(v) for k, v in fields.items()}
     sku_col = fcol['sku'] or (find(['sku']) or 1)
-    img_cols = [c for c in range(1, ws.max_column + 1) if re.match(r'(image|img|images|model)\d*$', _norm_h(ws.cell(header_row, c).value) or '')]
-    if fcol.get('img1') and fcol['img1'] not in img_cols: img_cols.insert(0, fcol['img1'])
-    img_cols = sorted(set(img_cols))
+    img_cols = []
+    for c in range(1, ws.max_column + 1):
+        hn = _norm_h(ws.cell(header_row, c).value) or ''
+        if re.match(r'^(main|other|primary|secondary|additional)?(image|img|images|model)(url)?\d*$', hn) and 'swatch' not in hn:
+            img_cols.append(c)
+    if fcol.get('img1'):
+        if fcol['img1'] in img_cols:
+            img_cols.remove(fcol['img1'])
+        img_cols.insert(0, fcol['img1'])
     bullet_cols = sorted({c for c in range(1, ws.max_column + 1) if re.match(r'(bulletpoint|keyfeature|highlight)\d*$', _norm_h(ws.cell(header_row, c).value) or '')})
 
     start_row = header_row + 1
-    while start_row <= ws.max_row and ws.cell(start_row, sku_col).value not in (None, ''): start_row += 1
+    meta_tokens = {'mandatory', 'optional', 'conditional', 'free text', 'dropdown', 'example', 'valid values', 'recommended'}
+    for _ in range(5):
+        if start_row > ws.max_row:
+            break
+        sku_v = ws.cell(start_row, sku_col).value
+        row_sample = [str(ws.cell(start_row, c).value or '').strip().lower() for c in range(1, min(ws.max_column, 30) + 1)]
+        meta_hits = sum(1 for rv in row_sample if any(mt in rv for mt in meta_tokens))
+        if sku_v not in (None, '') or meta_hits >= 3:
+            start_row += 1
+        else:
+            break
 
     def W(row, key, value, fill=None, font=None):
         c = fcol.get(key)
