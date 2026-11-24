@@ -1581,7 +1581,14 @@ def load_workbook_clean(uploaded_file_or_bytes, name=""):
     if wb_xml is not None:
         return wb_xml
 
-    # 3. Legacy Binary BIFF8 .xls via xlrd (with encoding & corruption fallbacks)
+    def _clean_xl_val(v):
+        if isinstance(v, str):
+            return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', v)
+        if isinstance(v, float) and v.is_integer():
+            return int(v)
+        return v
+
+    # 3. Legacy Binary BIFF8 .xls via xlrd (with encoding, corruption & illegal-char sanitization)
     xlrd_attempts = [
         {"formatting_info": False},
         {"formatting_info": False, "ignore_workbook_corruption": True},
@@ -1593,16 +1600,17 @@ def load_workbook_clean(uploaded_file_or_bytes, name=""):
             rd_book = xlrd.open_workbook(file_contents=raw_bytes, **kwargs)
             wb = openpyxl.Workbook()
             wb.remove(wb.active)
-            for sheet_name in rd_book.sheet_names():
+            for idx_s, sheet_name in enumerate(rd_book.sheet_names(), 1):
                 rd_sheet = rd_book.sheet_by_name(sheet_name)
-                ws = wb.create_sheet(title=sheet_name[:31] or "Sheet1")
+                safe_title = re.sub(r'[\[\]:*?/\\\x00-\x1f]', '_', str(sheet_name)).strip()[:31] or f"Sheet{idx_s}"
+                ws = wb.create_sheet(title=safe_title)
                 for r in range(rd_sheet.nrows):
                     row_vals = rd_sheet.row_values(r)
                     for c, val in enumerate(row_vals):
                         if val not in (None, ""):
-                            if isinstance(val, float) and val.is_integer():
-                                val = int(val)
-                            ws.cell(row=r + 1, column=c + 1, value=val)
+                            val = _clean_xl_val(val)
+                            if val not in (None, ""):
+                                ws.cell(row=r + 1, column=c + 1, value=val)
             return wb
         except TypeError:
             continue
@@ -1618,11 +1626,11 @@ def load_workbook_clean(uploaded_file_or_bytes, name=""):
             for idx, df in enumerate(dfs):
                 ws = wb.create_sheet(title=f"Sheet{idx+1}")
                 for c, col_name in enumerate(df.columns):
-                    ws.cell(row=1, column=c + 1, value=str(col_name))
+                    ws.cell(row=1, column=c + 1, value=_clean_xl_val(str(col_name)))
                 for r, row in df.iterrows():
                     for c, val in enumerate(row):
                         if pd.notna(val):
-                            ws.cell(row=r + 2, column=c + 1, value=val)
+                            ws.cell(row=r + 2, column=c + 1, value=_clean_xl_val(val))
             return wb
     except Exception as e:
         errors.append(f"pd.read_html: {e}")
@@ -1640,11 +1648,11 @@ def load_workbook_clean(uploaded_file_or_bytes, name=""):
                 ws = wb.active
                 ws.title = "Sheet1"
                 for c, col_name in enumerate(df_csv.columns):
-                    ws.cell(row=1, column=c + 1, value=str(col_name))
+                    ws.cell(row=1, column=c + 1, value=_clean_xl_val(str(col_name)))
                 for r, row in df_csv.iterrows():
                     for c, val in enumerate(row):
                         if pd.notna(val):
-                            ws.cell(row=r + 2, column=c + 1, value=val)
+                            ws.cell(row=r + 2, column=c + 1, value=_clean_xl_val(val))
                 return wb
         except Exception as e:
             errors.append(f"csv: {e}")
