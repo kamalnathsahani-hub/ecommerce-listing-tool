@@ -160,7 +160,7 @@ def _get_secret(name, default=""):
 # Initialize API keys: Checks secrets.toml / env vars first, and falls back to permanent direct keys
 IMGBB_API_KEY = _get_secret("IMGBB_API_KEY", "3fa5cf93bf08028c8adda038ab05a947")
 IMGBB_PERMANENT_KEY = IMGBB_API_KEY  # Backward-compatible alias so NameError is impossible
-GEMINI_API_KEY = _get_secret("GEMINI_API_KEY", "AQ.Ab8RN6Kbd_bP5EtwbJPhA4Tx5UR3ACDq6PPX8CXLMZOj-o58Zw")
+GEMINI_API_KEY = _get_secret("GEMINI_API_KEY", "AQ.Ab8RN6Kfjpf70bRWzSn5u6ukSyDko0fCgalWxdQu_2rWsbJRdg")
 GEMINI_VISION_MODEL = _get_secret("GEMINI_VISION_MODEL", "gemini-2.0-flash")
 NVIDIA_API_KEY = _get_secret("NVIDIA_API_KEY", "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")
 NVIDIA_MODEL = _get_secret("NVIDIA_MODEL", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning")
@@ -1588,8 +1588,9 @@ def load_workbook_clean(uploaded_file_or_bytes, name=""):
             return int(v)
         return v
 
-    # 3. Legacy Binary BIFF8 .xls via xlrd (with encoding, corruption & illegal-char sanitization)
+    # 3. Legacy Binary BIFF8 .xls via xlrd (preserving hidden sheets, frozen panes, merges, col widths)
     xlrd_attempts = [
+        {"formatting_info": True},
         {"formatting_info": False},
         {"formatting_info": False, "ignore_workbook_corruption": True},
         {"formatting_info": False, "encoding_override": "cp1252"},
@@ -1604,6 +1605,27 @@ def load_workbook_clean(uploaded_file_or_bytes, name=""):
                 rd_sheet = rd_book.sheet_by_name(sheet_name)
                 safe_title = re.sub(r'[\[\]:*?/\\\x00-\x1f]', '_', str(sheet_name)).strip()[:31] or f"Sheet{idx_s}"
                 ws = wb.create_sheet(title=safe_title)
+                vis = getattr(rd_sheet, 'visibility', 0)
+                if vis == 1:
+                    ws.sheet_state = 'hidden'
+                elif vis == 2:
+                    ws.sheet_state = 'veryHidden'
+                if getattr(rd_sheet, 'panes_are_frozen', 0):
+                    hr = int(getattr(rd_sheet, 'horz_split_pos', 0) or 0)
+                    vr = int(getattr(rd_sheet, 'vert_split_pos', 0) or 0)
+                    if hr > 0 or vr > 0:
+                        ws.freeze_panes = ws.cell(hr + 1, vr + 1).coordinate
+                for rlo, rhi, clo, chi in getattr(rd_sheet, 'merged_cells', []):
+                    try:
+                        ws.merge_cells(start_row=rlo + 1, start_column=clo + 1, end_row=rhi, end_column=chi)
+                    except Exception:
+                        pass
+                for c_idx, c_info in getattr(rd_sheet, 'colinfo_map', {}).items():
+                    try:
+                        w_chars = max(8, min(60, (c_info.width / 256.0)))
+                        ws.column_dimensions[openpyxl.utils.get_column_letter(c_idx + 1)].width = w_chars
+                    except Exception:
+                        pass
                 for r in range(rd_sheet.nrows):
                     row_vals = rd_sheet.row_values(r)
                     for c, val in enumerate(row_vals):
@@ -2452,11 +2474,21 @@ def run_meesho(uploaded_file, ctx, size_charts_data=None):
     return output.getvalue(), preview, total_added, ws.title
 
 MP_FIELD_CANDIDATES = {
-    'Flipkart': {'sku': ['seller sku id', 'listing sku', 'seller sku', 'seller sku code', 'sku id', 'sku', 'style code'], 'title': ['product title', 'listing title', 'title', 'product name', 'model name'], 'brand': ['brand', 'brand name'], 'description': ['description', 'product description', 'long description'], 'mrp': ['mrp', 'maximum retail price', 'list price', 'mrp inr'], 'price': ['your selling price', 'selling price', 'flipkart selling price', 'price', 'your price'], 'hsn': ['hsn', 'hsn code'], 'gst': ['gst', 'gst %', 'tax', 'tax code', 'luxury cess'], 'inventory': ['stock count', 'stock', 'inventory', 'quantity'], 'color': ['brand color', 'color', 'color family', 'colour', 'base color'], 'size': ['size', 'size value', 'variant size'], 'fabric': ['fabric', 'fabric type', 'material', 'primary fabric'], 'pattern': ['pattern', 'pattern type'], 'fit': ['fit', 'fit type'], 'occasion': ['occasion', 'usage'], 'country': ['country of origin', 'origin country', 'country'], 'generic_kw': ['search keywords', 'keywords', 'search terms'], 'gender': ['gender', 'ideal for'], 'care': ['fabric care', 'wash care', 'care instructions'], 'sleeve': ['sleeve', 'sleeve length'], 'manufacturer': ['manufacturer details', 'manufactured by', 'manufacturer'], 'packer': ['packer details', 'packed by', 'packer', 'marketed by', 'importer details'], 'img1': ['main image url', 'image url 1', 'image 1', 'image1', 'primary image url'], 'chest': ['chest', 'chest size', 'bust', 'bust size'], 'waist': ['waist', 'waist size'], 'hip': ['hip', 'hip size'], 'shoulder': ['shoulder', 'shoulder size', 'across shoulder'], 'length': ['length', 'length size', 'front length'], 'inseam': ['inseam', 'inseam length'], 'weight': ['package weight', 'weight', 'net weight', 'volumetric weight', 'package weight (kg)', 'weight (g)'], 'pkg_l': ['package length', 'length (cm)', 'volumetric length', 'package length (cm)'], 'pkg_w': ['package breadth', 'package width', 'breadth (cm)', 'width (cm)', 'package breadth (cm)'], 'pkg_h': ['package height', 'height (cm)', 'package height (cm)']},
+    'Flipkart': {'sku': ['seller sku id', 'listing sku', 'seller sku', 'seller sku code', 'sku id', 'sku', 'style code'], 'group_id': ['group id', 'groupid'], 'style_code': ['style code', 'stylecode'], 'listing_status': ['listing status'], 'title': ['product title', 'listing title', 'title', 'product name', 'model name'], 'brand': ['brand', 'brand name'], 'type': ['type', 'neck type'], 'pack_of': ['pack of'], 'suitable_for': ['suitable for'], 'description': ['description', 'product description', 'long description'], 'mrp': ['mrp (inr)', 'mrp', 'maximum retail price', 'list price', 'mrp inr'], 'price': ['your selling price (inr)', 'your selling price', 'selling price', 'flipkart selling price', 'price', 'your price'], 'hsn': ['hsn', 'hsn code'], 'gst': ['tax code', 'gst', 'gst %', 'tax', 'luxury cess'], 'inventory': ['stock', 'stock count', 'inventory', 'quantity'], 'color': ['color', 'color family', 'colour', 'base color'], 'brand_color': ['brand color', 'brand colour'], 'size': ['brand size', 'size', 'size value', 'variant size'], 'fabric': ['fabric', 'fabric type', 'material', 'primary fabric'], 'pattern': ['pattern', 'pattern type'], 'fit': ['fit', 'fit type'], 'occasion': ['occasion', 'usage'], 'country': ['country of origin', 'origin country', 'country'], 'generic_kw': ['search keywords', 'keywords', 'search terms'], 'gender': ['ideal for', 'gender'], 'care': ['fabric care', 'wash care', 'care instructions'], 'sleeve': ['sleeve', 'sleeve length'], 'manufacturer': ['manufacturer details', 'manufactured by', 'manufacturer'], 'packer': ['packer details', 'packed by', 'packer', 'marketed by', 'importer details'], 'img1': ['main image url', 'image url 1', 'image 1', 'image1', 'primary image url'], 'chest': ['chest', 'chest size', 'bust', 'bust size'], 'waist': ['waist', 'waist size'], 'hip': ['hip', 'hip size'], 'shoulder': ['shoulder', 'shoulder size', 'across shoulder'], 'length': ['length', 'length size', 'front length'], 'inseam': ['inseam', 'inseam length'], 'weight': ['weight (kg)', 'package weight (kg)', 'package weight', 'weight', 'net weight', 'volumetric weight', 'weight (g)'], 'pkg_l': ['length (cm)', 'package length', 'volumetric length', 'package length (cm)'], 'pkg_w': ['breadth (cm)', 'package breadth', 'package width', 'width (cm)', 'package breadth (cm)'], 'pkg_h': ['height (cm)', 'package height', 'package height (cm)']},
     'Myntra': {'sku': ['seller sku', 'sku', 'sku id', 'style code', 'vendor article number'], 'title': ['style name', 'product name', 'title', 'item name', 'vendor article name'], 'brand': ['brand', 'brand name', 'vendor brand'], 'description': ['style description', 'description', 'product description'], 'mrp': ['mrp', 'maximum retail price', 'list price'], 'price': ['selling price', 'price', 'wholesale price', 'article price'], 'hsn': ['hsn', 'hsn code'], 'season': ['season', 'season code'], 'year': ['year', 'season year'], 'occasion': ['occasion', 'usage'], 'color': ['color', 'colour', 'primary color', 'prominent colour'], 'size': ['size', 'variant size', 'standard size'], 'fabric': ['fabric', 'material', 'composition'], 'pattern': ['pattern', 'print', 'print or pattern type'], 'fit': ['fit', 'fit type'], 'country': ['country of origin', 'country'], 'generic_kw': ['keywords', 'search keywords'], 'gender': ['gender', 'customer gender', 'age group'], 'care': ['wash care', 'care instructions'], 'sleeve': ['sleeve length', 'sleeve styling'], 'manufacturer': ['manufactured by', 'manufacturer', 'manufacturer details'], 'packer': ['marketed by', 'packer details', 'packed by', 'importer'], 'img1': ['image 1', 'image1', 'images1', 'main image url', 'primary image url', 'front image'], 'chest': ['chest', 'chest size', 'bust', 'bust size', 'garment chest'], 'waist': ['waist', 'waist size', 'garment waist'], 'hip': ['hip', 'hip size', 'garment hip'], 'shoulder': ['shoulder', 'shoulder size', 'across shoulder'], 'length': ['length', 'front length', 'garment length'], 'inseam': ['inseam', 'inseam length'], 'weight': ['weight', 'net weight', 'package weight', 'article weight'], 'pkg_l': ['package length', 'length (cm)'], 'pkg_w': ['package width', 'package breadth', 'width (cm)'], 'pkg_h': ['package height', 'height (cm)']},
 }
 
 def run_generic_marketplace(uploaded_file, ctx, mp):
+    raw_bytes = None
+    try:
+        if hasattr(uploaded_file, "getvalue"):
+            raw_bytes = uploaded_file.getvalue()
+        elif hasattr(uploaded_file, "read"):
+            uploaded_file.seek(0)
+            raw_bytes = uploaded_file.read()
+            uploaded_file.seek(0)
+    except Exception:
+        raw_bytes = None
     wb = load_workbook_clean(uploaded_file, uploaded_file.name)
     fields = MP_FIELD_CANDIDATES.get(mp, MP_FIELD_CANDIDATES['Flipkart'])
     mrp_fill, mrp_font = HIGHLIGHT_FILL, HIGHLIGHT_FONT
@@ -2525,18 +2557,44 @@ def run_generic_marketplace(uploaded_file, ctx, mp):
         else:
             break
 
+    # Build Index allowed-values map for Flipkart templates (since .xls xlrd doesn't carry openpyxl DataValidation)
+    index_allowed = {}
+    if mp == 'Flipkart' and 'Index' in wb.sheetnames:
+        ws_idx = wb['Index']
+        for ic in range(1, min(ws_idx.max_column, 80) + 1):
+            ih = _norm_h(ws_idx.cell(2, ic).value)
+            if not ih:
+                continue
+            vals_list = []
+            for ir in range(3, min(ws_idx.max_row, 300) + 1):
+                iv = ws_idx.cell(ir, ic).value
+                if iv not in (None, '') and str(iv).strip() not in vals_list:
+                    vals_list.append(str(iv).strip())
+            if vals_list:
+                index_allowed[ih] = vals_list
+
+    # Track exact cell writes so .xls templates can be updated in-place via xlutils.copy without altering anything else
+    xls_writes = []
+
     def W(row, key, value, fill=None, font=None):
         c = fcol.get(key)
         if not c: return
         cell = ws.cell(row, c)
+        final_val = None
         if value not in (None, ''):
+            hdr_txt = str(ws.cell(header_row, c).value or '')
             opts = get_dropdown_options_for_column(ws, c)
+            if not opts and index_allowed:
+                opts = index_allowed.get(_norm_h(hdr_txt), [])
             if opts:
-                cell.value = smart_pick_dropdown_value(opts, desired=value, header_name=str(ws.cell(header_row, c).value or ''), cat=cat, gender=det_gen, ai_data=ctx.get('vision_results', {}).get(clean_style, {}))
+                final_val = smart_pick_dropdown_value(opts, desired=value, header_name=hdr_txt, cat=cat, gender=det_gen, ai_data=ctx.get('vision_results', {}).get(clean_style, {}))
             else:
-                cell.value = value
+                final_val = value
+            cell.value = final_val
         if fill: cell.fill = fill
         if font: cell.font = font
+        if final_val not in (None, '') or fill is not None:
+            xls_writes.append((row, c, final_val, fill is not None))
 
     count, preview = 0, []
     sc_meas_all = ctx.get('size_chart_measurements') or {}
@@ -2548,13 +2606,24 @@ def run_generic_marketplace(uploaded_file, ctx, mp):
         cat, det_gen = resolve_category(clean_style, ctx, ws.title), resolve_gender(clean_style, ctx)
         color_family_val = map_to_standard_color_map(det_col)
         mat_val, sleeve_val = resolve_fabric(clean_style, cat, ctx), resolve_sleeve_length(clean_style, cat, ctx)
+        if mp == 'Flipkart' and str(sleeve_val).lower() in ('short sleeve', 'half'):
+            sleeve_val = 'Half Sleeve'
         fit_desired, occ_desired, season_desired = resolve_fit_type(clean_style, cat, ctx), resolve_occasion(clean_style, cat, ctx), resolve_season(clean_style, cat, ctx)
         w_dims = get_smart_weight_and_dims(cat)
         bullets_list, desc_text = build_freehand_bullets_and_desc(cat, ctx['brand'], det_gen, mat_val)
-        gen_kw = re.sub(r'\s+', ' ', str(generate_generic_keywords_200(cat, det_col, ctx['keywords'], det_gen)).replace(';', ' ')).strip()
+        if mp == 'Flipkart':
+            kw_parts = [p.strip() for p in [f"{det_gen} {cat}".strip(), f"{det_col} {cat}".strip(), f"{ctx.get('brand', '')} {cat}".strip(), ctx.get('keywords', '').split(',')[0].strip() if ctx.get('keywords') else '', f"Casual {cat}".strip()] if p.strip()]
+            gen_kw = "::".join(dict.fromkeys(kw_parts))[:200]
+        else:
+            gen_kw = re.sub(r'\s+', ' ', str(generate_generic_keywords_200(cat, det_col, ctx['keywords'], det_gen)).replace(';', ' ')).strip()
         urls = get_sku_img_urls(raw_fld, ctx, clean_style)
         sc_data = sc_meas_all.get(raw_fld) or sc_meas_all.get('default') or {}
         hsn_val, hsn_is_auto = resolve_hsn_with_flag(ctx.get('hsn'), cat, raw_fld)
+        wt_col_hdr = str(ws.cell(header_row, fcol['weight']).value or '').lower() if fcol.get('weight') else ''
+        wt_val = round(w_dims['item_wt'] / 1000.0, 3) if 'kg' in wt_col_hdr else w_dims['item_wt']
+        gst_val = f"GST_{ctx['mp_gst']}" if (mp == 'Flipkart' and ctx.get('mp_gst') is not None) else ctx.get('mp_gst')
+        fk_type_val = 'Polo Neck' if ('polo' in cat.lower() or 'polo' in clean_style.lower()) else 'Round Neck'
+        fk_care_val = 'Regular Machine Wash' if mp == 'Flipkart' else 'Machine Wash'
         preview.append({'SKU': clean_style, 'Category': cat, 'Gender': det_gen, 'Color': det_col, 'Fit': fit_desired, 'Occasion': occ_desired, 'Season': f"{season_desired} ({year_desired})", 'HSN': f"{hsn_val} (Auto-Highlighted)" if hsn_is_auto else hsn_val, 'Weight (g)': w_dims['item_wt']})
 
         for sz in ctx['sizes']:
@@ -2562,14 +2631,24 @@ def run_generic_marketplace(uploaded_file, ctx, mp):
             full_sku = f"{clean_style}-{clean_sz}"
             meas = resolve_complete_measurements_for_size(clean_sz, cat, sc_data, det_gen)
             r = start_row + count
-            W(r, 'sku', full_sku); W(r, 'title', build_sc_title(ctx['brand'], cat, full_sku, ctx['keywords'], 150, det_gen)); W(r, 'brand', ctx['brand'])
-            W(r, 'description', _limit_desc_200(desc_text)); W(r, 'color', color_family_val)
+            W(r, 'sku', full_sku)
+            W(r, 'group_id', clean_style)
+            W(r, 'style_code', clean_style)
+            W(r, 'listing_status', 'ACTIVE')
+            W(r, 'title', build_sc_title(ctx['brand'], cat, full_sku, ctx['keywords'], 150, det_gen))
+            W(r, 'brand', ctx['brand'])
+            W(r, 'type', fk_type_val)
+            W(r, 'pack_of', 1)
+            W(r, 'suitable_for', 'Western Wear')
+            W(r, 'description', _limit_desc_200(desc_text))
+            W(r, 'color', color_family_val)
+            W(r, 'brand_color', det_col)
             W(r, 'size', clean_sz); W(r, 'fabric', mat_val); W(r, 'pattern', 'Solid')
             W(r, 'fit', fit_desired); W(r, 'occasion', occ_desired); W(r, 'country', 'India')
             W(r, 'season', season_desired); W(r, 'year', year_desired)
-            if ctx.get('mp_gst') is not None: W(r, 'gst', ctx['mp_gst'])
+            if gst_val is not None: W(r, 'gst', gst_val)
             if ctx.get('quantity') is not None: W(r, 'inventory', ctx['quantity'])
-            W(r, 'generic_kw', gen_kw); W(r, 'gender', det_gen); W(r, 'care', 'Machine Wash')
+            W(r, 'generic_kw', gen_kw); W(r, 'gender', det_gen); W(r, 'care', fk_care_val)
             W(r, 'sleeve', sleeve_val)
             W(r, 'hsn', hsn_val, fill=(HIGHLIGHT_FILL if hsn_is_auto else None), font=(HIGHLIGHT_FONT if hsn_is_auto else None))
             W(r, 'manufacturer', ctx.get('mfg') or None, fill=(HIGHLIGHT_FILL if not ctx.get('mfg') else None))
@@ -2577,17 +2656,46 @@ def run_generic_marketplace(uploaded_file, ctx, mp):
             W(r, 'chest', meas['chest']); W(r, 'waist', meas['waist'])
             W(r, 'hip', meas['hip']); W(r, 'shoulder', meas['shoulder'])
             W(r, 'length', meas['length']); W(r, 'inseam', meas['inseam'])
-            W(r, 'weight', w_dims['item_wt']); W(r, 'pkg_l', w_dims['cm_l']); W(r, 'pkg_w', w_dims['cm_w']); W(r, 'pkg_h', w_dims['cm_h'])
+            W(r, 'weight', wt_val); W(r, 'pkg_l', w_dims['cm_l']); W(r, 'pkg_w', w_dims['cm_w']); W(r, 'pkg_h', w_dims['cm_h'])
             for bi, bc in enumerate(bullet_cols):
-                if bi < len(bullets_list): ws.cell(r, bc).value = bullets_list[bi]
+                if bi < len(bullets_list):
+                    ws.cell(r, bc).value = bullets_list[bi]
+                    xls_writes.append((r, bc, bullets_list[bi], False))
             for ii, ic in enumerate(img_cols):
-                if ii < len(urls): ws.cell(r, ic).value = urls[ii]
+                if ii < len(urls):
+                    ws.cell(r, ic).value = urls[ii]
+                    xls_writes.append((r, ic, urls[ii], False))
             if fcol.get('mrp'):
                 cell = ws.cell(r, fcol['mrp'])
-                if ctx['mrp']: cell.value = ctx['mrp']
-                else: cell.fill = mrp_fill; cell.font = mrp_font
+                if ctx['mrp']:
+                    cell.value = ctx['mrp']
+                    xls_writes.append((r, fcol['mrp'], ctx['mrp'], False))
+                else:
+                    cell.fill = mrp_fill; cell.font = mrp_font
+                    xls_writes.append((r, fcol['mrp'], None, True))
             W(r, 'price', ctx['selling_price'] or None)
             count += 1
+
+    # If original template is legacy .xls and xlutils.copy is available, update it in-place to preserve 100% of original template
+    if raw_bytes and raw_bytes[:8] == b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1':
+        try:
+            import xlutils.copy
+            import xlwt
+            rb = xlrd.open_workbook(file_contents=raw_bytes, formatting_info=True)
+            wb_wt = xlutils.copy.copy(rb)
+            sheet_idx = rb.sheet_names().index(ws.title)
+            ws_wt = wb_wt.get_sheet(sheet_idx)
+            normal_style = xlwt.easyxf("font: name Calibri, height 220;")
+            yellow_style = xlwt.easyxf("pattern: pattern solid, fore_colour yellow; font: name Calibri, height 220;")
+            for r_i, c_i, v_i, is_y in xls_writes:
+                if v_i is not None or is_y:
+                    ws_wt.write(r_i - 1, c_i - 1, "" if v_i is None else v_i, yellow_style if is_y else normal_style)
+            output_xls = io.BytesIO()
+            wb_wt.save(output_xls)
+            output_xls.seek(0)
+            return output_xls.getvalue(), preview, count
+        except Exception:
+            pass
 
     output = io.BytesIO()
     wb.save(output); output.seek(0)
@@ -3599,7 +3707,10 @@ def render_listing_ui():
                     if out:
                         if preview: st.dataframe(preview, use_container_width=True)
                         base_name, ext = os.path.splitext(tpl_file.name)
-                        out_ext = ext if ext.lower() in ['.xlsm', '.xlsx'] else '.xlsx'
+                        if isinstance(out, (bytes, bytearray)) and out[:8] == b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1':
+                            out_ext = '.xls'
+                        else:
+                            out_ext = ext if ext.lower() in ['.xlsm', '.xlsx'] else '.xlsx'
                         dl_name = f"{base_name}_FILLED{out_ext}"
                         st.download_button("📥 Download Filled File", data=out, file_name=dl_name, mime=_mime_for(dl_name), type="primary")
             except ValueError as ve: st.error(str(ve))
