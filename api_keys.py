@@ -16,7 +16,7 @@ IMGBB_KEYS_LIST = [
 ]
 
 # AI Vision API Keys
-GEMINI_API_KEY = "AQ.Ab8RN6Kfjpf70bRWzSn5u6ukSyDko0fCgalWxdQu_2rWsbJRdg"
+GEMINI_API_KEY = "AQ.Ab8RN6JUHmPq44O2USpCwYv5M-njLQdifn1ktLuQrFEnmlJaeQ"
 GEMINI_VISION_MODEL = "gemini-2.0-flash"
 
 NVIDIA_API_KEY = "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"
