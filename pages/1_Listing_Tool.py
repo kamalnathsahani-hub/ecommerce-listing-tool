@@ -1,41 +1,198 @@
 import streamlit as st
 import openpyxl
 from openpyxl.styles import PatternFill, Font
-import io, os, sys, re, json, time, zipfile, base64, hashlib, difflib, traceback, requests, colorsys, threading, concurrent.futures, xlrd
+import io, os, re, json, time, zipfile, base64, hashlib, difflib, traceback, requests, colorsys, threading, concurrent.futures, xlrd
 import pandas as pd
 from datetime import datetime, timedelta
 from PIL import Image
 
-# Root folder se api_keys.py import karne ka setup (taaki pages/ folder se bhi file mil jaye)
-_ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if _ROOT_DIR not in sys.path:
-    sys.path.insert(0, _ROOT_DIR)
+import importlib, importlib.util
 
-try:
-    import api_keys as _ext_keys
-except ImportError:
-    _ext_keys = None
+def _load_api_keys_module():
+    # Load pages/api_keys.py reliably regardless of Streamlit working directory or sys.path
+    candidates = []
+    if "__file__" in globals():
+        candidates.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "api_keys.py"))
+    candidates.extend([
+        os.path.join(os.getcwd(), "pages", "api_keys.py"),
+        os.path.join(os.getcwd(), "api_keys.py"),
+    ])
+    for cand in candidates:
+        if cand and os.path.isfile(cand):
+            try:
+                spec = importlib.util.spec_from_file_location("api_keys", cand)
+                if spec and spec.loader:
+                    mod = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(mod)
+                    return mod
+            except Exception:
+                pass
+    for mod_name in ("pages.api_keys", "api_keys"):
+        try:
+            return importlib.import_module(mod_name)
+        except Exception:
+            pass
+    return None
 
-# Multi-key pool for ImgBB (api_keys.py se automatic load hoga)
-_DEFAULT_IMGBB_KEYS = list(getattr(_ext_keys, "IMGBB_KEYS_LIST", []))
+_API_KEYS_MOD = _load_api_keys_module()
+
+# Multi-key pool for ImgBB loaded dynamically from pages/api_keys.py
+_DEFAULT_IMGBB_KEYS = [
+    str(k).strip()
+    for k in (getattr(_API_KEYS_MOD, "IMGBB_KEYS_LIST", []) if _API_KEYS_MOD else [])
+    if str(k).strip()
+]
 _EXHAUSTED_IMGBB_KEYS = set()
 _KEY_EXHAUSTION_DATA = {}
 _GLOBAL_IMG_CACHE = {}
 _IMG_UPLOAD_LOCK = threading.Lock()
-_CURRENT_ACTIVE_KEY_IDX = 0  # Track karega ki abhi kaunsi key chal rahi hai
+
+def get_imgbb_quota_status():
+    candidate_sources = []
+    try:
+        if "st" in globals() and hasattr(st, "session_state"):
+            if st.session_state.get("ui_set_imgbb"): candidate_sources.append(st.session_state["ui_set_imgbb"])
+            if st.session_state.get("ui_set_imgbb_sidebar"): candidate_sources.append(st.session_state["ui_set_imgbb_sidebar"])
+    except Exception:
+        pass
+    candidate_sources += [
+        globals().get("IMGBB_API_KEY"),
+        globals().get("IMGBB_PERMANENT_KEY"),
+    ] + _DEFAULT_IMGBB_KEYS
+
+    all_keys = []
+    for k in candidate_sources:
+        k_clean = str(k or "").strip()
+        if k_clean and k_clean not in all_keys:
+            all_keys.append(k_clean)
+
+    now = datetime.now()
+    # Auto-release keys whose 60-minute window has passed
+    for k in list(_EXHAUSTED_IMGBB_KEYS):
+        info = _KEY_EXHAUSTION_DATA.get(k)
+        if info and now >= info.get("reset_at", now):
+            _EXHAUSTED_IMGBB_KEYS.discard(k)
+
+    active_keys = [k for k in all_keys if k not in _EXHAUSTED_IMGBB_KEYS]
+
+    if not active_keys and all_keys:
+        resets = [_KEY_EXHAUSTION_DATA[k]["reset_at"] for k in all_keys if k in _KEY_EXHAUSTION_DATA]
+        earliest_reset = min(resets) if resets else (now + timedelta(minutes=60))
+        remaining_sec = max(0, int((earliest_reset - now).total_seconds()))
+        remaining_min = max(1, remaining_sec // 60)
+        reset_time_str = earliest_reset.strftime("%I:%M %p")
+        return {
+            "all_exhausted": True,
+            "total_keys": len(all_keys),
+            "active_keys_count": 0,
+            "exhausted_keys_count": len(all_keys),
+            "reset_time_str": reset_time_str,
+            "remaining_min": remaining_min,
+        }
+    else:
+        return {
+            "all_exhausted": False,
+            "total_keys": len(all_keys),
+            "active_keys_count": len(active_keys),
+            "exhausted_keys_count": len(all_keys) - len(active_keys),
+            "reset_time_str": None,
+            "remaining_min": 0,
+        }
+
+
+st.set_page_config(page_title="Multi-Marketplace Auto Listing Generator", layout="wide")
+if st.button("⬅️ Back to Home"): st.switch_page("app.py")
+st.title("📦 Multi-Marketplace Auto Listing Generator (Universal Pro V28 - Unified Dashboard)")
+st.caption("Ajio | Amazon VC | VC➜SC | Amazon SC | Flipkart | Meesho | Myntra + 🤖 AI Vision, Smart Size Chart & HSN Auto-Highlight")
+
+def _load_local_secrets_fallback():
+    # Streamlit secrets.toml direct file loader fallback
+    # Thorough search across current dir, parent dirs, pages/, and user home
+    sec_map = {}
+    candidate_paths = [
+        os.path.join(os.getcwd(), ".streamlit", "secrets.toml"),
+        os.path.join(os.getcwd(), "secrets.toml"),
+        os.path.expanduser("~/.streamlit/secrets.toml"),
+    ]
+    curr_dir = os.path.abspath(os.path.dirname(__file__)) if "__file__" in globals() else os.getcwd()
+    for _ in range(5):
+        candidate_paths.append(os.path.join(curr_dir, ".streamlit", "secrets.toml"))
+        candidate_paths.append(os.path.join(curr_dir, "secrets.toml"))
+        p_dir = os.path.dirname(curr_dir)
+        if p_dir == curr_dir:
+            break
+        curr_dir = p_dir
+
+    for p in candidate_paths:
+        if p and os.path.isfile(p):
+            try:
+                try:
+                    import tomllib
+                    with open(p, "rb") as f:
+                        sec_map.update(tomllib.load(f))
+                except Exception:
+                    with open(p, "r", encoding="utf-8") as f:
+                        for line in f:
+                            if "=" in line and not line.strip().startswith("#"):
+                                k, _, v = line.partition("=")
+                                sec_map[k.strip()] = v.strip().strip('"').strip("'")
+                if sec_map:
+                    break
+            except Exception:
+                pass
+    return sec_map
+
+def _get_secret(name, default=""):
+    # 0. Check session_state UI overrides (allows user to paste keys right in the web app)
+    overrides = st.session_state.get("api_keys_override", {})
+    if name in overrides and overrides[name]:
+        return str(overrides[name]).strip()
+    for k, v in overrides.items():
+        if str(k).strip().upper() == name.strip().upper() and v:
+            return str(v).strip()
+
+    # 1. Check st.secrets (Streamlit Cloud Dashboard / standard .streamlit/secrets.toml)
+    try:
+        if name in st.secrets:
+            val = st.secrets[name]
+            if val not in (None, ""):
+                return str(val).strip()
+        for k in st.secrets:
+            if str(k).strip().upper() == name.strip().upper():
+                val = st.secrets[k]
+                if val not in (None, ""):
+                    return str(val).strip()
+    except Exception:
+        pass
+
+    # 2. Check environment variables
+    for env_k in [name, name.upper(), name.lower()]:
+        env_val = os.environ.get(env_k)
+        if env_val not in (None, ""):
+            return str(env_val).strip()
+
+    # 3. Direct disk fallback for .streamlit/secrets.toml
+    try:
+        fallback_map = _load_local_secrets_fallback()
+        if name in fallback_map and fallback_map[name]:
+            return str(fallback_map[name]).strip()
+        for k, v in fallback_map.items():
+            if str(k).strip().upper() == name.strip().upper() and v:
+                return str(v).strip()
+    except Exception:
         pass
 
     return str(default or "").strip()
 
-# Initialize API keys: Checks secrets.toml / env vars first, and falls back to permanent direct keys
-IMGBB_API_KEY = _get_secret("IMGBB_API_KEY", "3fa5cf93bf08028c8adda038ab05a947")
+# Initialize API keys: Checks UI overrides / secrets.toml / env vars first, then pages/api_keys.py
+IMGBB_API_KEY = _get_secret("IMGBB_API_KEY", _DEFAULT_IMGBB_KEYS[0] if _DEFAULT_IMGBB_KEYS else "")
 IMGBB_PERMANENT_KEY = IMGBB_API_KEY  # Backward-compatible alias so NameError is impossible
-GEMINI_API_KEY = _get_secret("GEMINI_API_KEY", "AQ.Ab8RN6Kfjpf70bRWzSn5u6ukSyDko0fCgalWxdQu_2rWsbJRdg")
-GEMINI_VISION_MODEL = _get_secret("GEMINI_VISION_MODEL", "gemini-2.0-flash")
-NVIDIA_API_KEY = _get_secret("NVIDIA_API_KEY", "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")
-NVIDIA_MODEL = _get_secret("NVIDIA_MODEL", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning")
-GROQ_API_KEY = _get_secret("GROQ_API_KEY", "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")
-GROQ_VISION_MODEL = _get_secret("GROQ_VISION_MODEL", "llama-3.2-11b-vision-preview")
+GEMINI_API_KEY = _get_secret("GEMINI_API_KEY", getattr(_API_KEYS_MOD, "GEMINI_API_KEY", "") if _API_KEYS_MOD else "")
+GEMINI_VISION_MODEL = _get_secret("GEMINI_VISION_MODEL", getattr(_API_KEYS_MOD, "GEMINI_VISION_MODEL", "gemini-2.0-flash") if _API_KEYS_MOD else "gemini-2.0-flash")
+NVIDIA_API_KEY = _get_secret("NVIDIA_API_KEY", getattr(_API_KEYS_MOD, "NVIDIA_API_KEY", "") if _API_KEYS_MOD else "")
+NVIDIA_MODEL = _get_secret("NVIDIA_MODEL", getattr(_API_KEYS_MOD, "NVIDIA_MODEL", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning") if _API_KEYS_MOD else "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning")
+GROQ_API_KEY = _get_secret("GROQ_API_KEY", getattr(_API_KEYS_MOD, "GROQ_API_KEY", "") if _API_KEYS_MOD else "")
+GROQ_VISION_MODEL = _get_secret("GROQ_VISION_MODEL", getattr(_API_KEYS_MOD, "GROQ_VISION_MODEL", "llama-3.2-11b-vision-preview") if _API_KEYS_MOD else "llama-3.2-11b-vision-preview")
 
 MP_LIST = ["Ajio", "Amazon - Vendor Central", "Convert: Vendor Central ➜ Seller Central", "Amazon - Seller Central", "Flipkart", "Meesho", "Myntra"]
 if st.session_state.get("pl_mp_sel", "Ajio") == "Ajio":
@@ -627,100 +784,33 @@ def upload_to_imgbb(image_bytes, api_key=None):
                 time.sleep(0.3)
     return None
 
-def upload_to_imgbb(image_bytes, api_key=None):
-    global _CURRENT_ACTIVE_KEY_IDX
+def upload_to_imgbb_cached(image_bytes, api_key=None, cache=None, sku_hint="", img_idx=1):
     if not image_bytes:
         return None
+    api_key = api_key or globals().get("IMGBB_API_KEY") or globals().get("IMGBB_PERMANENT_KEY") or (_DEFAULT_IMGBB_KEYS[0] if _DEFAULT_IMGBB_KEYS else "")
     h = hashlib.md5(image_bytes).hexdigest()
+    cache_key = f"real_imgbb_{h}"
+    if cache is not None:
+        if cache_key in cache and cache[cache_key] and not _is_synthetic_hash_url(cache[cache_key], h):
+            return cache[cache_key]
+        if h in cache and cache[h] and not _is_synthetic_hash_url(cache[h], h):
+            cache[cache_key] = cache[h]
+            return cache[h]
     with _IMG_UPLOAD_LOCK:
         if h in _GLOBAL_IMG_CACHE and _GLOBAL_IMG_CACHE[h] and not _is_synthetic_hash_url(_GLOBAL_IMG_CACHE[h], h):
-            return _GLOBAL_IMG_CACHE[h]
-
-    # Sidebar ya UI se agar user ne abhi-abhi nayi key paste ki hai to use sabse upar rakhein
-    ui_keys = []
-    try:
-        if "st" in globals() and hasattr(st, "session_state"):
-            for s_key in ("ui_set_imgbb", "ui_set_imgbb_sidebar"):
-                val = str(st.session_state.get(s_key) or "").strip()
-                if val and val not in ui_keys:
-                    ui_keys.append(val)
-    except Exception:
-        pass
-
-    candidate_sources = ui_keys + [
-        api_key,
-        globals().get("IMGBB_API_KEY"),
-    ] + _DEFAULT_IMGBB_KEYS
-
-    # Duplicate hatayein aur exhausted keys ko skip karein
-    all_valid_keys = []
-    for k in candidate_sources:
-        k_clean = str(k or "").strip()
-        if k_clean and k_clean not in all_valid_keys:
-            all_valid_keys.append(k_clean)
-
-    with _IMG_UPLOAD_LOCK:
-        # Check karein ki kisi exhausted key ka 60-min cooldown poora hua ya nahi
-        now = datetime.now()
-        for k in list(_EXHAUSTED_IMGBB_KEYS):
-            info = _KEY_EXHAUSTION_DATA.get(k)
-            if info and now >= info.get("reset_at", now):
-                _EXHAUSTED_IMGBB_KEYS.discard(k)
-
-        keys_to_try = [k for k in all_valid_keys if k not in _EXHAUSTED_IMGBB_KEYS]
-
-        # Agar saari keys exhaust ho gayi hain, to ek baar reset karke try karein
-        if not keys_to_try and all_valid_keys:
-            _EXHAUSTED_IMGBB_KEYS.clear()
-            keys_to_try = list(all_valid_keys)
-
-    if not keys_to_try:
-        return None
-
-    jpeg_bytes = _prepare_jpeg_for_imgbb(image_bytes)
-    b64_str = base64.b64encode(jpeg_bytes).decode('utf-8')
-
-    for key_use in keys_to_try:
-        # Agar kisi dusre thread ne is key ko abhi-abhi block mark kar diya hai to turant skip karein
+            val = _GLOBAL_IMG_CACHE[h]
+            if cache is not None:
+                cache[cache_key] = val
+                cache[h] = val
+            return val
+    url = upload_to_imgbb(image_bytes, api_key)
+    if url:
         with _IMG_UPLOAD_LOCK:
-            if key_use in _EXHAUSTED_IMGBB_KEYS:
-                continue
-
-        for attempt in range(2):
-            try:
-                res = requests.post(
-                    "https://api.imgbb.com/1/upload",
-                    data={"key": key_use, "image": b64_str},
-                    timeout=(5, 15),
-                )
-                if res.status_code == 200:
-                    body = res.json()
-                    data = body.get('data') or {}
-                    img_obj = data.get('image') if isinstance(data.get('image'), dict) else {}
-                    real_url = img_obj.get('url') or data.get('url') or data.get('display_url')
-                    if real_url:
-                        clean_url = str(real_url).strip()
-                        with _IMG_UPLOAD_LOCK:
-                            _GLOBAL_IMG_CACHE[h] = clean_url
-                        return clean_url
-
-                elif res.status_code in (400, 429, 403):
-                    # Limit hit ya invalid key -> Turant block list me daalein aur next key par jayein
-                    with _IMG_UPLOAD_LOCK:
-                        _EXHAUSTED_IMGBB_KEYS.add(key_use)
-                        _KEY_EXHAUSTION_DATA[key_use] = {
-                            "exhausted_at": datetime.now(),
-                            "reset_at": datetime.now() + timedelta(minutes=60),
-                            "error": res.text[:200]
-                        }
-                    _record_api_error("ImgBB", f"Key (...{key_use[-4:]}) limit hit -> Switched to next backup key!")
-                    break  # Retry loop todkar seedha agli key par switch karega
-                else:
-                    _record_api_error("ImgBB", f"HTTP {res.status_code}: {res.text[:150]}")
-            except Exception as e:
-                _record_api_error("ImgBB", f"Upload exception: {e}")
-                time.sleep(0.3)
-
+            _GLOBAL_IMG_CACHE[h] = url
+        if cache is not None:
+            cache[cache_key] = url
+            cache[h] = url
+        return url
     return None
 
 def batch_upload_listing_images(pl_zip_images, pl_size_charts, ctx, img_cache, pbar=None, status_box=None):
