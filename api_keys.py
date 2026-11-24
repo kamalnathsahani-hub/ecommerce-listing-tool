@@ -3,15 +3,16 @@
 
 # Jitni bhi ImgBB API keys hain, sab is list me ek ke niche ek daal dein
 IMGBB_KEYS_LIST = [
-    "b3784cfabbb5014641a420b3986da06d",  # Primary Key
+    "122ed68d5728918f1e2bee8491963668",  # Primary Key
     "3fa5cf93bf08028c8adda038ab05a947",  # Backup 1
     "5faf7edf23f5135e5262c1895d456c6d",  # Backup 2
     "d9c025078516d7a461e1b12b548b8ca7",  # Backup 3
     "9597e75da909fa8fc0e6f77dc4a86ce8",  # Backup 4
     "4f23bdf1d0725a3d078fb8f0fa3cce9d",  # Backup 5
     "86fc928d36f7cdff5eac1656b544ed1d",  # Backup 6
+    "635e7801c6fd893a68b1188fb9ac4240",  # Backup 7 (Dusari ID ki ImgBB Key - ise apni actual key se replace karein)
     # Nayi Gmail key add karne ke liye bas niche comma lagakar paste karein:
-    # "NAYI_API_KEY_YAHAN_PASTE_KAREIN",
+    # "635e7801c6fd893a68b1188fb9ac4240",
 ]
 
 # AI Vision API Keys
