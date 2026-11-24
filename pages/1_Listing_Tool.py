@@ -627,33 +627,100 @@ def upload_to_imgbb(image_bytes, api_key=None):
                 time.sleep(0.3)
     return None
 
-def upload_to_imgbb_cached(image_bytes, api_key=None, cache=None, sku_hint="", img_idx=1):
+def upload_to_imgbb(image_bytes, api_key=None):
+    global _CURRENT_ACTIVE_KEY_IDX
     if not image_bytes:
         return None
-    api_key = api_key or globals().get("IMGBB_API_KEY") or globals().get("IMGBB_PERMANENT_KEY") or "c4e017b58c982cf4d4fa436fb16ad503"
     h = hashlib.md5(image_bytes).hexdigest()
-    cache_key = f"real_imgbb_{h}"
-    if cache is not None:
-        if cache_key in cache and cache[cache_key] and not _is_synthetic_hash_url(cache[cache_key], h):
-            return cache[cache_key]
-        if h in cache and cache[h] and not _is_synthetic_hash_url(cache[h], h):
-            cache[cache_key] = cache[h]
-            return cache[h]
     with _IMG_UPLOAD_LOCK:
         if h in _GLOBAL_IMG_CACHE and _GLOBAL_IMG_CACHE[h] and not _is_synthetic_hash_url(_GLOBAL_IMG_CACHE[h], h):
-            val = _GLOBAL_IMG_CACHE[h]
-            if cache is not None:
-                cache[cache_key] = val
-                cache[h] = val
-            return val
-    url = upload_to_imgbb(image_bytes, api_key)
-    if url:
+            return _GLOBAL_IMG_CACHE[h]
+
+    # Sidebar ya UI se agar user ne abhi-abhi nayi key paste ki hai to use sabse upar rakhein
+    ui_keys = []
+    try:
+        if "st" in globals() and hasattr(st, "session_state"):
+            for s_key in ("ui_set_imgbb", "ui_set_imgbb_sidebar"):
+                val = str(st.session_state.get(s_key) or "").strip()
+                if val and val not in ui_keys:
+                    ui_keys.append(val)
+    except Exception:
+        pass
+
+    candidate_sources = ui_keys + [
+        api_key,
+        globals().get("IMGBB_API_KEY"),
+    ] + _DEFAULT_IMGBB_KEYS
+
+    # Duplicate hatayein aur exhausted keys ko skip karein
+    all_valid_keys = []
+    for k in candidate_sources:
+        k_clean = str(k or "").strip()
+        if k_clean and k_clean not in all_valid_keys:
+            all_valid_keys.append(k_clean)
+
+    with _IMG_UPLOAD_LOCK:
+        # Check karein ki kisi exhausted key ka 60-min cooldown poora hua ya nahi
+        now = datetime.now()
+        for k in list(_EXHAUSTED_IMGBB_KEYS):
+            info = _KEY_EXHAUSTION_DATA.get(k)
+            if info and now >= info.get("reset_at", now):
+                _EXHAUSTED_IMGBB_KEYS.discard(k)
+
+        keys_to_try = [k for k in all_valid_keys if k not in _EXHAUSTED_IMGBB_KEYS]
+
+        # Agar saari keys exhaust ho gayi hain, to ek baar reset karke try karein
+        if not keys_to_try and all_valid_keys:
+            _EXHAUSTED_IMGBB_KEYS.clear()
+            keys_to_try = list(all_valid_keys)
+
+    if not keys_to_try:
+        return None
+
+    jpeg_bytes = _prepare_jpeg_for_imgbb(image_bytes)
+    b64_str = base64.b64encode(jpeg_bytes).decode('utf-8')
+
+    for key_use in keys_to_try:
+        # Agar kisi dusre thread ne is key ko abhi-abhi block mark kar diya hai to turant skip karein
         with _IMG_UPLOAD_LOCK:
-            _GLOBAL_IMG_CACHE[h] = url
-        if cache is not None:
-            cache[cache_key] = url
-            cache[h] = url
-        return url
+            if key_use in _EXHAUSTED_IMGBB_KEYS:
+                continue
+
+        for attempt in range(2):
+            try:
+                res = requests.post(
+                    "https://api.imgbb.com/1/upload",
+                    data={"key": key_use, "image": b64_str},
+                    timeout=(5, 15),
+                )
+                if res.status_code == 200:
+                    body = res.json()
+                    data = body.get('data') or {}
+                    img_obj = data.get('image') if isinstance(data.get('image'), dict) else {}
+                    real_url = img_obj.get('url') or data.get('url') or data.get('display_url')
+                    if real_url:
+                        clean_url = str(real_url).strip()
+                        with _IMG_UPLOAD_LOCK:
+                            _GLOBAL_IMG_CACHE[h] = clean_url
+                        return clean_url
+
+                elif res.status_code in (400, 429, 403):
+                    # Limit hit ya invalid key -> Turant block list me daalein aur next key par jayein
+                    with _IMG_UPLOAD_LOCK:
+                        _EXHAUSTED_IMGBB_KEYS.add(key_use)
+                        _KEY_EXHAUSTION_DATA[key_use] = {
+                            "exhausted_at": datetime.now(),
+                            "reset_at": datetime.now() + timedelta(minutes=60),
+                            "error": res.text[:200]
+                        }
+                    _record_api_error("ImgBB", f"Key (...{key_use[-4:]}) limit hit -> Switched to next backup key!")
+                    break  # Retry loop todkar seedha agli key par switch karega
+                else:
+                    _record_api_error("ImgBB", f"HTTP {res.status_code}: {res.text[:150]}")
+            except Exception as e:
+                _record_api_error("ImgBB", f"Upload exception: {e}")
+                time.sleep(0.3)
+
     return None
 
 def batch_upload_listing_images(pl_zip_images, pl_size_charts, ctx, img_cache, pbar=None, status_box=None):
