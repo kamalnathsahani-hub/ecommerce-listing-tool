@@ -12,10 +12,14 @@ def _load_api_keys_module():
     # Load pages/api_keys.py reliably regardless of Streamlit working directory or sys.path
     candidates = []
     if "__file__" in globals():
-        candidates.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "api_keys.py"))
+        p_dir = os.path.dirname(os.path.abspath(__file__))
+        candidates.append(os.path.join(p_dir, "api_keys.py"))
+        candidates.append(os.path.join(os.path.dirname(p_dir), "api_keys.py"))
+        candidates.append(os.path.join(os.path.dirname(p_dir), ".streamlit", "api_keys.py"))
     candidates.extend([
-        os.path.join(os.getcwd(), "pages", "api_keys.py"),
         os.path.join(os.getcwd(), "api_keys.py"),
+        os.path.join(os.getcwd(), ".streamlit", "api_keys.py"),
+        os.path.join(os.getcwd(), "pages", "api_keys.py"),
     ])
     for cand in candidates:
         if cand and os.path.isfile(cand):
@@ -731,17 +735,17 @@ def upload_to_imgbb(image_bytes, api_key=None):
         globals().get("IMGBB_PERMANENT_KEY"),
     ] + _DEFAULT_IMGBB_KEYS
 
-    keys_to_try = []
-    for k in candidate_sources:
-        k_clean = str(k or "").strip()
-        if k_clean and k_clean not in keys_to_try and k_clean not in _EXHAUSTED_IMGBB_KEYS:
-            keys_to_try.append(k_clean)
-
-    if not keys_to_try:
-        _EXHAUSTED_IMGBB_KEYS.clear()
+    now = datetime.now()
+    with _IMG_UPLOAD_LOCK:
+        # Auto-release only keys whose 60-minute cooldown window has expired
+        for ek in list(_EXHAUSTED_IMGBB_KEYS):
+            info = _KEY_EXHAUSTION_DATA.get(ek)
+            if info and now >= info.get("reset_at", now):
+                _EXHAUSTED_IMGBB_KEYS.discard(ek)
+        keys_to_try = []
         for k in candidate_sources:
             k_clean = str(k or "").strip()
-            if k_clean and k_clean not in keys_to_try:
+            if k_clean and k_clean not in keys_to_try and k_clean not in _EXHAUSTED_IMGBB_KEYS:
                 keys_to_try.append(k_clean)
 
     if not keys_to_try:
@@ -751,6 +755,9 @@ def upload_to_imgbb(image_bytes, api_key=None):
     b64_str = base64.b64encode(jpeg_bytes).decode('utf-8')
 
     for key_use in keys_to_try:
+        with _IMG_UPLOAD_LOCK:
+            if key_use in _EXHAUSTED_IMGBB_KEYS:
+                continue
         for attempt in range(2):
             try:
                 res = requests.post(
@@ -768,14 +775,25 @@ def upload_to_imgbb(image_bytes, api_key=None):
                         with _IMG_UPLOAD_LOCK:
                             _GLOBAL_IMG_CACHE[h] = clean_url
                         return clean_url
+                    err_msg = str(body.get('error', '') or body)[:200]
+                    with _IMG_UPLOAD_LOCK:
+                        _EXHAUSTED_IMGBB_KEYS.add(key_use)
+                        _KEY_EXHAUSTION_DATA[key_use] = {
+                            "exhausted_at": datetime.now(),
+                            "reset_at": datetime.now() + timedelta(minutes=60),
+                            "error": err_msg
+                        }
+                    _record_api_error("ImgBB", f"Key ...{key_use[-4:]} switched to next key ({err_msg[:120]})")
+                    break
                 elif res.status_code in (400, 429, 403):
-                    _EXHAUSTED_IMGBB_KEYS.add(key_use)
-                    _KEY_EXHAUSTION_DATA[key_use] = {
-                        "exhausted_at": datetime.now(),
-                        "reset_at": datetime.now() + timedelta(minutes=60),
-                        "error": res.text[:200]
-                    }
-                    _record_api_error("ImgBB", f"Key ending in ...{key_use[-4:]} limit/error: {res.text[:150]}")
+                    with _IMG_UPLOAD_LOCK:
+                        _EXHAUSTED_IMGBB_KEYS.add(key_use)
+                        _KEY_EXHAUSTION_DATA[key_use] = {
+                            "exhausted_at": datetime.now(),
+                            "reset_at": datetime.now() + timedelta(minutes=60),
+                            "error": res.text[:200]
+                        }
+                    _record_api_error("ImgBB", f"Key ...{key_use[-4:]} limit hit, switching to next key: {res.text[:120]}")
                     break
                 else:
                     _record_api_error("ImgBB", f"HTTP {res.status_code}: {res.text[:150]}")
