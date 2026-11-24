@@ -1420,6 +1420,124 @@ def ungroup_worksheet(ws):
     if hasattr(ws, 'sheet_properties') and hasattr(ws.sheet_properties, 'outlinePr'):
         ws.sheet_properties.outlinePr.summaryBelow = True; ws.sheet_properties.outlinePr.summaryRight = True
 
+def _parse_spreadsheetml_to_wb(raw_bytes):
+    try:
+        head = raw_bytes[:4096].decode("utf-8-sig", errors="ignore")
+        if "<Workbook" not in head and "<ss:Workbook" not in head and "schemas-microsoft-com:office:spreadsheet" not in head:
+            return None
+        import xml.etree.ElementTree as ET
+        text = raw_bytes.decode("utf-8-sig", errors="replace").strip()
+        root = ET.fromstring(text)
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)
+
+        def _local(tag):
+            return tag.split("}", 1)[-1] if "}" in tag else tag
+
+        def _attr(elem, key):
+            for k, v in elem.attrib.items():
+                if _local(k) == key:
+                    return v
+            return None
+
+        sheet_count = 0
+        for child in root:
+            if _local(child.tag) != "Worksheet":
+                continue
+            sheet_count += 1
+            sname = _attr(child, "Name") or f"Sheet{sheet_count}"
+            sname_clean = re.sub(r'[\[\]:*?/\\]', '_', sname)[:31] or f"Sheet{sheet_count}"
+            ws = wb.create_sheet(title=sname_clean)
+            for tnode in child:
+                if _local(tnode.tag) != "Table":
+                    continue
+                r_idx = 1
+                for rnode in tnode:
+                    if _local(rnode.tag) != "Row":
+                        continue
+                    r_attr = _attr(rnode, "Index")
+                    if r_attr and str(r_attr).isdigit():
+                        r_idx = int(r_attr)
+                    c_idx = 1
+                    for cnode in rnode:
+                        if _local(cnode.tag) != "Cell":
+                            continue
+                        c_attr = _attr(cnode, "Index")
+                        if c_attr and str(c_attr).isdigit():
+                            c_idx = int(c_attr)
+                        val = None
+                        for dnode in cnode:
+                            if _local(dnode.tag) == "Data":
+                                txt = "".join(dnode.itertext())
+                                dtype = _attr(dnode, "Type") or ""
+                                if dtype == "Number" and txt:
+                                    try:
+                                        f = float(txt)
+                                        val = int(f) if f.is_integer() else f
+                                    except Exception:
+                                        val = txt
+                                else:
+                                    val = txt
+                                break
+                        if val is None:
+                            txt = "".join(cnode.itertext()).strip()
+                            if txt:
+                                val = txt
+                        if val not in (None, ""):
+                            ws.cell(row=r_idx, column=c_idx, value=val)
+                        merge_across = _attr(cnode, "MergeAcross")
+                        c_idx += 1 + (int(merge_across) if merge_across and str(merge_across).isdigit() else 0)
+                    r_idx += 1
+        return wb if sheet_count > 0 else None
+    except Exception:
+        return None
+
+def _parse_html_tables_stdlib_to_wb(raw_bytes):
+    try:
+        head = raw_bytes[:4096].decode("utf-8-sig", errors="ignore").lower()
+        if "<table" not in head and "<html" not in head and "<tr" not in head:
+            return None
+        from html.parser import HTMLParser
+        class _TblParser(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.tables, self.cur_table, self.cur_row, self.cur_cell = [], None, None, None
+            def handle_starttag(self, tag, attrs):
+                t = tag.lower()
+                if t == "table": self.cur_table = []
+                elif t == "tr" and self.cur_table is not None: self.cur_row = []
+                elif t in ("td", "th") and self.cur_row is not None: self.cur_cell = []
+            def handle_data(self, data):
+                if self.cur_cell is not None: self.cur_cell.append(data)
+            def handle_endtag(self, tag):
+                t = tag.lower()
+                if t in ("td", "th") and self.cur_cell is not None:
+                    self.cur_row.append("".join(self.cur_cell).strip())
+                    self.cur_cell = None
+                elif t == "tr" and self.cur_row is not None:
+                    if any(x != "" for x in self.cur_row):
+                        self.cur_table.append(self.cur_row)
+                    self.cur_row = None
+                elif t == "table" and self.cur_table is not None:
+                    if self.cur_table:
+                        self.tables.append(self.cur_table)
+                    self.cur_table = None
+        p = _TblParser()
+        p.feed(raw_bytes.decode("utf-8-sig", errors="replace"))
+        if not p.tables:
+            return None
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)
+        for idx, tbl in enumerate(p.tables, 1):
+            ws = wb.create_sheet(title=f"Sheet{idx}")
+            for r_i, row_vals in enumerate(tbl, 1):
+                for c_i, val in enumerate(row_vals, 1):
+                    if val not in (None, ""):
+                        ws.cell(row=r_i, column=c_i, value=val)
+        return wb
+    except Exception:
+        return None
+
 def load_workbook_clean(uploaded_file_or_bytes, name=""):
     raw_bytes = None
     fname = str(name or "")
@@ -1441,10 +1559,12 @@ def load_workbook_clean(uploaded_file_or_bytes, name=""):
                 raw_bytes = f.read()
             fname = os.path.basename(uploaded_file_or_bytes)
 
-    if raw_bytes is None:
-        raw_bytes = b""
+    if not raw_bytes:
+        raise ValueError(f"Uploaded file '{fname}' empty hai (0 bytes). Kripya valid Excel template upload karein.")
 
-    # 1. Try standard openpyxl load if it is a ZIP archive (modern .xlsx, .xlsm, or renamed .xls)
+    errors = []
+
+    # 1. Modern .xlsx / .xlsm (ZIP archive)
     if len(raw_bytes) > 4 and raw_bytes[:4] == b"PK\x03\x04" and zipfile.is_zipfile(io.BytesIO(raw_bytes)):
         try:
             wb = openpyxl.load_workbook(io.BytesIO(raw_bytes), keep_vba=fname.lower().endswith('.xlsm'))
@@ -1453,29 +1573,43 @@ def load_workbook_clean(uploaded_file_or_bytes, name=""):
                 try: wb[s].protection.disable()
                 except Exception: pass
             return wb
-        except Exception:
-            pass
+        except Exception as e:
+            errors.append(f"openpyxl: {e}")
 
-    # 2. Try xlrd if it is a legacy binary Excel 97-2003 .xls file (BIFF8)
-    try:
-        rd_book = xlrd.open_workbook(file_contents=raw_bytes, formatting_info=False)
-        wb = openpyxl.Workbook()
-        wb.remove(wb.active)  # remove default sheet
-        for sheet_name in rd_book.sheet_names():
-            rd_sheet = rd_book.sheet_by_name(sheet_name)
-            ws = wb.create_sheet(title=sheet_name)
-            for r in range(rd_sheet.nrows):
-                row_vals = rd_sheet.row_values(r)
-                for c, val in enumerate(row_vals):
-                    if val not in (None, ""):
-                        if isinstance(val, float) and val.is_integer():
-                            val = int(val)
-                        ws.cell(row=r + 1, column=c + 1, value=val)
-        return wb
-    except Exception:
-        pass
+    # 2. Excel 2003 XML (SpreadsheetML) saved as .xls (common on Flipkart / portals)
+    wb_xml = _parse_spreadsheetml_to_wb(raw_bytes)
+    if wb_xml is not None:
+        return wb_xml
 
-    # 3. Try HTML or XML table saved with .xls extension
+    # 3. Legacy Binary BIFF8 .xls via xlrd (with encoding & corruption fallbacks)
+    xlrd_attempts = [
+        {"formatting_info": False},
+        {"formatting_info": False, "ignore_workbook_corruption": True},
+        {"formatting_info": False, "encoding_override": "cp1252"},
+        {"formatting_info": False, "encoding_override": "utf-8"},
+    ]
+    for kwargs in xlrd_attempts:
+        try:
+            rd_book = xlrd.open_workbook(file_contents=raw_bytes, **kwargs)
+            wb = openpyxl.Workbook()
+            wb.remove(wb.active)
+            for sheet_name in rd_book.sheet_names():
+                rd_sheet = rd_book.sheet_by_name(sheet_name)
+                ws = wb.create_sheet(title=sheet_name[:31] or "Sheet1")
+                for r in range(rd_sheet.nrows):
+                    row_vals = rd_sheet.row_values(r)
+                    for c, val in enumerate(row_vals):
+                        if val not in (None, ""):
+                            if isinstance(val, float) and val.is_integer():
+                                val = int(val)
+                            ws.cell(row=r + 1, column=c + 1, value=val)
+            return wb
+        except TypeError:
+            continue
+        except Exception as e:
+            errors.append(f"xlrd({kwargs}): {e}")
+
+    # 4. HTML table saved with .xls extension (pandas first, then stdlib zero-dependency fallback)
     try:
         dfs = pd.read_html(io.BytesIO(raw_bytes))
         if dfs:
@@ -1490,16 +1624,46 @@ def load_workbook_clean(uploaded_file_or_bytes, name=""):
                         if pd.notna(val):
                             ws.cell(row=r + 2, column=c + 1, value=val)
             return wb
-    except Exception:
-        pass
+    except Exception as e:
+        errors.append(f"pd.read_html: {e}")
 
-    # 4. Fallback: try openpyxl direct load with data_only
-    wb = openpyxl.load_workbook(io.BytesIO(raw_bytes), data_only=True)
-    for s in wb.sheetnames:
-        wb[s].protection.sheet = False
-        try: wb[s].protection.disable()
-        except Exception: pass
-    return wb
+    wb_html = _parse_html_tables_stdlib_to_wb(raw_bytes)
+    if wb_html is not None:
+        return wb_html
+
+    # 5. Plain CSV / TSV saved with .xls extension
+    if b"\x00" not in raw_bytes[:1024]:
+        try:
+            df_csv = pd.read_csv(io.BytesIO(raw_bytes), sep=None, engine="python")
+            if not df_csv.empty and len(df_csv.columns) > 1:
+                wb = openpyxl.Workbook()
+                ws = wb.active
+                ws.title = "Sheet1"
+                for c, col_name in enumerate(df_csv.columns):
+                    ws.cell(row=1, column=c + 1, value=str(col_name))
+                for r, row in df_csv.iterrows():
+                    for c, val in enumerate(row):
+                        if pd.notna(val):
+                            ws.cell(row=r + 2, column=c + 1, value=val)
+                return wb
+        except Exception as e:
+            errors.append(f"csv: {e}")
+
+    # 6. Last resort for PK zip files
+    if raw_bytes[:2] == b"PK":
+        wb = openpyxl.load_workbook(io.BytesIO(raw_bytes), data_only=True)
+        for s in wb.sheetnames:
+            wb[s].protection.sheet = False
+            try: wb[s].protection.disable()
+            except Exception: pass
+        return wb
+
+    sig = raw_bytes[:16].hex()
+    err_detail = " | ".join(errors[-2:]) if errors else "Unknown format"
+    raise ValueError(
+        f"Template file '{fname}' ko read nahi kiya ja saka (sig={sig}). "
+        f"Agar ye password-protected ya old encrypted .xls file hai, toh ise MS Excel me open karke 'Save As -> Excel Workbook (.xlsx)' me save karke upload karein. Details: {err_detail}"
+    )
 
 def pick_template_sheet(wb):
     for sname in wb.sheetnames:
