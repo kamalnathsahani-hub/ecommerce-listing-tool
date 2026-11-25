@@ -11,7 +11,7 @@ from openpyxl.chart import BarChart, Reference
 from openpyxl.comments import Comment
 
 st.set_page_config(page_title="Payment Reco v3.0 — Universal Multi-Format Reco", layout="wide")
-st.title("📊 Universal Marketplace Payment Reconciliation (v3.0)")
+st.title("📊 Universal Marketplace Payment Reconciliation")
 st.info("✅ Active Version: v3.0 — Supports All 3 Formats Automatically: (1) Order Info CSV/ZIP, (2) Forward Return Payment Reco CSV, (3) Snapdeal Settlement Excel/CSV")
 
 uploaded_files = st.file_uploader(
