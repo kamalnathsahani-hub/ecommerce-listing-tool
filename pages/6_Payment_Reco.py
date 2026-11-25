@@ -10,9 +10,9 @@ from openpyxl.utils import get_column_letter
 from openpyxl.chart import BarChart, Reference
 from openpyxl.comments import Comment
 
-st.set_page_config(page_title="Payment Reco v2.1 — Single Master Workbook", layout="wide")
-st.title("📊 Marketplace Payment Reconciliation (v2.1 — Single Master Excel)")
-st.info("✅ Active Version: v2.1 (Single Master Workbook with Channel RECO Tabs + Consolidated Summary + SKU Actions + Unpaid List + SPF Audit)")
+st.set_page_config(page_title="Payment Reco v2.2 — Single Master Workbook", layout="wide")
+st.title("📊 Marketplace Payment Reconciliation (v2.2 — Auto-Fit + Product Return Action Plan)")
+st.info("✅ Active Version: v2.2 (Auto-Adjusted Columns + L:M Delivered Box + Product-Level Return Reason & Action Plan Tab)")
 
 uploaded_file = st.file_uploader("Upload Order / Payment Reco CSV or ZIP", type=["csv", "zip"])
 
@@ -69,6 +69,46 @@ def detect_month_tag(df):
         return "Report"
     return parsed.max().strftime("%b-%y")
 
+def get_return_action_plan(reason_str, ret_rate_pct):
+    r = str(reason_str).lower()
+    if any(k in r for k in ["small", "tight"]):
+        return "📏 Size Too Small: Size chart me +1 inch chest/waist update karein & bullet points me 'Order 1 Size Up' likhein"
+    elif any(k in r for k in ["large", "loose", "big"]):
+        return "📏 Size Too Large: Garment measurements verify karein & listing me Relaxed/Loose Fit mention karein"
+    elif any(k in r for k in ["different", "wrong", "incorrect"]):
+        return "📦 Wrong Product Sent: Warehouse barcode/SKU sticker mapping check karein & pack-scan mandatory karein"
+    elif any(k in r for k in ["quality", "fabric", "material", "stitch", "tear", "damage", "defect"]):
+        return "🧵 Quality / Defect Issue: Supplier lot ka GSM/stitching QC check karein & damaged returns par SPF claim dalein"
+    elif any(k in r for k in ["color", "colour", "shade", "image", "look", "description"]):
+        return "📸 Color / Image Mismatch: Studio lighting me true-color photos upload karein & fabric finish clear likhein"
+    elif any(k in r for k in ["mind", "longer needed", "better price", "late"]):
+        return "🚚 Impulse / Late Delivery: Same-day dispatch (SLA) maintain karein taaki buyer cancellation/return kam ho"
+    else:
+        if ret_rate_pct >= 40:
+            return "🔍 High Return Audit: Top return comments check karke listing title, size chart aur packaging improve karein"
+        return "✅ Monitor: Return comments track karein aur size chart accurate rakhein"
+
+def auto_fit_columns(ws, skip_cols=None, max_width=45, min_width=12, header_row=4):
+    if skip_cols is None:
+        skip_cols = set()
+    for col in ws.columns:
+        col_idx = col[0].column
+        col_letter = get_column_letter(col_idx)
+        if col_letter in skip_cols:
+            continue
+        max_len = 0
+        for cell in col:
+            if cell.row < header_row and cell.row in [1, 2]:
+                continue
+            val = str(cell.value or "")
+            if val.startswith("="):
+                max_len = max(max_len, 14)
+            else:
+                lines = val.split("\n")
+                longest_line = max((len(line) for line in lines), default=0)
+                max_len = max(max_len, longest_line)
+        ws.column_dimensions[col_letter].width = min(max(max_len + 4, min_width), max_width)
+
 def build_master_workbook(df, month_tag):
     wb = openpyxl.Workbook()
     default_ws = wb.active
@@ -114,7 +154,9 @@ def build_master_workbook(df, month_tag):
         if other_mp not in ordered_mps:
             ordered_mps.append(other_mp)
 
-    # 1. CHANNEL-WISE RECO TABS (Apps Script v10 Layout + Delivered Box in J7:K16)
+    # --------------------------------------------------------------------------
+    # 1. CHANNEL-WISE RECO TABS (Spacers at D, G, J | Delivered Box at L7:M16)
+    # --------------------------------------------------------------------------
     for mp in ordered_mps:
         sub = df[df["Marketplace"] == mp].copy()
         tab_title = f"{mp} {month_tag}"[:31]
@@ -266,11 +308,11 @@ def build_master_workbook(df, month_tag):
             if note_txt:
                 c_b.comment = Comment(note_txt, "Payment Reco")
 
-        # Side Box: Delivered-Only Actuals vs Pipeline (J7:K16 — kept out of F2:F20 so B20 SUM stays clean)
-        ws["J7"] = "DELIVERED-ONLY ACTUALS (EXCLUDING IN-TRANSIT)"
-        ws["J7"].font = FONT_TBL_HDR
-        ws["J7"].fill = FILL_SLATE
-        ws.merge_cells("J7:K7")
+        # Side Box at L7:M16 (with Column J as spacer just like D & G!)
+        ws["L7"] = "DELIVERED-ONLY ACTUALS (EXCLUDING IN-TRANSIT)"
+        ws["L7"].font = FONT_TBL_HDR
+        ws["L7"].fill = FILL_SLATE
+        ws.merge_cells("L7:M7")
 
         del_box = [
             ("Strictly Delivered Orders", del_only_count, "#,##0"),
@@ -279,13 +321,13 @@ def build_master_workbook(df, month_tag):
             ("Delivered Expected Payout (₹)", del_only_exp_pay, "₹#,##0"),
             ("Delivered Product Cost (₹)", del_only_cogs, "₹#,##0"),
             ("Return Penalty on Delivered (₹)", cr_charge_exp, "₹#,##0"),
-            ("Return Charge / Delivered Order (₹)", "=IFERROR(ROUND(K13/K8, 2), 0)", "₹#,##0.00"),
-            ("True Delivered Net Profit (₹)", "=K11-K12-K13", "₹#,##0"),
-            ("Profit / Delivered Order (₹)", "=IFERROR(ROUND(K15/K8, 0), 0)", "₹#,##0"),
+            ("Return Charge / Delivered Order (₹)", "=IFERROR(ROUND(M13/M8, 2), 0)", "₹#,##0.00"),
+            ("True Delivered Net Profit (₹)", "=M11-M12-M13", "₹#,##0"),
+            ("Profit / Delivered Order (₹)", "=IFERROR(ROUND(M15/M8, 0), 0)", "₹#,##0"),
         ]
         for idx_b, (b_lbl, b_val, b_fmt) in enumerate(del_box, start=8):
-            ca = ws.cell(row=idx_b, column=10, value=b_lbl)
-            cb = ws.cell(row=idx_b, column=11, value=b_val)
+            ca = ws.cell(row=idx_b, column=12, value=b_lbl)
+            cb = ws.cell(row=idx_b, column=13, value=b_val)
             ca.font = FONT_LABEL_BOLD if idx_b >= 15 else FONT_LABEL
             cb.font = FONT_VAL_BOLD if idx_b >= 15 else FONT_VAL
             cb.number_format = b_fmt
@@ -295,19 +337,15 @@ def build_master_workbook(df, month_tag):
             if idx_b == 15:
                 cb.fill = FILL_MINT
 
-        ws.column_dimensions["A"].width = 36
-        ws.column_dimensions["B"].width = 16
-        ws.column_dimensions["C"].width = 16
+        # Auto-adjust all data columns + narrow spacer columns D, G, J
+        auto_fit_columns(ws, skip_cols={"D", "G", "J"}, max_width=44, min_width=14, header_row=1)
         ws.column_dimensions["D"].width = 4
-        ws.column_dimensions["E"].width = 36
-        ws.column_dimensions["F"].width = 16
         ws.column_dimensions["G"].width = 4
-        ws.column_dimensions["H"].width = 34
-        ws.column_dimensions["I"].width = 16
-        ws.column_dimensions["J"].width = 38
-        ws.column_dimensions["K"].width = 16
+        ws.column_dimensions["J"].width = 4
 
+    # --------------------------------------------------------------------------
     # 2. ALL CHANNELS SUMMARY TAB
+    # --------------------------------------------------------------------------
     ws_exec = wb.create_sheet(title="All Channels Summary")
     ws_exec.views.sheetView[0].showGridLines = True
     ws_exec["A1"] = f"CONSOLIDATED MARKETPLACE PAYMENT RECO & PROFITABILITY ({month_tag.upper()})"
@@ -408,11 +446,11 @@ def build_master_workbook(df, month_tag):
         chart.height = 10
         ws_exec.add_chart(chart, f"A{tot_row + 2}")
 
-    for c in range(1, 20):
-        ws_exec.column_dimensions[get_column_letter(c)].width = 16
-    ws_exec.column_dimensions["A"].width = 18
+    auto_fit_columns(ws_exec, max_width=28, min_width=15, header_row=4)
 
+    # --------------------------------------------------------------------------
     # 3. SKU PRICING & RETURN ACTIONS TAB
+    # --------------------------------------------------------------------------
     ws_sku = wb.create_sheet(title="SKU Pricing & Return Actions")
     ws_sku.views.sheetView[0].showGridLines = True
     ws_sku["A1"] = "SKU PROFITABILITY, HIGH-RETURN & PRICE HIKE ACTION REPORT"
@@ -492,16 +530,107 @@ def build_master_workbook(df, month_tag):
                     cell.fill = FILL_PEACH
                     cell.font = FONT_AMBER
 
-    for c in range(1, 18):
-        ws_sku.column_dimensions[get_column_letter(c)].width = 16
-    ws_sku.column_dimensions["A"].width = 36
-    ws_sku.column_dimensions["D"].width = 22
-    ws_sku.column_dimensions["E"].width = 24
+    auto_fit_columns(ws_sku, max_width=44, min_width=13, header_row=4)
     ws_sku.freeze_panes = "A5"
     if len(sku_grp) > 0:
         ws_sku.auto_filter.ref = f"A4:Q{4 + len(sku_grp)}"
 
-    # 4. UNPAID DELIVERED ORDERS TAB
+    # --------------------------------------------------------------------------
+    # 4. PRODUCT-WISE RETURN REASON & ACTION PLAN TAB (NEW!)
+    # --------------------------------------------------------------------------
+    ws_prod_ret = wb.create_sheet(title="Product Return Action Plan")
+    ws_prod_ret.views.sheetView[0].showGridLines = True
+    ws_prod_ret["A1"] = "PRODUCT-WISE RETURN REASON ROOT-CAUSE & ACTION PLAN"
+    ws_prod_ret["A1"].font = FONT_SHEET_TITLE
+    ws_prod_ret["A2"] = "Kaunsa product kis reason se return aa raha hai + har product ke saamne exact Action Plan"
+    ws_prod_ret["A2"].font = FONT_NOTE_HINT
+
+    ret_all = df[df["Status_Bucket"] == "Customer Return"].copy()
+
+    sku_closed = df.groupby(["Marketplace", "Product Sku Code"]).agg(
+        Total_Sold_Del=("Status_Bucket", lambda x: (x == "Delivered (Success)").sum()),
+        Total_SKU_Returns=("Status_Bucket", lambda x: (x == "Customer Return").sum())
+    ).reset_index()
+    sku_closed["SKU_Return_Rate"] = np.where(
+        (sku_closed["Total_Sold_Del"] + sku_closed["Total_SKU_Returns"]) > 0,
+        sku_closed["Total_SKU_Returns"] / (sku_closed["Total_Sold_Del"] + sku_closed["Total_SKU_Returns"]),
+        0.0
+    )
+
+    prod_reason_grp = ret_all.groupby(
+        ["Marketplace", "Parent_Style", "Product Sku Code", "Product Name", "Return Reason"]
+    ).agg(
+        Reason_Return_Count=("Channel Order Id", "count"),
+        Good_Return_Qty=("Return Good Qty", "sum"),
+        Bad_Return_Qty=("Return Bad Qty", "sum"),
+        Return_Penalty_Cost=("Return_Charge", "sum"),
+        Damaged_Stock_Loss=("Bad_Return_Loss", "sum")
+    ).reset_index()
+
+    prod_reason_grp = prod_reason_grp.merge(
+        sku_closed, on=["Marketplace", "Product Sku Code"], how="left"
+    )
+    prod_reason_grp["Total_Loss_On_Reason"] = (
+        prod_reason_grp["Return_Penalty_Cost"] + prod_reason_grp["Damaged_Stock_Loss"]
+    )
+    prod_reason_grp["Action_Plan"] = prod_reason_grp.apply(
+        lambda r: get_return_action_plan(r["Return Reason"], r["SKU_Return_Rate"] * 100),
+        axis=1
+    )
+    prod_reason_grp = prod_reason_grp.sort_values(
+        ["Reason_Return_Count", "Total_Loss_On_Reason"], ascending=[False, False]
+    )
+
+    pr_headers = [
+        "Marketplace", "Parent Style", "SKU Code", "Product Name",
+        "Primary Return Reason", "Returns (For This Reason)",
+        "Total SKU Delivered", "Total SKU Returns", "Overall SKU Return %",
+        "Good Qty", "Bad (Damaged) Qty", "Total Direct Loss (₹)",
+        "Recommended Action Plan (Kya Karna Chahiye)"
+    ]
+    ws_prod_ret.row_dimensions[4].height = 28
+    for c, h in enumerate(pr_headers, start=1):
+        cell = ws_prod_ret.cell(row=4, column=c, value=h)
+        cell.fill = FILL_NAVY
+        cell.font = FONT_TBL_HDR
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = BORDER_CELL
+
+    cols_pr = [
+        "Marketplace", "Parent_Style", "Product Sku Code", "Product Name",
+        "Return Reason", "Reason_Return_Count",
+        "Total_Sold_Del", "Total_SKU_Returns", "SKU_Return_Rate",
+        "Good_Return_Qty", "Bad_Return_Qty", "Total_Loss_On_Reason",
+        "Action_Plan"
+    ]
+    for r_i, row in enumerate(prod_reason_grp[cols_pr].itertuples(index=False), start=5):
+        for c_i, val in enumerate(row, start=1):
+            cell = ws_prod_ret.cell(row=r_i, column=c_i, value=val)
+            cell.font = FONT_VAL
+            cell.border = BORDER_CELL
+            if c_i in [6, 7, 8, 10, 11]:
+                cell.number_format = "#,##0"
+            elif c_i == 9:
+                cell.number_format = "0.0%"
+                if float(val) >= 0.50:
+                    cell.fill = FILL_RED_SOFT
+                    cell.font = FONT_RED
+                elif float(val) >= 0.35:
+                    cell.fill = FILL_PEACH
+                    cell.font = FONT_AMBER
+            elif c_i == 12:
+                cell.number_format = "₹#,##0"
+            elif c_i == 13:
+                cell.font = FONT_LABEL_BOLD
+
+    auto_fit_columns(ws_prod_ret, max_width=58, min_width=13, header_row=4)
+    ws_prod_ret.freeze_panes = "A5"
+    if len(prod_reason_grp) > 0:
+        ws_prod_ret.auto_filter.ref = f"A4:M{4 + len(prod_reason_grp)}"
+
+    # --------------------------------------------------------------------------
+    # 5. UNPAID DELIVERED ORDERS TAB
+    # --------------------------------------------------------------------------
     del_pending = df[df["Is_Unpaid_Delivered"]].copy()
     ws_unpaid = wb.create_sheet(title=f"Unpaid Delivered ({len(del_pending)})"[:31])
     ws_unpaid.views.sheetView[0].showGridLines = True
@@ -557,21 +686,21 @@ def build_master_workbook(df, month_tag):
                         cell.fill = FILL_PEACH
                         cell.font = FONT_AMBER
 
-    for c in range(1, 16):
-        ws_unpaid.column_dimensions[get_column_letter(c)].width = 18
+    auto_fit_columns(ws_unpaid, max_width=32, min_width=13, header_row=4)
     ws_unpaid.freeze_panes = "A5"
     if not del_pending.empty:
         ws_unpaid.auto_filter.ref = f"A4:O{4 + len(del_pending)}"
 
-    # 5. RETURN REASON & SPF CLAIM AUDIT TAB
+    # --------------------------------------------------------------------------
+    # 6. RETURN REASON & SPF CLAIM AUDIT TAB
+    # --------------------------------------------------------------------------
     ws_ret = wb.create_sheet(title="Return & SPF Claim Audit")
     ws_ret.views.sheetView[0].showGridLines = True
     ws_ret["A1"] = "RETURN REASON BREAKDOWN & DAMAGED RETURN SPF CLAIM LIST"
     ws_ret["A1"].font = FONT_SHEET_TITLE
-    ws_ret["A2"] = "Top Table: Return Reasons Summary | Bottom Table: Damaged/Wrong-Item Returns Ready for SPF Claim"
+    ws_ret["A2"] = "Top Table: Overall Return Reasons Summary | Bottom Table: Damaged/Wrong-Item Returns Ready for SPF Claim"
     ws_ret["A2"].font = FONT_NOTE_HINT
 
-    ret_all = df[df["Status_Bucket"] == "Customer Return"].copy()
     reason_grp = ret_all.groupby(["Marketplace", "Return Reason"]).agg(
         Return_Orders=("Channel Order Id", "count"),
         Good_Qty=("Return Good Qty", "sum"),
@@ -630,9 +759,7 @@ def build_master_workbook(df, month_tag):
             elif c_i == 9:
                 cell.number_format = "₹#,##0"
 
-    for c in range(1, 12):
-        ws_ret.column_dimensions[get_column_letter(c)].width = 20
-    ws_ret.column_dimensions["B"].width = 34
+    auto_fit_columns(ws_ret, max_width=40, min_width=14, header_row=4)
 
     wb.remove(default_ws)
     out_buf = io.BytesIO()
@@ -679,7 +806,7 @@ if uploaded_file is not None:
     month_tag = detect_month_tag(df)
     excel_bytes, ordered_mps = build_master_workbook(df, month_tag)
 
-    st.success(f"✅ Single Master Workbook Ready! ({len(ordered_mps) + 4} tabs in 1 Excel file)")
+    st.success(f"✅ Single Master Workbook Ready! ({len(ordered_mps) + 5} tabs in 1 Excel file)")
     st.download_button(
         label=f"⬇️ Download Master Payment Reco Excel (Marketplace_Payment_Reco_Master_{month_tag}.xlsx)",
         data=excel_bytes,
@@ -722,28 +849,13 @@ if uploaded_file is not None:
     st.subheader("1. All Channels Consolidated Summary")
     st.dataframe(pd.DataFrame(summary_rows), use_container_width=True)
 
-    st.subheader("2. Loss-Making & High-Return SKUs (Price Action Required)")
-    sku_preview = df.groupby(["Marketplace", "Product Sku Code", "Product Name"]).agg(
-        Delivered=("Status_Bucket", lambda x: (x == "Delivered (Success)").sum()),
-        Returns=("Status_Bucket", lambda x: (x == "Customer Return").sum()),
-        Unit_COGS=("Calc Last Purchase Price", "max"),
-        Avg_Price=("Total", "mean"),
-        Del_Profit=("Expected Profit", lambda x: x[df.loc[x.index, "Status_Bucket"] == "Delivered (Success)"].sum()),
-        Ret_Charges=("Return_Charge", "sum"),
-        Bad_Loss=("Bad_Return_Loss", "sum")
+    st.subheader("2. Product-Wise Return Reason & Action Plan (Top Return Issues)")
+    ret_only = df[df["Status_Bucket"] == "Customer Return"].copy()
+    pr_prev = ret_only.groupby(["Marketplace", "Product Sku Code", "Product Name", "Return Reason"]).agg(
+        Returns_For_Reason=("Channel Order Id", "count"),
+        Bad_Qty=("Return Bad Qty", "sum"),
+        Return_Penalty=("Return_Charge", "sum"),
+        Damaged_Loss=("Bad_Return_Loss", "sum")
     ).reset_index()
-    sku_preview["Return %"] = np.where(
-        (sku_preview["Delivered"] + sku_preview["Returns"]) > 0,
-        (sku_preview["Returns"] / (sku_preview["Delivered"] + sku_preview["Returns"])) * 100, 0
-    ).round(1)
-    sku_preview["Net Profit (₹)"] = (sku_preview["Del_Profit"] - sku_preview["Ret_Charges"] - sku_preview["Bad_Loss"]).round(2)
-    sku_preview["Suggested Price (₹)"] = np.where(
-        sku_preview["Net Profit (₹)"] < 0,
-        np.maximum(sku_preview["Avg_Price"] + 70, sku_preview["Unit_COGS"] * 1.65).round(-1) - 1,
-        np.where(sku_preview["Return %"] >= 40, (sku_preview["Avg_Price"] + 40).round(-1) - 1, sku_preview["Avg_Price"].round(0))
-    )
-    sku_preview["Action"] = np.where(
-        sku_preview["Net Profit (₹)"] < 0, "🔴 LOSS: Increase Price",
-        np.where(sku_preview["Return %"] >= 40, "🟠 HIGH RETURN: Audit Size/Quality", "🟢 HEALTHY")
-    )
-    st.dataframe(sku_preview.sort_values("Net Profit (₹)"), use_container_width=True)
+    pr_prev["Action Plan"] = pr_prev["Return Reason"].apply(lambda x: get_return_action_plan(x, 45))
+    st.dataframe(pr_prev.sort_values("Returns_For_Reason", ascending=False), use_container_width=True)
