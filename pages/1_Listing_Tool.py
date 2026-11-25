@@ -105,7 +105,6 @@ def get_imgbb_quota_status():
 
 
 st.set_page_config(page_title="Multi-Marketplace Auto Listing Generator", layout="wide")
-if st.button("⬅️ Back to Home"): st.switch_page("app.py")
 st.title("📦 Multi-Marketplace Auto Listing Generator")
 st.caption("Ajio | Amazon VC | VC➜SC | Amazon SC | Flipkart | Meesho | Myntra + 🤖 AI Vision, Smart Size Chart & HSN Auto-Highlight")
 
