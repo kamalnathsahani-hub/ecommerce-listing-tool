@@ -10,9 +10,9 @@ from openpyxl.utils import get_column_letter
 from openpyxl.chart import BarChart, Reference
 from openpyxl.comments import Comment
 
-st.set_page_config(page_title="Payment Reco & Master Report Generator", layout="wide")
-st.title("📊 Marketplace Payment Reconciliation & Master Workbook Generator")
-st.caption("Upload Order / Payment Reco CSV or ZIP → Get Live Dashboard + Single Master Excel Workbook (All Channels + RECO Tabs + SKU Actions + Unpaid List + SPF Audit)")
+st.set_page_config(page_title="Payment Reco v2.0 — Single Master Workbook", layout="wide")
+st.title("📊 Marketplace Payment Reconciliation (v2.0 — Single Master Excel)")
+st.info("✅ Active Version: v2.0 (Single Master Workbook with Channel RECO Tabs + Consolidated Summary + SKU Actions + Unpaid List + SPF Audit)")
 
 uploaded_file = st.file_uploader("Upload Order / Payment Reco CSV or ZIP", type=["csv", "zip"])
 
@@ -67,14 +67,12 @@ def detect_month_tag(df):
     parsed = pd.to_datetime(df["Order Date"], errors="coerce").dropna()
     if parsed.empty:
         return "Report"
-    latest = parsed.max()
-    return latest.strftime("%b-%y")
+    return parsed.max().strftime("%b-%y")
 
 def build_master_workbook(df, month_tag):
     wb = openpyxl.Workbook()
     default_ws = wb.active
 
-    # Styling Palettes
     FONT_SHEET_TITLE = Font(name="Calibri", size=14, bold=True, color="1B365D")
     FONT_TBL_HDR = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
     FONT_LABEL = Font(name="Calibri", size=10, color="1A202C")
@@ -108,11 +106,6 @@ def build_master_workbook(df, month_tag):
     RTO_STATUSES = ["Cancelled Return Received", "Cancel Init"]
     CRETURN_STATUSES = ["Return Init", "Return Received"]
 
-    # --------------------------------------------------------------------------
-    # 1. CHANNEL-WISE RECO TABS (Exact Apps Script v10 Layout + Delivered Box)
-    # --------------------------------------------------------------------------
-    unique_channels = df["Channel Name"].dropna().unique().tolist()
-    # Order preferred marketplaces first
     ordered_mps = []
     for pref in ["Myntra", "Amazon", "Ajio"]:
         if pref in df["Marketplace"].unique():
@@ -121,6 +114,7 @@ def build_master_workbook(df, month_tag):
         if other_mp not in ordered_mps:
             ordered_mps.append(other_mp)
 
+    # 1. CHANNEL-WISE RECO TABS (Apps Script v10 Layout + Delivered Box)
     for mp in ordered_mps:
         sub = df[df["Marketplace"] == mp].copy()
         tab_title = f"{mp} {month_tag}"[:31]
@@ -174,7 +168,6 @@ def build_master_workbook(df, month_tag):
         bad_ret_qty = int(sub["Return Bad Qty"].sum())
         bad_ret_loss = round(sub["Bad_Return_Loss"].sum())
 
-        # Header Row 1
         ws["A1"] = tab_title
         ws["A1"].font = FONT_SHEET_TITLE
         ws["B1"] = "RECO SUMMARY"
@@ -195,7 +188,6 @@ def build_master_workbook(df, month_tag):
         ws["I1"].font = FONT_LABEL_BOLD
         ws["I1"].alignment = Alignment(horizontal="right")
 
-        # Manual Charge Placeholders (E2:F4)
         ws["E2"] = "VFH / VFS Charges (Manual Entry)"
         ws["F2"] = 0
         ws["E3"] = "MFB Marketing Charges (Manual Entry)"
@@ -203,7 +195,6 @@ def build_master_workbook(df, month_tag):
         ws["E4"] = "Promotion Charges (Manual Entry)"
         ws["F4"] = 0
 
-        # Auto SPF Claimable Amount (H2:I3)
         ws["H2"] = f"Damaged Return SPF Claim ({bad_ret_qty} Bad Qty)"
         ws["I2"] = bad_ret_loss
         ws["I2"].comment = Comment(
@@ -231,14 +222,14 @@ def build_master_workbook(df, month_tag):
             (7, "C. Return", c_return, None, None, "#,##0", None),
             (8, "Per order return charge", "=IFERROR(ROUND(B9/B7, 2), 0)", None, None, "#,##0.00", None),
             (9, "C. Return Charge", cr_charge_settle, cr_charge_exp, None, "#,##0",
-             f"{cr_neg} orders with negative Settlement Amount, {cr_pos} orders with positive Settlement Amount, {cr_zero} orders with zero Settlement Amount (out of {c_return} Return Init / Return Received orders). Cell C9 shows Expected Payment penalty (₹{cr_charge_exp}) from {cr_exp_neg} orders."),
+             f"{cr_neg} negative Settlement, {cr_pos} positive Settlement, {cr_zero} zero Settlement (out of {c_return} returns). C9 shows Expected Payment penalty (₹{cr_charge_exp}) from {cr_exp_neg} orders."),
             (11, "Return %", "=IFERROR((B4+B7)/(B2-B3), 0)", None, None, "0%", None),
             (13, "Success order", b13_count, del_only_count, None, "#,##0",
-             f"B13 = {b13_count} (All non-Cancelled/RTO/Return orders: {del_only_count} Delivered + {in_transit_count} In-Transit/Active). C13 = {del_only_count} (Strictly Delivered orders only)."),
+             f"B13 = {b13_count} (All non-Cancelled/RTO/Return orders: {del_only_count} Delivered + {in_transit_count} In-Transit). C13 = {del_only_count} (Strictly Delivered only)."),
             (14, "Success order payout", b14_settle, c14_exp_pay, None, "#,##0",
-             f"{s14_pos} positive Settlement, {s14_neg} negative Settlement, {s14_zero} zero Settlement (out of {b13_count} orders). C14 = ₹{c14_exp_pay:,} Expected Payment across unsettled orders (Delivered-only Expected Payout = ₹{del_only_exp_pay:,})."),
+             f"{s14_pos} positive, {s14_neg} negative, {s14_zero} zero Settlement (out of {b13_count}). C14 = ₹{c14_exp_pay:,} Expected Payment across unsettled orders (Delivered-only = ₹{del_only_exp_pay:,})."),
             (15, "Success Order product cost", b15_cogs_eff, del_only_cogs, None, "#,##0",
-             f"B15 = ₹{b15_cogs_eff:,} COGS for {b13_count} orders (Raw Cost of Goods = ₹{b15_cogs_raw:,}; {cogs_pos} positive, {cogs_zero} zero). C15 = ₹{del_only_cogs:,} COGS for {del_only_count} Delivered-only orders."),
+             f"B15 = ₹{b15_cogs_eff:,} COGS for {b13_count} orders (Raw COGS = ₹{b15_cogs_raw:,}; {cogs_pos} positive, {cogs_zero} zero). C15 = ₹{del_only_cogs:,} COGS for {del_only_count} Delivered-only orders."),
             (16, "Per order return charge on success order", "=IFERROR(ROUND(MAX(B9,C9)/B13, 0), 0)", None, None, "#,##0", None),
             (18, "Gross Profit", "=B14+C14-B15", None, None, "#,##0", None),
             (19, "Less Return Charge", "=MAX(B9,C9)", None, FILL_PEACH, "#,##0", None),
@@ -275,7 +266,6 @@ def build_master_workbook(df, month_tag):
             if note_txt:
                 c_b.comment = Comment(note_txt, "Payment Reco")
 
-        # Side Box: Delivered-Only Actuals vs Pipeline (E7:F16)
         ws["E7"] = "DELIVERED-ONLY ACTUALS (EXCLUDING IN-TRANSIT)"
         ws["E7"].font = FONT_TBL_HDR
         ws["E7"].fill = FILL_SLATE
@@ -314,9 +304,7 @@ def build_master_workbook(df, month_tag):
         ws.column_dimensions["H"].width = 34
         ws.column_dimensions["I"].width = 16
 
-    # --------------------------------------------------------------------------
-    # 2. ALL CHANNELS SUMMARY TAB (Executive Comparison + Chart)
-    # --------------------------------------------------------------------------
+    # 2. ALL CHANNELS SUMMARY TAB
     ws_exec = wb.create_sheet(title="All Channels Summary")
     ws_exec.views.sheetView[0].showGridLines = True
     ws_exec["A1"] = f"CONSOLIDATED MARKETPLACE PAYMENT RECO & PROFITABILITY ({month_tag.upper()})"
@@ -421,9 +409,7 @@ def build_master_workbook(df, month_tag):
         ws_exec.column_dimensions[get_column_letter(c)].width = 16
     ws_exec.column_dimensions["A"].width = 18
 
-    # --------------------------------------------------------------------------
     # 3. SKU PRICING & RETURN ACTIONS TAB
-    # --------------------------------------------------------------------------
     ws_sku = wb.create_sheet(title="SKU Pricing & Return Actions")
     ws_sku.views.sheetView[0].showGridLines = True
     ws_sku["A1"] = "SKU PROFITABILITY, HIGH-RETURN & PRICE HIKE ACTION REPORT"
@@ -512,9 +498,7 @@ def build_master_workbook(df, month_tag):
     if len(sku_grp) > 0:
         ws_sku.auto_filter.ref = f"A4:Q{4 + len(sku_grp)}"
 
-    # --------------------------------------------------------------------------
     # 4. UNPAID DELIVERED ORDERS TAB
-    # --------------------------------------------------------------------------
     del_pending = df[df["Is_Unpaid_Delivered"]].copy()
     ws_unpaid = wb.create_sheet(title=f"Unpaid Delivered ({len(del_pending)})"[:31])
     ws_unpaid.views.sheetView[0].showGridLines = True
@@ -576,9 +560,7 @@ def build_master_workbook(df, month_tag):
     if not del_pending.empty:
         ws_unpaid.auto_filter.ref = f"A4:O{4 + len(del_pending)}"
 
-    # --------------------------------------------------------------------------
     # 5. RETURN REASON & SPF CLAIM AUDIT TAB
-    # --------------------------------------------------------------------------
     ws_ret = wb.create_sheet(title="Return & SPF Claim Audit")
     ws_ret.views.sheetView[0].showGridLines = True
     ws_ret["A1"] = "RETURN REASON BREAKDOWN & DAMAGED RETURN SPF CLAIM LIST"
@@ -694,17 +676,15 @@ if uploaded_file is not None:
     month_tag = detect_month_tag(df)
     excel_bytes, ordered_mps = build_master_workbook(df, month_tag)
 
-    # Top Download Button (Single Master Excel Workbook)
-    st.success(f"✅ Master Workbook ready! ({len(ordered_mps) + 4} structured tabs inside 1 Excel file)")
+    st.success(f"✅ Single Master Workbook Ready! ({len(ordered_mps) + 4} tabs in 1 Excel file)")
     st.download_button(
-        label=f"⬇️ Download Master Payment Reco Excel ({month_tag}.xlsx)",
+        label=f"⬇️ Download Master Payment Reco Excel (Marketplace_Payment_Reco_Master_{month_tag}.xlsx)",
         data=excel_bytes,
         file_name=f"Marketplace_Payment_Reco_Master_{month_tag}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         type="primary"
     )
 
-    # Live On-Screen Preview
     summary_rows = []
     for mp in ordered_mps:
         grp = df[df["Marketplace"] == mp]
