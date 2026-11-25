@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
+import re
 from datetime import datetime
 from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
@@ -8,7 +9,7 @@ from openpyxl.utils import get_column_letter
 st.set_page_config(page_title="Daily Sale Report Generator", layout="wide")
 
 st.title("📊 Daily Sale Report & Inventory Generator")
-st.write("Sale Orders aur Inventory Database file upload karein aur channel-wise SKU sale + stock report download karein.")
+st.write("Sale Orders aur Inventory Database file upload karein aur channel-wise SKU sale + available stock report download karein.")
 
 CHANNEL_MAPPING = {
     "JBFASHION": "Lymio",
@@ -23,15 +24,62 @@ CHANNEL_MAPPING = {
     "MEESHOLERIYA": "Meesho Leriya"
 }
 
+# Size sorting priority map
+SIZE_ORDER = {
+    "XXS": 1, "2XS": 1,
+    "XS": 2,
+    "S": 3,
+    "M": 4,
+    "L": 5,
+    "XL": 6,
+    "XXL": 7, "2XL": 7,
+    "XXXL": 8, "3XL": 8,
+    "4XL": 9,
+    "5XL": 10,
+    "6XL": 11,
+    "7XL": 12,
+    "FREE": 90, "FREESIZE": 90, "FS": 90
+}
+
+def get_sort_keys(sku_name):
+    """
+    Product name ko Base Name (Style + Color) aur Size Rank mein todta hai
+    taaki S, M, L, XL, 2XL, 3XL, 4XL proper sequence mein arrange hon.
+    """
+    s = str(sku_name).strip()
+    parts = s.rsplit('-', 1)
+    if len(parts) == 2:
+        base_name, size_part = parts[0], parts[1].upper().strip()
+        if size_part in SIZE_ORDER:
+            return (base_name.lower(), SIZE_ORDER[size_part], size_part)
+        # Agar numeric waist size hai jaise 28, 30, 32, 34...
+        if size_part.isdigit():
+            return (base_name.lower(), 20 + int(size_part), size_part)
+    return (s.lower(), 999, "")
+
 col1, col2, col3 = st.columns([2, 2, 1.5])
 with col1:
     orders_file = st.file_uploader("1. Sale Orders File Upload Karein (CSV / Excel)", type=["csv", "xlsx"])
 with col2:
     inventory_file = st.file_uploader("2. Inventory Database File Upload Karein (CSV / Excel)", type=["csv", "xlsx"])
 with col3:
-    min_days_cover = st.number_input("Safe Stock Days (Green ke liye)", min_value=1, max_value=30, value=3, help="Agar stock (Daily Sale × Days) se kam hai to Red/Low dikhega")
+    min_days_cover = st.number_input(
+        "Safe Stock Days (Green ke liye)",
+        min_value=1,
+        max_value=30,
+        value=3,
+        help="Agar Available Stock (Daily Sale × Days) se kam hai to Red/Yellow dikhega"
+    )
 
-exclude_cancelled = st.checkbox("Cancelled orders ko report se hatayein (Recommended)", value=True)
+opt_col1, opt_col2 = st.columns([2, 2])
+with opt_col1:
+    group_by_option = st.radio(
+        "Report kis column ke hisab se banani hai?",
+        options=["Item Type Name (Column AQ)", "Seller SKU Code (Column EA)"],
+        horizontal=True
+    )
+with opt_col2:
+    exclude_cancelled = st.checkbox("Cancelled orders ko report se hatayein (Recommended)", value=True)
 
 def load_file(uploaded_file):
     if uploaded_file.name.endswith('.csv'):
@@ -40,7 +88,6 @@ def load_file(uploaded_file):
         return pd.read_excel(uploaded_file)
 
 def format_excel_sheet(ws, header_row_idx, status_col_name="Stock Status"):
-    # Colors & Styles
     header_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
     total_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
     
@@ -60,7 +107,6 @@ def format_excel_sheet(ws, header_row_idx, status_col_name="Stock Status"):
         bottom=Side(style='thin', color='D9D9D9')
     )
 
-    # Header Row Formatting (C1 jaisa Wrap Text + Center Alignment sabhi headers par)
     ws.row_dimensions[header_row_idx].height = 34
     status_col_idx = None
 
@@ -73,7 +119,6 @@ def format_excel_sheet(ws, header_row_idx, status_col_name="Stock Status"):
         if str(cell.value) == status_col_name:
             status_col_idx = col_idx
 
-    # Top Total Row formatting (agar header row 2 hai)
     if header_row_idx == 2:
         ws.row_dimensions[1].height = 22
         for col_idx in range(1, ws.max_column + 1):
@@ -84,7 +129,6 @@ def format_excel_sheet(ws, header_row_idx, status_col_name="Stock Status"):
             if col_idx > 2:
                 c.alignment = Alignment(horizontal="center", vertical="center")
 
-    # Data Rows Formatting + Red/Green Highlighting
     for row_idx in range(header_row_idx + 1, ws.max_row + 1):
         is_grand_total = str(ws.cell(row=row_idx, column=1).value) == "Grand Total"
         for col_idx in range(1, ws.max_column + 1):
@@ -97,7 +141,6 @@ def format_excel_sheet(ws, header_row_idx, status_col_name="Stock Status"):
             if col_idx > 2:
                 cell.alignment = Alignment(horizontal="center", vertical="center")
 
-            # Highlight Stock Status Column
             if status_col_idx and col_idx == status_col_idx and not is_grand_total:
                 val = str(cell.value)
                 if "Low Stock" in val or "Out of Stock" in val:
@@ -110,29 +153,34 @@ def format_excel_sheet(ws, header_row_idx, status_col_name="Stock Status"):
                     cell.fill = green_fill
                     cell.font = green_font
 
-    # Auto-adjust column widths cleanly
     for col_idx in range(1, ws.max_column + 1):
         col_letter = get_column_letter(col_idx)
         header_val = str(ws.cell(row=header_row_idx, column=col_idx).value or "")
         if col_idx == 1:
-            ws.column_dimensions[col_letter].width = 28
+            ws.column_dimensions[col_letter].width = 30
         elif col_idx == 2:
-            ws.column_dimensions[col_letter].width = 16
+            ws.column_dimensions[col_letter].width = 18
         elif "\n" in header_val:
             ws.column_dimensions[col_letter].width = 13
         elif status_col_idx and col_idx == status_col_idx:
             ws.column_dimensions[col_letter].width = 24
         else:
-            ws.column_dimensions[col_letter].width = 15
+            ws.column_dimensions[col_letter].width = 16
 
 if orders_file and inventory_file:
     try:
         df_orders = load_file(orders_file)
         df_inv = load_file(inventory_file)
 
-        required_order_cols = ['Category', 'Item Type Name', 'Channel Name']
-        missing_cols = [c for c in required_order_cols if c not in df_orders.columns]
+        use_seller_sku = "Seller SKU Code" in group_by_option
+        target_col = "Seller SKU Code" if use_seller_sku else "Item Type Name"
+        display_col_name = "Seller SKU Code" if use_seller_sku else "Product Name"
 
+        required_order_cols = ['Category', 'Item Type Name', 'Channel Name']
+        if use_seller_sku:
+            required_order_cols.append('Seller SKU Code')
+
+        missing_cols = [c for c in required_order_cols if c not in df_orders.columns]
         if missing_cols:
             st.error(f"Sale Orders file mein ye columns missing hain: {missing_cols}")
             st.stop()
@@ -143,6 +191,9 @@ if orders_file and inventory_file:
         df_orders['Category'] = df_orders['Category'].fillna('Uncategorized').astype(str).str.strip()
         df_orders['Item Type Name'] = df_orders['Item Type Name'].fillna('Unknown').astype(str).str.strip()
         df_orders['Channel Name'] = df_orders['Channel Name'].fillna('Other').astype(str).str.strip()
+        if use_seller_sku:
+            df_orders['Seller SKU Code'] = df_orders['Seller SKU Code'].fillna('Unknown_SKU').astype(str).str.strip()
+
         df_orders['Clean_Channel'] = df_orders['Channel Name'].replace(CHANNEL_MAPPING)
 
         report_date_str = datetime.now().strftime("%d-%m")
@@ -155,130 +206,140 @@ if orders_file and inventory_file:
 
         df_orders['Units'] = 1
 
+        # Pivot Table
         pivot_sku = pd.pivot_table(
             df_orders,
             values='Units',
-            index=['Item Type Name', 'Category'],
+            index=[target_col, 'Category'],
             columns='Clean_Channel',
             aggfunc='sum',
             fill_value=0
         ).reset_index()
 
         pivot_sku.rename(columns={
-            'Item Type Name': 'Product Name',
+            target_col: display_col_name,
             'Category': 'Parent'
         }, inplace=True)
 
-        channel_cols = [c for c in pivot_sku.columns if c not in ['Product Name', 'Parent']]
+        channel_cols = [c for c in pivot_sku.columns if c not in [display_col_name, 'Parent']]
         preferred_order = ["Lymio", "Ajio PX", "Myntra JB", "Flipkart", "Ajio AT", "Snapdeal"]
         ordered_channels = [c for c in preferred_order if c in channel_cols] + [c for c in channel_cols if c not in preferred_order]
         
-        pivot_sku = pivot_sku[['Product Name', 'Parent'] + ordered_channels]
+        pivot_sku = pivot_sku[[display_col_name, 'Parent'] + ordered_channels]
         pivot_sku['Total Sale'] = pivot_sku[ordered_channels].sum(axis=1)
 
-        if 'Item Name' in df_inv.columns:
+        # Inventory Database Mapping (Sirf Available Stock)
+        if 'Item Name' in df_inv.columns and 'Available (ATP)' in df_inv.columns:
             df_inv['Item Name'] = df_inv['Item Name'].astype(str).str.strip()
-            atp_col = 'Available (ATP)' if 'Available (ATP)' in df_inv.columns else None
-            total_stock_col = 'Total (Stock on hand)' if 'Total (Stock on hand)' in df_inv.columns else None
+            df_inv['Available (ATP)'] = pd.to_numeric(df_inv['Available (ATP)'], errors='coerce').fillna(0)
+            inv_grouped = df_inv.groupby('Item Name', as_index=False)['Available (ATP)'].sum()
 
-            agg_dict = {}
-            if atp_col:
-                df_inv[atp_col] = pd.to_numeric(df_inv[atp_col], errors='coerce').fillna(0)
-                agg_dict[atp_col] = 'sum'
-            if total_stock_col:
-                df_inv[total_stock_col] = pd.to_numeric(df_inv[total_stock_col], errors='coerce').fillna(0)
-                agg_dict[total_stock_col] = 'sum'
-
-            if agg_dict:
-                inv_grouped = df_inv.groupby('Item Name', as_index=False).agg(agg_dict)
+            if not use_seller_sku:
+                # Direct match via Item Type Name
                 final_df = pd.merge(
                     pivot_sku,
                     inv_grouped,
-                    left_on='Product Name',
+                    left_on=display_col_name,
                     right_on='Item Name',
                     how='left'
                 ).drop(columns=['Item Name'])
-
-                if atp_col:
-                    final_df[atp_col] = final_df[atp_col].fillna(0).astype(int)
-                    final_df.rename(columns={atp_col: 'Available Stock'}, inplace=True)
-                if total_stock_col:
-                    final_df[total_stock_col] = final_df[total_stock_col].fillna(0).astype(int)
-                    final_df.rename(columns={total_stock_col: 'Total Stock'}, inplace=True)
             else:
-                st.warning("Inventory file mein 'Available (ATP)' ya 'Total (Stock on hand)' column nahi mila.")
-                final_df = pivot_sku
+                # Seller SKU Code ko uske underlying Item Type Name se link karke Available Stock nikalna
+                sku_to_item = df_orders[['Seller SKU Code', 'Item Type Name']].drop_duplicates()
+                sku_with_stock = pd.merge(
+                    sku_to_item,
+                    inv_grouped,
+                    left_on='Item Type Name',
+                    right_on='Item Name',
+                    how='left'
+                )
+                sku_with_stock['Available (ATP)'] = sku_with_stock['Available (ATP)'].fillna(0)
+                # Agar ek Seller SKU mein multiple items (combo) hain to min stock lein
+                seller_stock_map = sku_with_stock.groupby('Seller SKU Code', as_index=False)['Available (ATP)'].min()
+
+                final_df = pd.merge(
+                    pivot_sku,
+                    seller_stock_map,
+                    left_on=display_col_name,
+                    right_on='Seller SKU Code',
+                    how='left'
+                )
+
+            final_df['Available Stock'] = final_df['Available (ATP)'].fillna(0).astype(int)
+            final_df.drop(columns=['Available (ATP)'], inplace=True)
         else:
-            st.error("Inventory file mein 'Item Name' column nahi mila!")
+            st.error("Inventory file mein 'Item Name' ya 'Available (ATP)' column nahi mila!")
             st.stop()
 
-        # Stock vs Sale Status Column Add Karein
-        stock_ref_col = 'Available Stock' if 'Available Stock' in final_df.columns else ('Total Stock' if 'Total Stock' in final_df.columns else None)
-        if stock_ref_col:
-            def get_stock_status(row):
-                stock = row[stock_ref_col]
-                sale = row['Total Sale']
-                if stock <= 0:
-                    return "Out of Stock (0)"
-                elif stock < sale:
-                    return f"Low Stock (<1 Day)"
-                elif stock < (sale * min_days_cover):
-                    return f"Reorder Soon ({round(stock/sale, 1)}d)"
-                else:
-                    return f"Sufficient ({round(stock/sale, 1)}d)"
+        # Stock vs Sale Status Column
+        def get_stock_status(row):
+            stock = row['Available Stock']
+            sale = row['Total Sale']
+            if stock <= 0:
+                return "Out of Stock (0)"
+            elif stock < sale:
+                return "Low Stock (<1 Day)"
+            elif stock < (sale * min_days_cover):
+                return f"Reorder Soon ({round(stock/sale, 1)}d)"
+            else:
+                return f"Sufficient ({round(stock/sale, 1)}d)"
 
-            final_df['Stock Status'] = final_df.apply(get_stock_status, axis=1)
+        final_df['Stock Status'] = final_df.apply(get_stock_status, axis=1)
 
-        final_df = final_df.sort_values(by=['Parent', 'Product Name']).reset_index(drop=True)
+        # Custom Size Sorting (S, M, L, XL, 2XL, 3XL, 4XL...)
+        sort_tuples = final_df[display_col_name].apply(get_sort_keys)
+        final_df['_base_sort'] = [t[0] for t in sort_tuples]
+        final_df['_size_rank'] = [t[1] for t in sort_tuples]
+        final_df['_raw_size'] = [t[2] for t in sort_tuples]
+
+        final_df = final_df.sort_values(
+            by=['Parent', '_base_sort', '_size_rank', '_raw_size', display_col_name]
+        ).drop(columns=['_base_sort', '_size_rank', '_raw_size']).reset_index(drop=True)
 
         # Sheet 2: Category-wise Summary
-        numeric_cols = [c for c in final_df.columns if c not in ['Product Name', 'Parent', 'Stock Status']]
+        numeric_cols = [c for c in final_df.columns if c not in [display_col_name, 'Parent', 'Stock Status']]
         category_summary = final_df.groupby('Parent', as_index=False)[numeric_cols].sum()
         category_summary.rename(columns={'Parent': 'Row Labels'}, inplace=True)
 
-        if stock_ref_col:
-            def get_cat_status(row):
-                stock = row[stock_ref_col]
-                sale = row['Total Sale']
-                if sale == 0:
-                    return "Sufficient"
-                if stock <= 0:
-                    return "Out of Stock (0)"
-                elif stock < sale:
-                    return "Low Stock (<1 Day)"
-                elif stock < (sale * min_days_cover):
-                    return f"Reorder Soon ({round(stock/sale, 1)}d)"
-                else:
-                    return f"Sufficient ({round(stock/sale, 1)}d)"
+        def get_cat_status(row):
+            stock = row['Available Stock']
+            sale = row['Total Sale']
+            if sale == 0:
+                return "Sufficient"
+            if stock <= 0:
+                return "Out of Stock (0)"
+            elif stock < sale:
+                return "Low Stock (<1 Day)"
+            elif stock < (sale * min_days_cover):
+                return f"Reorder Soon ({round(stock/sale, 1)}d)"
+            else:
+                return f"Sufficient ({round(stock/sale, 1)}d)"
 
-            category_summary['Stock Status'] = category_summary.apply(get_cat_status, axis=1)
+        category_summary['Stock Status'] = category_summary.apply(get_cat_status, axis=1)
 
         grand_total_cat = {'Row Labels': 'Grand Total'}
         for col in numeric_cols:
             grand_total_cat[col] = category_summary[col].sum()
-        if 'Stock Status' in category_summary.columns:
-            grand_total_cat['Stock Status'] = ''
+        grand_total_cat['Stock Status'] = ''
         category_summary = pd.concat([category_summary, pd.DataFrame([grand_total_cat])], ignore_index=True)
 
-        # Channel columns mein 2-line format (C1 jaisa: Channel Name \n Date)
+        # 2-Line Header Format (Channel Name \n Date)
         rename_date_cols = {c: f"{c}\n{report_date_str}" for c in ordered_channels}
         final_df_export = final_df.rename(columns=rename_date_cols)
         category_summary_export = category_summary.rename(columns=rename_date_cols)
 
-        top_totals = {col: (final_df_export[col].sum() if col not in ['Product Name', 'Parent', 'Stock Status'] else '') for col in final_df_export.columns}
-        top_totals['Product Name'] = 'GRAND TOTAL'
+        top_totals = {col: (final_df_export[col].sum() if col not in [display_col_name, 'Parent', 'Stock Status'] else '') for col in final_df_export.columns}
+        top_totals[display_col_name] = 'GRAND TOTAL'
 
-        st.success("Report successfully generate ho gayi hai!")
+        st.success(f"Report ({display_col_name} wise) successfully generate ho gayi hai!")
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total Unique SKUs Sold", len(final_df))
+        m1.metric(f"Total Unique {display_col_name}", len(final_df))
         m2.metric("Total Units Sold", int(final_df['Total Sale'].sum()))
-        if 'Stock Status' in final_df.columns:
-            low_count = final_df['Stock Status'].str.contains('Low Stock|Out of Stock').sum()
-            good_count = final_df['Stock Status'].str.contains('Sufficient').sum()
-            m3.metric("🔴 Low / Out of Stock SKUs", int(low_count))
-            m4.metric("🟢 Sufficient Stock SKUs", int(good_count))
+        low_count = final_df['Stock Status'].str.contains('Low Stock|Out of Stock').sum()
+        good_count = final_df['Stock Status'].str.contains('Sufficient').sum()
+        m3.metric("🔴 Low / Out of Stock", int(low_count))
+        m4.metric("🟢 Sufficient Stock", int(good_count))
 
-        # Streamlit Web Preview mein bhi Red/Green highlight
         def highlight_status_web(val):
             val_str = str(val)
             if "Low Stock" in val_str or "Out of Stock" in val_str:
@@ -289,25 +350,22 @@ if orders_file and inventory_file:
                 return 'background-color: #C6EFCE; color: #006100; font-weight: bold;'
             return ''
 
-        st.subheader("Preview: SKU Wise Daily Sale & Stock Report")
-        if 'Stock Status' in final_df_export.columns:
-            st.dataframe(final_df_export.style.map(highlight_status_web, subset=['Stock Status']), use_container_width=True)
-        else:
-            st.dataframe(final_df_export, use_container_width=True)
+        st.subheader(f"Preview: {display_col_name} Wise Daily Sale & Available Stock")
+        st.dataframe(final_df_export.style.map(highlight_status_web, subset=['Stock Status']), use_container_width=True)
 
-        # Excel File Export with Proper Wrap Text & Color Formatting
+        # Excel File Export
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             pd.DataFrame([top_totals]).to_excel(writer, sheet_name='SKU_Wise_Report', index=False, header=False, startrow=0)
             final_df_export.to_excel(writer, sheet_name='SKU_Wise_Report', index=False, startrow=1)
             category_summary_export.to_excel(writer, sheet_name='Category_Summary', index=False)
 
-            # Apply formatting to both sheets
             format_excel_sheet(writer.sheets['SKU_Wise_Report'], header_row_idx=2, status_col_name="Stock Status")
             format_excel_sheet(writer.sheets['Category_Summary'], header_row_idx=1, status_col_name="Stock Status")
 
         output.seek(0)
-        file_name = f"Daily Sale Report {report_date_str} With Inventory.xlsx"
+        suffix_tag = "SellerSKU" if use_seller_sku else "ItemType"
+        file_name = f"Daily Sale Report {report_date_str} ({suffix_tag}).xlsx"
 
         st.download_button(
             label="📥 Download Daily Sale Report (Excel)",
