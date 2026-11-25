@@ -14,7 +14,10 @@ def load_uploaded_data(file_obj):
     file_name = file_obj.name.lower()
     if file_name.endswith(".zip"):
         with zipfile.ZipFile(file_obj, "r") as z:
-            csv_files = [f for f in z.namelist() if f.lower().endswith(".csv") and not f.startswith("__MACOSX")]
+            csv_files = [
+                f for f in z.namelist()
+                if f.lower().endswith(".csv") and not f.startswith("__MACOSX")
+            ]
             if not csv_files:
                 st.error("ZIP folder ke andar koi .csv file nahi mili.")
                 st.stop()
@@ -23,25 +26,37 @@ def load_uploaded_data(file_obj):
     else:
         return pd.read_csv(file_obj, low_memory=False)
 
-if uploaded_file:
+if uploaded_file is not None:
     df = load_uploaded_data(uploaded_file)
 
     def clean_mp(ch):
         s = str(ch)
-        if "Myntra" in s: return "Myntra"
-        if "Amazon" in s: return "Amazon"
-        if "Ajio" in s: return "Ajio"
+        if "Myntra" in s:
+            return "Myntra"
+        if "Amazon" in s:
+            return "Amazon"
+        if "Ajio" in s:
+            return "Ajio"
         return s
 
     def bucket_status(s):
-        if s == "Delivered": return "Delivered (Success)"
-        if s in ["In Transit", "Ready to ship", "Packed", "New"]: return "In-Transit / Active"
-        if s in ["Cancelled", "Cancel Init", "Cancelled Return Received"]: return "Cancelled / RTO"
-        if s in ["Return Init", "Return Received"]: return "Customer Return"
+        if s == "Delivered":
+            return "Delivered (Success)"
+        if s in ["In Transit", "Ready to ship", "Packed", "New"]:
+            return "In-Transit / Active"
+        if s in ["Cancelled", "Cancel Init", "Cancelled Return Received"]:
+            return "Cancelled / RTO"
+        if s in ["Return Init", "Return Received"]:
+            return "Customer Return"
         return str(s)
 
     def get_parent_style(sku):
-        return re.sub(r"-(28|30|32|34|36|38|40|42|XS|S|M|L|XL|XXL|3XL)$", "", str(sku), flags=re.IGNORECASE)
+        return re.sub(
+            r"-(28|30|32|34|36|38|40|42|XS|S|M|L|XL|XXL|3XL)$",
+            "",
+            str(sku),
+            flags=re.IGNORECASE
+        )
 
     df["Marketplace"] = df["Channel Name"].apply(clean_mp)
     df["Status_Bucket"] = df["Order Status"].apply(bucket_status)
@@ -58,10 +73,21 @@ if uploaded_file:
         else:
             df[col] = 0.0
 
-    df["Effective_COGS"] = np.where(df["Cost of Goods"] > 0, df["Cost of Goods"], df["Calc Last Purchase Price"] * df["Qty"])
-    df["Return_Charge"] = np.where(df["Expected Payment"] < 0, -df["Expected Payment"], df["Reverse Shipping Fee"])
+    df["Effective_COGS"] = np.where(
+        df["Cost of Goods"] > 0,
+        df["Cost of Goods"],
+        df["Calc Last Purchase Price"] * df["Qty"]
+    )
+    df["Return_Charge"] = np.where(
+        df["Expected Payment"] < 0,
+        -df["Expected Payment"],
+        df["Reverse Shipping Fee"]
+    )
     df["Bad_Return_Loss"] = df["Return Bad Qty"] * df["Calc Last Purchase Price"]
-    df["Is_Unpaid_Delivered"] = (df["Status_Bucket"] == "Delivered (Success)") & (df["Payment Received"].fillna("No").str.lower() != "yes")
+    df["Is_Unpaid_Delivered"] = (
+        (df["Status_Bucket"] == "Delivered (Success)") &
+        (df["Payment Received"].fillna("No").str.lower() != "yes")
+    )
 
     # 1. Marketplace Summary
     summary = []
@@ -114,16 +140,27 @@ if uploaded_file:
 
     sku_df["Return_Rate_%"] = np.where(
         (sku_df["Delivered"] + sku_df["Returns"]) > 0,
-        (sku_df["Returns"] / (sku_df["Delivered"] + sku_df["Returns"])) * 100, 0
+        (sku_df["Returns"] / (sku_df["Delivered"] + sku_df["Returns"])) * 100,
+        0
     ).round(1)
     sku_df["Net_Profit"] = (sku_df["Del_Profit"] - sku_df["Ret_Charges"] - sku_df["Bad_Loss"]).round(2)
     sku_df["Suggested_Price"] = np.where(
-        sku_df["Net_Profit"] < 0, np.maximum(sku_df["Avg_Price"] + 70, sku_df["Unit_COGS"] * 1.65).round(-1) - 1,
-        np.where(sku_df["Return_Rate_%"] >= 40, (sku_df["Avg_Price"] + 40).round(-1) - 1, sku_df["Avg_Price"].round(0))
+        sku_df["Net_Profit"] < 0,
+        np.maximum(sku_df["Avg_Price"] + 70, sku_df["Unit_COGS"] * 1.65).round(-1) - 1,
+        np.where(
+            sku_df["Return_Rate_%"] >= 40,
+            (sku_df["Avg_Price"] + 40).round(-1) - 1,
+            sku_df["Avg_Price"].round(0)
+        )
     )
     sku_df["Action"] = np.where(
-        sku_df["Net_Profit"] < 0, "🔴 LOSS: Increase Price / Audit",
-        np.where(sku_df["Return_Rate_%"] >= 40, "🟠 HIGH RETURN: Check Size/Quality", "🟢 HEALTHY")
+        sku_df["Net_Profit"] < 0,
+        "🔴 LOSS: Increase Price / Audit",
+        np.where(
+            sku_df["Return_Rate_%"] >= 40,
+            "🟠 HIGH RETURN: Check Size/Quality",
+            "🟢 HEALTHY"
+        )
     )
 
     st.subheader("2. SKU Profitability & Price Action Suggestions")
@@ -133,7 +170,7 @@ if uploaded_file:
     unpaid_df = df[df["Is_Unpaid_Delivered"]].copy()
     spf_df = df[df["Return Bad Qty"] > 0].copy()
 
-    # Create All-in-One Downloadable ZIP of Excel Reports
+    # 4. Create All-in-One Downloadable ZIP of Excel Reports
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for fname, frame in [
