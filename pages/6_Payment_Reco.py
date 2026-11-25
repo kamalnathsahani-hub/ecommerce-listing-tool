@@ -10,9 +10,9 @@ from openpyxl.utils import get_column_letter
 from openpyxl.chart import BarChart, Reference
 from openpyxl.comments import Comment
 
-st.set_page_config(page_title="Payment Reco v2.2 — Single Master Workbook", layout="wide")
-st.title("📊 Marketplace Payment Reconciliation (v2.2 — Auto-Fit + Product Return Action Plan)")
-st.info("✅ Active Version: v2.2 (Auto-Adjusted Columns + L:M Delivered Box + Product-Level Return Reason & Action Plan Tab)")
+st.set_page_config(page_title="Payment Reco v2.3 — Single Master Workbook", layout="wide")
+st.title("📊 Marketplace Payment Reconciliation (v2.3 — Compact Screen-Fit + K1:L10 Delivered Box)")
+st.info("✅ Active Version: v2.3 (Compact Screen-Fit Columns A–L + K1:L10 Delivered Actuals Box + Product Return Action Plan)")
 
 uploaded_file = st.file_uploader("Upload Order / Payment Reco CSV or ZIP", type=["csv", "zip"])
 
@@ -88,7 +88,7 @@ def get_return_action_plan(reason_str, ret_rate_pct):
             return "🔍 High Return Audit: Top return comments check karke listing title, size chart aur packaging improve karein"
         return "✅ Monitor: Return comments track karein aur size chart accurate rakhein"
 
-def auto_fit_columns(ws, skip_cols=None, max_width=45, min_width=12, header_row=4):
+def auto_fit_columns(ws, skip_cols=None, max_width=42, min_width=10, header_row=4):
     if skip_cols is None:
         skip_cols = set()
     for col in ws.columns:
@@ -102,12 +102,12 @@ def auto_fit_columns(ws, skip_cols=None, max_width=45, min_width=12, header_row=
                 continue
             val = str(cell.value or "")
             if val.startswith("="):
-                max_len = max(max_len, 14)
+                max_len = max(max_len, 11)
             else:
                 lines = val.split("\n")
                 longest_line = max((len(line) for line in lines), default=0)
                 max_len = max(max_len, longest_line)
-        ws.column_dimensions[col_letter].width = min(max(max_len + 4, min_width), max_width)
+        ws.column_dimensions[col_letter].width = min(max(max_len + 2.5, min_width), max_width)
 
 def build_master_workbook(df, month_tag):
     wb = openpyxl.Workbook()
@@ -155,7 +155,7 @@ def build_master_workbook(df, month_tag):
             ordered_mps.append(other_mp)
 
     # --------------------------------------------------------------------------
-    # 1. CHANNEL-WISE RECO TABS (Spacers at D, G, J | Delivered Box at L7:M16)
+    # 1. CHANNEL-WISE RECO TABS (Spacers at D, G, J | Delivered Box at K1:L10)
     # --------------------------------------------------------------------------
     for mp in ordered_mps:
         sub = df[df["Marketplace"] == mp].copy()
@@ -308,11 +308,15 @@ def build_master_workbook(df, month_tag):
             if note_txt:
                 c_b.comment = Comment(note_txt, "Payment Reco")
 
-        # Side Box at L7:M16 (with Column J as spacer just like D & G!)
-        ws["L7"] = "DELIVERED-ONLY ACTUALS (EXCLUDING IN-TRANSIT)"
-        ws["L7"].font = FONT_TBL_HDR
-        ws["L7"].fill = FILL_SLATE
-        ws.merge_cells("L7:M7")
+        # Side Box at K1:L10 (Top-aligned with Row 1, Column J as spacer!)
+        ws["K1"] = "DELIVERED-ONLY ACTUALS"
+        ws["K1"].font = FONT_TBL_HDR
+        ws["K1"].fill = FILL_SLATE
+        ws["K1"].alignment = Alignment(horizontal="left", vertical="center")
+        ws["L1"] = "Amount / Qty"
+        ws["L1"].font = FONT_TBL_HDR
+        ws["L1"].fill = FILL_SLATE
+        ws["L1"].alignment = Alignment(horizontal="right", vertical="center")
 
         del_box = [
             ("Strictly Delivered Orders", del_only_count, "#,##0"),
@@ -321,27 +325,36 @@ def build_master_workbook(df, month_tag):
             ("Delivered Expected Payout (₹)", del_only_exp_pay, "₹#,##0"),
             ("Delivered Product Cost (₹)", del_only_cogs, "₹#,##0"),
             ("Return Penalty on Delivered (₹)", cr_charge_exp, "₹#,##0"),
-            ("Return Charge / Delivered Order (₹)", "=IFERROR(ROUND(M13/M8, 2), 0)", "₹#,##0.00"),
-            ("True Delivered Net Profit (₹)", "=M11-M12-M13", "₹#,##0"),
-            ("Profit / Delivered Order (₹)", "=IFERROR(ROUND(M15/M8, 0), 0)", "₹#,##0"),
+            ("Return Charge / Delivered (₹)", "=IFERROR(ROUND(L7/L2, 2), 0)", "₹#,##0.00"),
+            ("True Delivered Net Profit (₹)", "=L5-L6-L7", "₹#,##0"),
+            ("Profit / Delivered Order (₹)", "=IFERROR(ROUND(L9/L2, 0), 0)", "₹#,##0"),
         ]
-        for idx_b, (b_lbl, b_val, b_fmt) in enumerate(del_box, start=8):
-            ca = ws.cell(row=idx_b, column=12, value=b_lbl)
-            cb = ws.cell(row=idx_b, column=13, value=b_val)
-            ca.font = FONT_LABEL_BOLD if idx_b >= 15 else FONT_LABEL
-            cb.font = FONT_VAL_BOLD if idx_b >= 15 else FONT_VAL
+        for idx_b, (b_lbl, b_val, b_fmt) in enumerate(del_box, start=2):
+            ca = ws.cell(row=idx_b, column=11, value=b_lbl)
+            cb = ws.cell(row=idx_b, column=12, value=b_val)
+            ca.font = FONT_LABEL_BOLD if idx_b >= 9 else FONT_LABEL
+            cb.font = FONT_VAL_BOLD if idx_b >= 9 else FONT_VAL
             cb.number_format = b_fmt
             cb.alignment = Alignment(horizontal="right")
             ca.border = BORDER_CELL
             cb.border = BORDER_CELL
-            if idx_b == 15:
+            if idx_b == 9:
                 cb.fill = FILL_MINT
 
-        # Auto-adjust all data columns + narrow spacer columns D, G, J
-        auto_fit_columns(ws, skip_cols={"D", "G", "J"}, max_width=44, min_width=14, header_row=1)
-        ws.column_dimensions["D"].width = 4
-        ws.column_dimensions["G"].width = 4
-        ws.column_dimensions["J"].width = 4
+        # Tight compact auto-fit widths so A through L fit together on one screen!
+        for col in ws.columns:
+            col_letter = get_column_letter(col[0].column)
+            if col_letter in {"D", "G", "J"}:
+                ws.column_dimensions[col_letter].width = 2.5
+                continue
+            max_len = 0
+            for cell in col:
+                val = str(cell.value or "")
+                if val.startswith("="):
+                    max_len = max(max_len, 10)
+                else:
+                    max_len = max(max_len, len(val))
+            ws.column_dimensions[col_letter].width = max(max_len + 2.5, 10)
 
     # --------------------------------------------------------------------------
     # 2. ALL CHANNELS SUMMARY TAB
@@ -446,7 +459,7 @@ def build_master_workbook(df, month_tag):
         chart.height = 10
         ws_exec.add_chart(chart, f"A{tot_row + 2}")
 
-    auto_fit_columns(ws_exec, max_width=28, min_width=15, header_row=4)
+    auto_fit_columns(ws_exec, max_width=28, min_width=13, header_row=4)
 
     # --------------------------------------------------------------------------
     # 3. SKU PRICING & RETURN ACTIONS TAB
@@ -530,13 +543,13 @@ def build_master_workbook(df, month_tag):
                     cell.fill = FILL_PEACH
                     cell.font = FONT_AMBER
 
-    auto_fit_columns(ws_sku, max_width=44, min_width=13, header_row=4)
+    auto_fit_columns(ws_sku, max_width=42, min_width=11, header_row=4)
     ws_sku.freeze_panes = "A5"
     if len(sku_grp) > 0:
         ws_sku.auto_filter.ref = f"A4:Q{4 + len(sku_grp)}"
 
     # --------------------------------------------------------------------------
-    # 4. PRODUCT-WISE RETURN REASON & ACTION PLAN TAB (NEW!)
+    # 4. PRODUCT-WISE RETURN REASON & ACTION PLAN TAB
     # --------------------------------------------------------------------------
     ws_prod_ret = wb.create_sheet(title="Product Return Action Plan")
     ws_prod_ret.views.sheetView[0].showGridLines = True
@@ -623,7 +636,7 @@ def build_master_workbook(df, month_tag):
             elif c_i == 13:
                 cell.font = FONT_LABEL_BOLD
 
-    auto_fit_columns(ws_prod_ret, max_width=58, min_width=13, header_row=4)
+    auto_fit_columns(ws_prod_ret, max_width=56, min_width=11, header_row=4)
     ws_prod_ret.freeze_panes = "A5"
     if len(prod_reason_grp) > 0:
         ws_prod_ret.auto_filter.ref = f"A4:M{4 + len(prod_reason_grp)}"
@@ -686,7 +699,7 @@ def build_master_workbook(df, month_tag):
                         cell.fill = FILL_PEACH
                         cell.font = FONT_AMBER
 
-    auto_fit_columns(ws_unpaid, max_width=32, min_width=13, header_row=4)
+    auto_fit_columns(ws_unpaid, max_width=32, min_width=11, header_row=4)
     ws_unpaid.freeze_panes = "A5"
     if not del_pending.empty:
         ws_unpaid.auto_filter.ref = f"A4:O{4 + len(del_pending)}"
@@ -759,7 +772,7 @@ def build_master_workbook(df, month_tag):
             elif c_i == 9:
                 cell.number_format = "₹#,##0"
 
-    auto_fit_columns(ws_ret, max_width=40, min_width=14, header_row=4)
+    auto_fit_columns(ws_ret, max_width=40, min_width=12, header_row=4)
 
     wb.remove(default_ws)
     out_buf = io.BytesIO()
