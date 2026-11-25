@@ -86,7 +86,17 @@ def clean_oms_channel(val):
         return s.split(" - ", 1)[1].strip()
     return s
 
-def format_excel_sheet(ws, header_row_idx, status_col_name="Stock Status"):
+def format_excel_sheet(ws, first_numeric_col_idx, freeze_cell, status_col_name="Stock Status"):
+    """
+    Dono sheets mein:
+    - Row 1: GRAND TOTAL with dynamic =SUBTOTAL(9, ...) formula
+    - Row 2: Headers with Wrap Text + AutoFilter enabled
+    - Row 3+: Data rows
+    """
+    header_row_idx = 2
+    data_start_row = 3
+    data_end_row = ws.max_row
+
     header_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
     total_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
     
@@ -106,6 +116,13 @@ def format_excel_sheet(ws, header_row_idx, status_col_name="Stock Status"):
         bottom=Side(style='thin', color='D9D9D9')
     )
 
+    # Set Freeze Panes
+    ws.freeze_panes = freeze_cell
+
+    # Enable Excel Auto-Filter on Header Row (Row 2) so filtering updates Row 1 SUBTOTAL
+    last_col_letter = get_column_letter(ws.max_column)
+    ws.auto_filter.ref = f"A{header_row_idx}:{last_col_letter}{data_end_row}"
+
     ws.row_dimensions[header_row_idx].height = 34
     status_col_idx = None
 
@@ -118,29 +135,38 @@ def format_excel_sheet(ws, header_row_idx, status_col_name="Stock Status"):
         if str(cell.value) == status_col_name:
             status_col_idx = col_idx
 
-    if header_row_idx == 2:
-        ws.row_dimensions[1].height = 22
-        for col_idx in range(1, ws.max_column + 1):
-            c = ws.cell(row=1, column=col_idx)
-            c.font = Font(bold=True)
-            c.fill = total_fill
-            c.border = thin_border
-            if col_idx > 2:
-                c.alignment = Alignment(horizontal="center", vertical="center")
+    # Row 1: Dynamic =SUBTOTAL(9, ...) for all numeric columns
+    ws.row_dimensions[1].height = 24
+    for col_idx in range(1, ws.max_column + 1):
+        c = ws.cell(row=1, column=col_idx)
+        c.font = Font(bold=True)
+        c.fill = total_fill
+        c.border = thin_border
+        col_letter = get_column_letter(col_idx)
 
-    for row_idx in range(header_row_idx + 1, ws.max_row + 1):
-        is_grand_total = str(ws.cell(row=row_idx, column=1).value) == "Grand Total"
+        if col_idx == 1:
+            c.value = "GRAND TOTAL"
+            c.alignment = Alignment(horizontal="left", vertical="center")
+        elif col_idx >= first_numeric_col_idx and col_idx != status_col_idx:
+            if data_end_row >= data_start_row:
+                c.value = f"=SUBTOTAL(9,{col_letter}{data_start_row}:{col_letter}{data_end_row})"
+            else:
+                c.value = 0
+            c.alignment = Alignment(horizontal="center", vertical="center")
+        else:
+            c.value = ""
+            c.alignment = Alignment(horizontal="center", vertical="center")
+
+    # Data Rows Formatting
+    for row_idx in range(data_start_row, data_end_row + 1):
         for col_idx in range(1, ws.max_column + 1):
             cell = ws.cell(row=row_idx, column=col_idx)
             cell.border = thin_border
-            if is_grand_total:
-                cell.font = Font(bold=True)
-                cell.fill = total_fill
             
-            if col_idx > 2:
+            if col_idx >= first_numeric_col_idx:
                 cell.alignment = Alignment(horizontal="center", vertical="center")
 
-            if status_col_idx and col_idx == status_col_idx and not is_grand_total:
+            if status_col_idx and col_idx == status_col_idx:
                 val = str(cell.value)
                 if "Low Stock" in val or "Out of Stock" in val:
                     cell.fill = red_fill
@@ -152,19 +178,19 @@ def format_excel_sheet(ws, header_row_idx, status_col_name="Stock Status"):
                     cell.fill = green_fill
                     cell.font = green_font
 
+    # Auto-Adjust Column Widths
     for col_idx in range(1, ws.max_column + 1):
         col_letter = get_column_letter(col_idx)
-        header_val = str(ws.cell(row=header_row_idx, column=col_idx).value or "")
-        if col_idx == 1:
-            ws.column_dimensions[col_letter].width = 30
-        elif col_idx == 2:
-            ws.column_dimensions[col_letter].width = 18
-        elif "\n" in header_val:
-            ws.column_dimensions[col_letter].width = 15
-        elif status_col_idx and col_idx == status_col_idx:
-            ws.column_dimensions[col_letter].width = 24
-        else:
-            ws.column_dimensions[col_letter].width = 16
+        max_len = 0
+        # Check Row 2 (Header) and Row 3..max_row (Data) — Row 1 formula text ko ignore karein
+        for row_idx in range(header_row_idx, data_end_row + 1):
+            val = ws.cell(row=row_idx, column=col_idx).value
+            if val is not None:
+                lines = str(val).split('\n')
+                longest_line = max(len(line.strip()) for line in lines)
+                if longest_line > max_len:
+                    max_len = longest_line
+        ws.column_dimensions[col_letter].width = max(max_len + 5, 13)
 
 col1, col2, col3 = st.columns([2, 2, 1.5])
 with col1:
@@ -196,8 +222,6 @@ if orders_file and inventory_file:
         df_inv = load_any_file(inventory_file)
 
         use_alt_sku = "Channel / Seller SKU" in sku_mode
-
-        # Auto-Detect Format: OMS vs Unicommerce
         is_oms = ('Product Sku Code' in df_orders.columns and 'Category Name' in df_orders.columns)
 
         if is_oms:
@@ -206,7 +230,6 @@ if orders_file and inventory_file:
             display_col_name = "Listing Sku Code" if use_alt_sku else "Product Sku Code"
             cat_col = "Category Name"
 
-            # Filter Cancelled in OMS
             if exclude_cancelled and 'Order Status' in df_orders.columns:
                 cancel_statuses = ['CANCELLED', 'CANCEL INIT', 'CANCELLED RETURN RECEIVED']
                 df_orders = df_orders[~df_orders['Order Status'].astype(str).str.upper().str.strip().isin(cancel_statuses)].copy()
@@ -218,18 +241,15 @@ if orders_file and inventory_file:
 
             df_orders['Clean_Channel'] = df_orders['Channel Name'].fillna('Other').apply(clean_oms_channel)
 
-            # Quantity column in OMS
             if 'Qty' in df_orders.columns:
                 df_orders['Units'] = pd.to_numeric(df_orders['Qty'], errors='coerce').fillna(1)
             else:
                 df_orders['Units'] = 1
 
-            # Extract Report Date
             report_date_str = datetime.now().strftime("%d-%m")
             for date_col in ['Invoice Date', 'Order Date']:
                 if date_col in df_orders.columns and df_orders[date_col].dropna().shape[0] > 0:
                     try:
-                        # Latest date lein kyunki OMS file mein multiple dates ho sakti hain
                         parsed_dates = pd.to_datetime(df_orders[date_col].dropna(), errors='coerce').dropna()
                         if not parsed_dates.empty:
                             report_date_str = parsed_dates.max().strftime("%d-%m")
@@ -237,7 +257,6 @@ if orders_file and inventory_file:
                     except Exception:
                         pass
 
-            # Pivot Table
             pivot_sku = pd.pivot_table(
                 df_orders,
                 values='Units',
@@ -256,7 +275,6 @@ if orders_file and inventory_file:
             pivot_sku = pivot_sku[[display_col_name, 'Parent'] + ordered_channels]
             pivot_sku['Total Sale'] = pivot_sku[ordered_channels].sum(axis=1)
 
-            # Inventory Mapping for OMS
             if 'Item SkuCode' in df_inv.columns and 'Qty' in df_inv.columns:
                 df_inv['Item SkuCode'] = df_inv['Item SkuCode'].astype(str).str.strip()
                 df_inv['Qty'] = pd.to_numeric(df_inv['Qty'], errors='coerce').fillna(0)
@@ -297,7 +315,6 @@ if orders_file and inventory_file:
                 st.stop()
 
         else:
-            # Unicommerce Format
             st.info("Detected Format: **Unicommerce Sale Orders & Inventory Report**")
             target_col = "Seller SKU Code" if use_alt_sku else "Item Type Name"
             display_col_name = "Seller SKU Code" if use_alt_sku else "Product Name"
@@ -389,7 +406,7 @@ if orders_file and inventory_file:
                 st.error("Inventory file mein 'Item Name' ya 'Available (ATP)' column nahi mila!")
                 st.stop()
 
-        # Common Processing: Stock Status + Size Sorting + Export
+        # Common Processing
         final_df['Total Sale'] = final_df['Total Sale'].astype(int)
         for ch in ordered_channels:
             final_df[ch] = final_df[ch].astype(int)
@@ -408,7 +425,7 @@ if orders_file and inventory_file:
 
         final_df['Stock Status'] = final_df.apply(get_stock_status, axis=1)
 
-        # Smart Size Sorting (XS, S, M, L, XL, 2XL... ya 30, 32, 34, 36, 38)
+        # Smart Size Sorting
         sort_tuples = final_df[display_col_name].apply(get_sort_keys)
         final_df['_base_sort'] = [t[0] for t in sort_tuples]
         final_df['_size_rank'] = [t[1] for t in sort_tuples]
@@ -418,7 +435,7 @@ if orders_file and inventory_file:
             by=['Parent', '_base_sort', '_size_rank', '_raw_size', display_col_name]
         ).drop(columns=['_base_sort', '_size_rank', '_raw_size']).reset_index(drop=True)
 
-        # Sheet 2: Category-wise Summary
+        # Sheet 2: Category-wise Summary (Ab isme bhi Grand Total Row 1 par SUBTOTAL formula se aayega)
         numeric_cols = [c for c in final_df.columns if c not in [display_col_name, 'Parent', 'Stock Status']]
         category_summary = final_df.groupby('Parent', as_index=False)[numeric_cols].sum()
         category_summary.rename(columns={'Parent': 'Row Labels'}, inplace=True)
@@ -439,23 +456,14 @@ if orders_file and inventory_file:
 
         category_summary['Stock Status'] = category_summary.apply(get_cat_status, axis=1)
 
-        grand_total_cat = {'Row Labels': 'Grand Total'}
-        for col in numeric_cols:
-            grand_total_cat[col] = category_summary[col].sum()
-        grand_total_cat['Stock Status'] = ''
-        category_summary = pd.concat([category_summary, pd.DataFrame([grand_total_cat])], ignore_index=True)
-
         # 2-Line Header Format (Channel Name \n Date)
         rename_date_cols = {c: f"{c}\n{report_date_str}" for c in ordered_channels}
         final_df_export = final_df.rename(columns=rename_date_cols)
         category_summary_export = category_summary.rename(columns=rename_date_cols)
 
-        top_totals = {col: (final_df_export[col].sum() if col not in [display_col_name, 'Parent', 'Stock Status'] else '') for col in final_df_export.columns}
-        top_totals[display_col_name] = 'GRAND TOTAL'
-
         st.success(f"Report ({display_col_name} wise) successfully generate ho gayi hai!")
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric(f"Total Unique SKUs", len(final_df))
+        m1.metric("Total Unique SKUs", len(final_df))
         m2.metric("Total Units Sold", int(final_df['Total Sale'].sum()))
         low_count = final_df['Stock Status'].str.contains('Low Stock|Out of Stock').sum()
         good_count = final_df['Stock Status'].str.contains('Sufficient').sum()
@@ -475,15 +483,15 @@ if orders_file and inventory_file:
         st.subheader(f"Preview: {display_col_name} Wise Daily Sale & Available Stock")
         st.dataframe(final_df_export.style.map(highlight_status_web, subset=['Stock Status']), use_container_width=True)
 
-        # Excel File Export
+        # Excel File Export with Top =SUBTOTAL(9,...) Row, AutoFilter, Freeze Panes & Auto Column Width
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            pd.DataFrame([top_totals]).to_excel(writer, sheet_name='SKU_Wise_Report', index=False, header=False, startrow=0)
+            # Dono sheets mein Row 1 blank chhod kar Row 2 se headers likhein, phir Row 1 mein =SUBTOTAL(9,...) daalein
             final_df_export.to_excel(writer, sheet_name='SKU_Wise_Report', index=False, startrow=1)
-            category_summary_export.to_excel(writer, sheet_name='Category_Summary', index=False)
+            category_summary_export.to_excel(writer, sheet_name='Category_Summary', index=False, startrow=1)
 
-            format_excel_sheet(writer.sheets['SKU_Wise_Report'], header_row_idx=2, status_col_name="Stock Status")
-            format_excel_sheet(writer.sheets['Category_Summary'], header_row_idx=1, status_col_name="Stock Status")
+            format_excel_sheet(writer.sheets['SKU_Wise_Report'], first_numeric_col_idx=3, freeze_cell="C3", status_col_name="Stock Status")
+            format_excel_sheet(writer.sheets['Category_Summary'], first_numeric_col_idx=2, freeze_cell="B3", status_col_name="Stock Status")
 
         output.seek(0)
         system_tag = "OMS" if is_oms else "Unicom"
