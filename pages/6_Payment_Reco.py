@@ -111,6 +111,8 @@ def build_master_workbook(df, month_tag):
     # --------------------------------------------------------------------------
     # 1. CHANNEL-WISE RECO TABS (Exact Apps Script v10 Layout + Delivered Box)
     # --------------------------------------------------------------------------
+    unique_channels = df["Channel Name"].dropna().unique().tolist()
+    # Order preferred marketplaces first
     ordered_mps = []
     for pref in ["Myntra", "Amazon", "Ajio"]:
         if pref in df["Marketplace"].unique():
@@ -692,6 +694,7 @@ if uploaded_file is not None:
     month_tag = detect_month_tag(df)
     excel_bytes, ordered_mps = build_master_workbook(df, month_tag)
 
+    # Top Download Button (Single Master Excel Workbook)
     st.success(f"✅ Master Workbook ready! ({len(ordered_mps) + 4} structured tabs inside 1 Excel file)")
     st.download_button(
         label=f"⬇️ Download Master Payment Reco Excel ({month_tag}.xlsx)",
@@ -701,6 +704,7 @@ if uploaded_file is not None:
         type="primary"
     )
 
+    # Live On-Screen Preview
     summary_rows = []
     for mp in ordered_mps:
         grp = df[df["Marketplace"] == mp]
