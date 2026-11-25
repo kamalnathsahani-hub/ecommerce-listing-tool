@@ -10,9 +10,9 @@ from openpyxl.utils import get_column_letter
 from openpyxl.chart import BarChart, Reference
 from openpyxl.comments import Comment
 
-st.set_page_config(page_title="Payment Reco v2.0 — Single Master Workbook", layout="wide")
-st.title("📊 Marketplace Payment Reconciliation (v2.0 — Single Master Excel)")
-st.info("✅ Active Version: v2.0 (Single Master Workbook with Channel RECO Tabs + Consolidated Summary + SKU Actions + Unpaid List + SPF Audit)")
+st.set_page_config(page_title="Payment Reco v2.1 — Single Master Workbook", layout="wide")
+st.title("📊 Marketplace Payment Reconciliation (v2.1 — Single Master Excel)")
+st.info("✅ Active Version: v2.1 (Single Master Workbook with Channel RECO Tabs + Consolidated Summary + SKU Actions + Unpaid List + SPF Audit)")
 
 uploaded_file = st.file_uploader("Upload Order / Payment Reco CSV or ZIP", type=["csv", "zip"])
 
@@ -114,7 +114,7 @@ def build_master_workbook(df, month_tag):
         if other_mp not in ordered_mps:
             ordered_mps.append(other_mp)
 
-    # 1. CHANNEL-WISE RECO TABS (Apps Script v10 Layout + Delivered Box)
+    # 1. CHANNEL-WISE RECO TABS (Apps Script v10 Layout + Delivered Box in J7:K16)
     for mp in ordered_mps:
         sub = df[df["Marketplace"] == mp].copy()
         tab_title = f"{mp} {month_tag}"[:31]
@@ -266,10 +266,11 @@ def build_master_workbook(df, month_tag):
             if note_txt:
                 c_b.comment = Comment(note_txt, "Payment Reco")
 
-        ws["E7"] = "DELIVERED-ONLY ACTUALS (EXCLUDING IN-TRANSIT)"
-        ws["E7"].font = FONT_TBL_HDR
-        ws["E7"].fill = FILL_SLATE
-        ws.merge_cells("E7:F7")
+        # Side Box: Delivered-Only Actuals vs Pipeline (J7:K16 — kept out of F2:F20 so B20 SUM stays clean)
+        ws["J7"] = "DELIVERED-ONLY ACTUALS (EXCLUDING IN-TRANSIT)"
+        ws["J7"].font = FONT_TBL_HDR
+        ws["J7"].fill = FILL_SLATE
+        ws.merge_cells("J7:K7")
 
         del_box = [
             ("Strictly Delivered Orders", del_only_count, "#,##0"),
@@ -278,13 +279,13 @@ def build_master_workbook(df, month_tag):
             ("Delivered Expected Payout (₹)", del_only_exp_pay, "₹#,##0"),
             ("Delivered Product Cost (₹)", del_only_cogs, "₹#,##0"),
             ("Return Penalty on Delivered (₹)", cr_charge_exp, "₹#,##0"),
-            ("Return Charge / Delivered Order (₹)", "=IFERROR(ROUND(F13/F8, 2), 0)", "₹#,##0.00"),
-            ("True Delivered Net Profit (₹)", "=F11-F12-F13", "₹#,##0"),
-            ("Profit / Delivered Order (₹)", "=IFERROR(ROUND(F15/F8, 0), 0)", "₹#,##0"),
+            ("Return Charge / Delivered Order (₹)", "=IFERROR(ROUND(K13/K8, 2), 0)", "₹#,##0.00"),
+            ("True Delivered Net Profit (₹)", "=K11-K12-K13", "₹#,##0"),
+            ("Profit / Delivered Order (₹)", "=IFERROR(ROUND(K15/K8, 0), 0)", "₹#,##0"),
         ]
         for idx_b, (b_lbl, b_val, b_fmt) in enumerate(del_box, start=8):
-            ca = ws.cell(row=idx_b, column=5, value=b_lbl)
-            cb = ws.cell(row=idx_b, column=6, value=b_val)
+            ca = ws.cell(row=idx_b, column=10, value=b_lbl)
+            cb = ws.cell(row=idx_b, column=11, value=b_val)
             ca.font = FONT_LABEL_BOLD if idx_b >= 15 else FONT_LABEL
             cb.font = FONT_VAL_BOLD if idx_b >= 15 else FONT_VAL
             cb.number_format = b_fmt
@@ -298,11 +299,13 @@ def build_master_workbook(df, month_tag):
         ws.column_dimensions["B"].width = 16
         ws.column_dimensions["C"].width = 16
         ws.column_dimensions["D"].width = 4
-        ws.column_dimensions["E"].width = 38
+        ws.column_dimensions["E"].width = 36
         ws.column_dimensions["F"].width = 16
         ws.column_dimensions["G"].width = 4
         ws.column_dimensions["H"].width = 34
         ws.column_dimensions["I"].width = 16
+        ws.column_dimensions["J"].width = 38
+        ws.column_dimensions["K"].width = 16
 
     # 2. ALL CHANNELS SUMMARY TAB
     ws_exec = wb.create_sheet(title="All Channels Summary")
