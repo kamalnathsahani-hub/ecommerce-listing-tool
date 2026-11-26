@@ -12,7 +12,7 @@ st.set_page_config(page_title="Daily Sale Report Generator", layout="wide")
 st.title("📊 Daily Sale Report, Ads & Liquidation Generator")
 st.write(
     "Unicommerce ya OMS ki Sale Orders aur Inventory files (CSV, Excel, ya ZIP) upload karein "
-    "aur channel-wise SKU sale, Ads priority, Stock health, aur Liquidation alerts ki report download karein."
+    "aur channel-wise SKU sale, Ads priority, Marketplace Top 10/20, Stock health, aur Liquidation alerts ki report download karein."
 )
 
 # Unicommerce Channel Mapping
@@ -118,19 +118,24 @@ def get_liquidation_status(stock, sale, min_liq_stock, max_liq_sale, high_cover_
     return "Normal"
 
 
-def auto_fit_columns(ws, start_row=2, min_width=13, max_width=45, padding=5):
+def auto_fit_columns(ws, start_row=1, min_width=13, max_width=60, padding=4):
     """Sabhi columns ki width header + data content ke hisab se auto-adjust karta hai."""
     for col_idx in range(1, ws.max_column + 1):
         col_letter = get_column_letter(col_idx)
         max_len = 0
         for row_idx in range(start_row, ws.max_row + 1):
             val = ws.cell(row=row_idx, column=col_idx).value
-            if val is not None:
-                lines = str(val).split("\n")
-                longest_line = max(len(line.strip()) for line in lines)
-                if longest_line > max_len:
-                    max_len = longest_line
-        calculated_width = min(max(max_len + padding, min_width), max_width)
+            if val is None:
+                continue
+            val_str = str(val)
+            # Row 1 ke =SUBTOTAL(...) formula ki length ko ignore karein
+            if row_idx == 1 and val_str.startswith("="):
+                continue
+            lines = val_str.split("\n")
+            longest_line = max(len(line.strip()) for line in lines)
+            if longest_line > max_len:
+                max_len = longest_line
+        calculated_width = min(max(int(max_len * 1.15) + padding, min_width), max_width)
         ws.column_dimensions[col_letter].width = calculated_width
 
 
@@ -200,11 +205,11 @@ def format_excel_sheet(
         cell.border = thin_border
 
         col_title = str(cell.value)
-        if col_title == status_col_name:
+        if status_col_name and col_title == status_col_name:
             status_col_idx = col_idx
-        elif col_title == tier_col_name:
+        elif tier_col_name and col_title == tier_col_name:
             tier_col_idx = col_idx
-        elif col_title == liq_col_name:
+        elif liq_col_name and col_title == liq_col_name:
             liq_col_idx = col_idx
 
     # Row 1: Dynamic =SUBTOTAL(9, ...) only on actual numeric measure columns
@@ -273,7 +278,7 @@ def format_excel_sheet(
                     cell.fill = yellow_fill
                     cell.font = yellow_font
 
-    auto_fit_columns(ws, start_row=header_row_idx, min_width=13, max_width=45, padding=5)
+    auto_fit_columns(ws, start_row=1, min_width=13, max_width=60, padding=4)
 
 
 # Upload & Controls
@@ -286,9 +291,9 @@ with col3:
     min_days_cover = st.number_input(
         "Safe Stock Days (Green ke liye)",
         min_value=1,
-        max_value=30,
-        value=3,
-        help="Agar Available Stock (Daily Sale × Days) se kam hai to Red/Yellow dikhega",
+        max_value=180,
+        value=30,
+        help="Agar Available Stock (Sale × Days) se kam hai to Red/Yellow dikhega",
     )
 
 opt_col1, opt_col2 = st.columns([2, 2])
@@ -304,8 +309,8 @@ with opt_col1:
 with opt_col2:
     exclude_cancelled = st.checkbox("Cancelled orders ko report se hatayein (Recommended)", value=True)
 
-with st.expander("⚙️ Ads & Liquidation Rules Customize Karein (Optional)"):
-    r1, r2, r3 = st.columns(3)
+with st.expander("⚙️ Ads, Marketplace Top N & Liquidation Rules Customize Karein (Optional)"):
+    r1, r2, r3, r4 = st.columns(4)
     with r1:
         liq_min_stock = st.number_input(
             "Liquidation Min Stock",
@@ -316,11 +321,11 @@ with st.expander("⚙️ Ads & Liquidation Rules Customize Karein (Optional)"):
         )
     with r2:
         liq_max_sale = st.number_input(
-            "Liquidation Max Daily Sale",
+            "Liquidation Max Sale",
             min_value=0,
             max_value=1000,
             value=1,
-            help="Isse kam ya barabar daily sale hone par high-stock SKU ko Liquidation alert milega",
+            help="Isse kam ya barabar sale hone par high-stock SKU ko Liquidation alert milega",
         )
     with r3:
         liq_cover_days = st.number_input(
@@ -329,6 +334,13 @@ with st.expander("⚙️ Ads & Liquidation Rules Customize Karein (Optional)"):
             max_value=365,
             value=30,
             help="Agar stock itne din ki sale ke barabar ya zyada hai (with min stock), to Watch Liquidation dikhega",
+        )
+    with r4:
+        mp_top_n = st.selectbox(
+            "Marketplace-wise Top SKUs",
+            options=[10, 20],
+            index=1,
+            help="Har marketplace ke Top 10 ya Top 20 SKUs alag report mein dikhenge",
         )
 
 if orders_file and inventory_file:
@@ -606,7 +618,7 @@ if orders_file and inventory_file:
 
         category_summary["Stock Status"] = category_summary.apply(get_cat_status, axis=1)
 
-        # Sheet 3: Ads Priority (Top 20) & Liquidation Action List
+        # Sheet 3: Overall Ads Priority (Top 20) & Liquidation Action List
         ads_top_df = (
             final_df[final_df["Total Sale"] > 0]
             .sort_values(by=["Total Sale", "Available Stock"], ascending=[False, False])
@@ -623,6 +635,54 @@ if orders_file and inventory_file:
         liq_df.insert(0, "Action Focus", "Liquidate / Clearance")
 
         ads_liq_combined = pd.concat([ads_top_df, liq_df], ignore_index=True)
+
+        # Sheet 4: Marketplace-wise Top 10 / Top 20 Report
+        mp_rows = []
+        for ch in ordered_channels:
+            ch_df = (
+                final_df[final_df[ch] > 0]
+                .sort_values(by=[ch, "Available Stock"], ascending=[False, False])
+                .head(mp_top_n)
+                .copy()
+            )
+            if ch_df.empty:
+                continue
+            ch_df = ch_df.reset_index(drop=True)
+            for idx, row in ch_df.iterrows():
+                mp_rank = idx + 1
+                mp_tier = "Top 10 (Ads Priority)" if mp_rank <= 10 else "Top 11-20 (Ads Scale)"
+                mp_rows.append(
+                    {
+                        "Marketplace": ch,
+                        "MP Rank": mp_rank,
+                        "MP Sales Tier": mp_tier,
+                        display_col_name: row[display_col_name],
+                        "Parent": row["Parent"],
+                        "Marketplace Sale": int(row[ch]),
+                        "Overall Total Sale": int(row["Total Sale"]),
+                        "Available Stock": int(row["Available Stock"]),
+                        "Stock Status": row["Stock Status"],
+                        "Liquidation Alert": row["Liquidation Alert"],
+                    }
+                )
+
+        if mp_rows:
+            mp_top_df = pd.DataFrame(mp_rows)
+        else:
+            mp_top_df = pd.DataFrame(
+                columns=[
+                    "Marketplace",
+                    "MP Rank",
+                    "MP Sales Tier",
+                    display_col_name,
+                    "Parent",
+                    "Marketplace Sale",
+                    "Overall Total Sale",
+                    "Available Stock",
+                    "Stock Status",
+                    "Liquidation Alert",
+                ]
+            )
 
         # 2-Line Header Format (Channel Name \n Date)
         rename_date_cols = {c: f"{c}\n{report_date_str}" for c in ordered_channels}
@@ -668,7 +728,12 @@ if orders_file and inventory_file:
                 return "background-color: #FFEB9C; color: #9C6500; font-weight: bold;"
             return ""
 
-        tab1, tab2, tab3 = st.tabs(["📋 All SKUs Report", "🎯 Top 20 Ads Winners", "🏷️ Liquidation Candidates"])
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "📋 All SKUs Report",
+            "🎯 Top 20 Ads Winners",
+            "🏪 Marketplace Top 10/20",
+            "🏷️ Liquidation Candidates",
+        ])
 
         with tab1:
             styled_main = (
@@ -680,11 +745,27 @@ if orders_file and inventory_file:
             st.dataframe(styled_main, use_container_width=True)
 
         with tab2:
-            st.caption("Sabse zyada sale wale Top 20 SKUs — in par ads chalane ya budget scale karne par dhyan dein.")
+            st.caption("Overall sabse zyada sale wale Top 20 SKUs — in par ads chalane ya budget scale karne par dhyan dein.")
             st.dataframe(ads_top_df, use_container_width=True)
 
         with tab3:
-            st.caption(f"High Stock (>= {liq_min_stock}) aur Low Daily Sale (<= {liq_max_sale}) wale SKUs — liquidation / offer / bundle ke liye.")
+            st.caption(f"Har marketplace ke Top {mp_top_n} SKUs — marketplace-wise ads aur inventory planning ke liye.")
+            selected_mp = st.selectbox(
+                "Marketplace Filter Karein:",
+                options=["All Marketplaces"] + ordered_channels,
+                key="mp_filter_select",
+            )
+            mp_view_df = mp_top_df if selected_mp == "All Marketplaces" else mp_top_df[mp_top_df["Marketplace"] == selected_mp]
+            styled_mp = (
+                mp_view_df.style
+                .map(highlight_status_web, subset=["Stock Status"])
+                .map(highlight_tier_web, subset=["MP Sales Tier"])
+                .map(highlight_liq_web, subset=["Liquidation Alert"])
+            )
+            st.dataframe(styled_mp, use_container_width=True)
+
+        with tab4:
+            st.caption(f"High Stock (>= {liq_min_stock}) aur Low Sale (<= {liq_max_sale}) wale SKUs — liquidation / offer / bundle ke liye.")
             st.dataframe(liq_df, use_container_width=True)
 
         # Excel File Export with Top =SUBTOTAL(9,...) Row, AutoFilter, Freeze Panes & Auto Column Width
@@ -693,11 +774,9 @@ if orders_file and inventory_file:
             final_df_export.to_excel(writer, sheet_name="SKU_Wise_Report", index=False, startrow=1)
             category_summary_export.to_excel(writer, sheet_name="Category_Summary", index=False, startrow=1)
             ads_liq_export.to_excel(writer, sheet_name="Ads_&_Liquidation", index=False, startrow=1)
+            mp_top_df.to_excel(writer, sheet_name="Marketplace_Top_SKUs", index=False, startrow=1)
 
-            # Numeric column indices for SKU_Wise_Report
-            # Base cols: [SKU, Parent, Sale Rank, Sales Tier, Active Channels] -> 5 cols
-            # Then ordered_channels -> len(ordered_channels) cols
-            # Then Total Sale, Available Stock -> 2 cols
+            # Sheet 1: SKU_Wise_Report
             sku_numeric_cols = [5] + list(range(6, 6 + len(ordered_channels))) + [
                 6 + len(ordered_channels),
                 7 + len(ordered_channels),
@@ -711,7 +790,7 @@ if orders_file and inventory_file:
                 liq_col_name="Liquidation Alert",
             )
 
-            # Numeric column indices for Category_Summary: [Row Labels] + channels + Total Sale + Available Stock
+            # Sheet 2: Category_Summary
             cat_numeric_cols = list(range(2, 2 + len(ordered_channels) + 2))
             format_excel_sheet(
                 writer.sheets["Category_Summary"],
@@ -722,7 +801,7 @@ if orders_file and inventory_file:
                 liq_col_name="",
             )
 
-            # Numeric column indices for Ads_&_Liquidation (has extra 'Action Focus' col at index 1)
+            # Sheet 3: Ads_&_Liquidation
             ads_liq_numeric_cols = [6] + list(range(7, 7 + len(ordered_channels))) + [
                 7 + len(ordered_channels),
                 8 + len(ordered_channels),
@@ -733,6 +812,19 @@ if orders_file and inventory_file:
                 freeze_cell="D3",
                 status_col_name="Stock Status",
                 tier_col_name="Sales Tier",
+                liq_col_name="Liquidation Alert",
+            )
+
+            # Sheet 4: Marketplace_Top_SKUs
+            # Cols: 1:Marketplace, 2:MP Rank, 3:MP Sales Tier, 4:SKU, 5:Parent,
+            #       6:Marketplace Sale, 7:Overall Total Sale, 8:Available Stock, 9:Stock Status, 10:Liquidation Alert
+            mp_numeric_cols = [6, 7, 8]
+            format_excel_sheet(
+                writer.sheets["Marketplace_Top_SKUs"],
+                numeric_col_indices=mp_numeric_cols,
+                freeze_cell="E3",
+                status_col_name="Stock Status",
+                tier_col_name="MP Sales Tier",
                 liq_col_name="Liquidation Alert",
             )
 
