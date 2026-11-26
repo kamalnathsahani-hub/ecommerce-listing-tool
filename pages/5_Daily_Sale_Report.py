@@ -12,24 +12,24 @@ st.set_page_config(page_title="Daily Sale Report Generator", layout="wide")
 st.title("📊 Daily Sale Report, Ads & Liquidation Generator")
 st.write(
     "Unicommerce ya OMS ki Sale Orders aur Inventory files (CSV, Excel, ya ZIP) upload karein "
-    "aur channel-wise SKU sale, Ads priority, Marketplace Top 10/20, Stock health, aur Liquidation alerts ki report download karein."
+    "aur channel-wise SKU sale, Channel Product ID pivot, Ads priority, Marketplace Top 10/20, Stock health, aur Liquidation alerts ki report download karein."
 )
 
-# Unicommerce Channel Mapping
+# Unicommerce Channel Mapping (AU -> AV Actual Name)
 UNICOM_CHANNEL_MAPPING = {
-    "JBFASHION": "Lymio",
-    "AJIO_Vrati_Fashion_PX": "Ajio PX",
-    "JBFASHION_MYNTRA": "Myntra JB",
-    "FLIPKART_POSHAX": "Flipkart",
-    "AJIO_Leriya_fashion_AT": "Ajio AT",
-    "SNAPDEAL_LF": "Snapdeal",
-    "LERIYAFASHION": "Leriya Fashion",
-    "YHUB": "Yhub",
-    "MEESHOYHUB": "Meesho Yhub",
-    "MEESHOLERIYA": "Meesho Leriya",
+    "AJIO_Leriya_fashion_AT": "Leriya_Ajio",
+    "AJIO_Vrati_Fashion_PX": "Vrati_Ajio",
+    "FLIPKART_POSHAX": "Leriya_Flipkart",
+    "JBFASHION": "JB Fashion_VC",
+    "JBFASHION_MYNTRA": "JB Fashion_Myntra",
+    "LERIYAFASHION": "Leriya_VC",
+    "MEESHOLERIYA": "Leriya_Meesho",
+    "MEESHOYHUB": "Y Hub_Meesho",
+    "SNAPDEAL_LF": "Leriya_Snapdeal",
+    "YHUB": "Y Hub_VC",
 }
 
-# OMS Channel Mapping
+# OMS Channel Mapping (Unchanged)
 OMS_CHANNEL_MAPPING = {
     "URBAN POCKETS LIFESTYLE - Myntra PPMP": "Myntra PPMP",
     "URBAN POCKETS LIFESTYLE - Amazon Direct Fulfillment": "Amazon DF",
@@ -118,7 +118,7 @@ def get_liquidation_status(stock, sale, min_liq_stock, max_liq_sale, high_cover_
     return "Normal"
 
 
-def auto_fit_columns(ws, start_row=1, min_width=13, max_width=60, padding=4):
+def auto_fit_columns(ws, start_row=1, min_width=14, max_width=60, padding=4):
     """Sabhi columns ki width header + data content ke hisab se auto-adjust karta hai."""
     for col_idx in range(1, ws.max_column + 1):
         col_letter = get_column_letter(col_idx)
@@ -191,7 +191,7 @@ def format_excel_sheet(
     if data_end_row >= header_row_idx:
         ws.auto_filter.ref = f"A{header_row_idx}:{last_col_letter}{data_end_row}"
 
-    ws.row_dimensions[header_row_idx].height = 34
+    ws.row_dimensions[header_row_idx].height = 36
 
     status_col_idx = None
     tier_col_idx = None
@@ -278,7 +278,7 @@ def format_excel_sheet(
                     cell.fill = yellow_fill
                     cell.font = yellow_font
 
-    auto_fit_columns(ws, start_row=1, min_width=13, max_width=60, padding=4)
+    auto_fit_columns(ws, start_row=1, min_width=14, max_width=60, padding=4)
 
 
 # Upload & Controls
@@ -350,6 +350,8 @@ if orders_file and inventory_file:
 
         use_alt_sku = "Channel / Seller SKU" in sku_mode
         is_oms = ("Product Sku Code" in df_orders.columns and "Category Name" in df_orders.columns)
+
+        cpid_pivot_df = None  # Sirf Unicommerce format ke liye generate hoga
 
         if is_oms:
             st.info("Detected Format: **OMS Order & Inventory Report**")
@@ -464,13 +466,28 @@ if orders_file and inventory_file:
             if use_alt_sku:
                 df_orders["Seller SKU Code"] = df_orders["Seller SKU Code"].fillna("Unknown_SKU").astype(str).str.strip()
 
+            # Map AU (Channel Name) -> AV (Actual Name)
             df_orders["Clean_Channel"] = df_orders["Channel Name"].replace(UNICOM_CHANNEL_MAPPING)
 
+            # Start Date to End Date from 'Order Date as dd/mm/yyyy hh:MM:ss'
             report_date_str = datetime.now().strftime("%d-%m")
-            if "Invoice Created" in df_orders.columns and df_orders["Invoice Created"].dropna().shape[0] > 0:
+            order_date_col = "Order Date as dd/mm/yyyy hh:MM:ss"
+            if order_date_col in df_orders.columns and df_orders[order_date_col].dropna().shape[0] > 0:
                 try:
-                    sample_date = pd.to_datetime(df_orders["Invoice Created"].dropna().iloc[0])
-                    report_date_str = sample_date.strftime("%d-%m")
+                    parsed_order_dates = pd.to_datetime(
+                        df_orders[order_date_col].dropna(), dayfirst=True, errors="coerce"
+                    ).dropna()
+                    if not parsed_order_dates.empty:
+                        start_dt = parsed_order_dates.min().strftime("%d-%m")
+                        end_dt = parsed_order_dates.max().strftime("%d-%m")
+                        report_date_str = start_dt if start_dt == end_dt else f"{start_dt} to {end_dt}"
+                except Exception:
+                    pass
+            elif "Invoice Created" in df_orders.columns and df_orders["Invoice Created"].dropna().shape[0] > 0:
+                try:
+                    sample_date = pd.to_datetime(df_orders["Invoice Created"].dropna().iloc[0], dayfirst=True, errors="coerce")
+                    if pd.notna(sample_date):
+                        report_date_str = sample_date.strftime("%d-%m")
                 except Exception:
                     pass
 
@@ -488,11 +505,71 @@ if orders_file and inventory_file:
             pivot_sku.rename(columns={target_col: display_col_name, "Category": "Parent"}, inplace=True)
 
             channel_cols = [c for c in pivot_sku.columns if c not in [display_col_name, "Parent"]]
-            preferred_order = ["Lymio", "Ajio PX", "Myntra JB", "Flipkart", "Ajio AT", "Snapdeal"]
+            preferred_order = [
+                "JB Fashion_VC",
+                "Vrati_Ajio",
+                "JB Fashion_Myntra",
+                "Leriya_Flipkart",
+                "Leriya_Ajio",
+                "Leriya_Snapdeal",
+                "Leriya_VC",
+                "Leriya_Meesho",
+                "Y Hub_Meesho",
+                "Y Hub_VC",
+            ]
             ordered_channels = [c for c in preferred_order if c in channel_cols] + [c for c in channel_cols if c not in preferred_order]
 
             pivot_sku = pivot_sku[[display_col_name, "Parent"] + ordered_channels]
             pivot_sku["Total Sale"] = pivot_sku[ordered_channels].sum(axis=1)
+
+            # Channel Product Id Wise Pivot (Sirf Unicommerce format ke liye)
+            if "Channel Product Id" in df_orders.columns:
+                df_orders["Channel Product Id"] = (
+                    df_orders["Channel Product Id"].fillna("Unknown_ID").astype(str).str.strip()
+                )
+                cpid_pivot = pd.pivot_table(
+                    df_orders,
+                    values="Units",
+                    index=["Channel Product Id", "Category"],
+                    columns="Clean_Channel",
+                    aggfunc="sum",
+                    fill_value=0,
+                ).reset_index()
+                cpid_pivot.rename(columns={"Category": "Parent"}, inplace=True)
+
+                for ch in ordered_channels:
+                    if ch not in cpid_pivot.columns:
+                        cpid_pivot[ch] = 0
+                    cpid_pivot[ch] = cpid_pivot[ch].astype(int)
+
+                # Har Channel Product Id ke saath mapped SKU(s) bhi dikhayein
+                mapped_skus = (
+                    df_orders.groupby(["Channel Product Id", "Category"])[target_col]
+                    .apply(lambda s: ", ".join(sorted(set(s.astype(str)))))
+                    .reset_index()
+                    .rename(columns={"Category": "Parent", target_col: f"Mapped {display_col_name}"})
+                )
+                cpid_pivot = pd.merge(cpid_pivot, mapped_skus, on=["Channel Product Id", "Parent"], how="left")
+
+                cpid_pivot["Total Sale"] = cpid_pivot[ordered_channels].sum(axis=1).astype(int)
+                cpid_pivot = cpid_pivot.sort_values(
+                    by=["Total Sale", "Channel Product Id"], ascending=[False, True]
+                ).reset_index(drop=True)
+
+                cpid_pivot["Sale Rank"] = 0
+                pos_cpid = cpid_pivot["Total Sale"] > 0
+                cpid_pivot.loc[pos_cpid, "Sale Rank"] = (
+                    cpid_pivot.loc[pos_cpid, "Total Sale"]
+                    .rank(ascending=False, method="min")
+                    .astype(int)
+                )
+
+                cpid_col_order = (
+                    ["Channel Product Id", "Parent", f"Mapped {display_col_name}", "Sale Rank"]
+                    + ordered_channels
+                    + ["Total Sale"]
+                )
+                cpid_pivot_df = cpid_pivot[cpid_col_order]
 
             if "Item Name" in df_inv.columns and "Available (ATP)" in df_inv.columns:
                 df_inv["Item Name"] = df_inv["Item Name"].astype(str).str.strip()
@@ -684,13 +761,14 @@ if orders_file and inventory_file:
                 ]
             )
 
-        # 2-Line Header Format (Channel Name \n Date)
+        # 2-Line Header Format (Channel Name \n Date or Date Range)
         rename_date_cols = {c: f"{c}\n{report_date_str}" for c in ordered_channels}
         final_df_export = final_df.rename(columns=rename_date_cols)
         category_summary_export = category_summary.rename(columns=rename_date_cols)
         ads_liq_export = ads_liq_combined.rename(columns=rename_date_cols)
+        cpid_pivot_export = cpid_pivot_df.rename(columns=rename_date_cols) if cpid_pivot_df is not None else None
 
-        st.success(f"Report ({display_col_name} wise) successfully generate ho gayi hai!")
+        st.success(f"Report ({display_col_name} wise | {report_date_str}) successfully generate ho gayi hai!")
 
         m1, m2, m3, m4, m5 = st.columns(5)
         m1.metric("Total Unique SKUs", len(final_df))
@@ -728,14 +806,18 @@ if orders_file and inventory_file:
                 return "background-color: #FFEB9C; color: #9C6500; font-weight: bold;"
             return ""
 
-        tab1, tab2, tab3, tab4 = st.tabs([
+        tab_labels = [
             "📋 All SKUs Report",
             "🎯 Top 20 Ads Winners",
             "🏪 Marketplace Top 10/20",
             "🏷️ Liquidation Candidates",
-        ])
+        ]
+        if cpid_pivot_export is not None:
+            tab_labels.append("🆔 Channel Product ID Pivot")
 
-        with tab1:
+        tabs = st.tabs(tab_labels)
+
+        with tabs[0]:
             styled_main = (
                 final_df_export.style
                 .map(highlight_status_web, subset=["Stock Status"])
@@ -744,11 +826,11 @@ if orders_file and inventory_file:
             )
             st.dataframe(styled_main, use_container_width=True)
 
-        with tab2:
+        with tabs[1]:
             st.caption("Overall sabse zyada sale wale Top 20 SKUs — in par ads chalane ya budget scale karne par dhyan dein.")
             st.dataframe(ads_top_df, use_container_width=True)
 
-        with tab3:
+        with tabs[2]:
             st.caption(f"Har marketplace ke Top {mp_top_n} SKUs — marketplace-wise ads aur inventory planning ke liye.")
             selected_mp = st.selectbox(
                 "Marketplace Filter Karein:",
@@ -764,9 +846,14 @@ if orders_file and inventory_file:
             )
             st.dataframe(styled_mp, use_container_width=True)
 
-        with tab4:
+        with tabs[3]:
             st.caption(f"High Stock (>= {liq_min_stock}) aur Low Sale (<= {liq_max_sale}) wale SKUs — liquidation / offer / bundle ke liye.")
             st.dataframe(liq_df, use_container_width=True)
+
+        if cpid_pivot_export is not None:
+            with tabs[4]:
+                st.caption("Sabhi marketplaces ka Channel Product ID-wise sale pivot report.")
+                st.dataframe(cpid_pivot_export, use_container_width=True)
 
         # Excel File Export with Top =SUBTOTAL(9,...) Row, AutoFilter, Freeze Panes & Auto Column Width
         output = io.BytesIO()
@@ -775,6 +862,9 @@ if orders_file and inventory_file:
             category_summary_export.to_excel(writer, sheet_name="Category_Summary", index=False, startrow=1)
             ads_liq_export.to_excel(writer, sheet_name="Ads_&_Liquidation", index=False, startrow=1)
             mp_top_df.to_excel(writer, sheet_name="Marketplace_Top_SKUs", index=False, startrow=1)
+
+            if cpid_pivot_export is not None:
+                cpid_pivot_export.to_excel(writer, sheet_name="Channel_Product_ID_Report", index=False, startrow=1)
 
             # Sheet 1: SKU_Wise_Report
             sku_numeric_cols = [5] + list(range(6, 6 + len(ordered_channels))) + [
@@ -816,8 +906,6 @@ if orders_file and inventory_file:
             )
 
             # Sheet 4: Marketplace_Top_SKUs
-            # Cols: 1:Marketplace, 2:MP Rank, 3:MP Sales Tier, 4:SKU, 5:Parent,
-            #       6:Marketplace Sale, 7:Overall Total Sale, 8:Available Stock, 9:Stock Status, 10:Liquidation Alert
             mp_numeric_cols = [6, 7, 8]
             format_excel_sheet(
                 writer.sheets["Marketplace_Top_SKUs"],
@@ -827,6 +915,19 @@ if orders_file and inventory_file:
                 tier_col_name="MP Sales Tier",
                 liq_col_name="Liquidation Alert",
             )
+
+            # Sheet 5: Channel_Product_ID_Report (Only for Unicommerce format)
+            if cpid_pivot_export is not None:
+                # Cols: 1:Channel Product Id, 2:Parent, 3:Mapped SKUs, 4:Sale Rank, 5..N:Channels, N+1:Total Sale
+                cpid_numeric_cols = list(range(5, 5 + len(ordered_channels) + 1))
+                format_excel_sheet(
+                    writer.sheets["Channel_Product_ID_Report"],
+                    numeric_col_indices=cpid_numeric_cols,
+                    freeze_cell="E3",
+                    status_col_name="",
+                    tier_col_name="",
+                    liq_col_name="",
+                )
 
         output.seek(0)
         system_tag = "OMS" if is_oms else "Unicom"
